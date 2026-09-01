@@ -112,7 +112,7 @@ export async function fetchBitgetSavingsSnapshot(
       const targetId = slots[asset][index];
       rates.push({
         productId: targetId,
-        ...buildProductIdentity(targetId, { productType: "flexible", tiers: item.tiers }, { externalProductId: item.row.productId }),
+        ...buildProductIdentity(targetId, { productType: "flexible", tiers: item.tiers }, { externalProductId: item.row.productId, includeExternalProductId: true }),
         name: bitgetProductName(item.row, index),
         apr: item.tiers[0]?.apr ?? 0,
         tiers: item.tiers,

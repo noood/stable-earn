@@ -13,6 +13,8 @@ import { loadManualRefreshCooldown, manualRefreshCooldownMs } from "@/lib/user-s
 import { isLocalPreviewRequest, localPrivateProductsPreview } from "@/lib/local-preview";
 import { filterFallbacksByFailures } from "@/lib/sync-fallback";
 import { compareProductIdentity, type ProductIdentityChange } from "@/lib/product-identity";
+import { resolveCatalogProductIds, syncProductCatalog } from "@/lib/product-catalog";
+import type { Product } from "@/lib/domain";
 import {
   formatCacheTime,
   loadSyncCache,
@@ -36,6 +38,7 @@ type PrivateStatuses = {
 };
 type PrivateDiagnostics = Partial<Record<keyof PrivateStatuses, string>>;
 type PrivateProductsPayload = {
+  products: Product[];
   rates: LiveRate[];
   rateFallbacks: Record<string, string>;
   holdingUpdates: Record<string, number>;
@@ -70,6 +73,7 @@ export async function GET(request: Request) {
   if (!manual) {
     if (cached?.payload) return cachedResponse(cached, cached.lastError ? "error" : "fresh", "按每日 08:00、20:00 的计划缓存读取，未请求交易所。", now, manualCooldownDuration);
     return NextResponse.json({
+      products: [],
       rates: [],
       rateFallbacks: {},
       holdingUpdates: {},
@@ -215,13 +219,14 @@ async function buildPrivatePayload(
     ...(bitget?.rates ?? []),
   ];
   const fallbackRates = cached?.payload?.rates ?? [];
-  const rates = mergeRates(freshRates, fallbackRates);
+  const catalog = await syncProductCatalog(db, userId, freshRates);
+  const rates = mergeRates(catalog.rates, fallbackRates);
   const previousRates = new Map((cached?.payload?.rates ?? []).map((rate) => [rate.productId, rate]));
-  const identityChanges = Object.fromEntries(freshRates.map((rate) => [
+  const identityChanges = Object.fromEntries(catalog.rates.map((rate) => [
     rate.productId,
     compareProductIdentity(previousRates.get(rate.productId), rate),
   ]));
-  const freshRateProductIds = new Set(freshRates.map((rate) => rate.productId));
+  const freshRateProductIds = new Set(catalog.rates.map((rate) => rate.productId));
   const rateFallbacks = Object.fromEntries(rates
     .filter((rate) => !freshRateProductIds.has(rate.productId))
     .map((rate) => [rate.productId, rate.fetchedAt]));
@@ -232,10 +237,12 @@ async function buildPrivatePayload(
     ...(bitget?.holdings ?? {}),
     ...(okxResult.snapshot?.holdings ?? {}),
   };
-  const holdingUpdates = {
+  const catalogProductIds = { ...await resolveCatalogProductIds(db, userId), ...catalog.productIds };
+  const holdingUpdates = Object.fromEntries(Object.entries({
     ...(cached?.payload?.holdingUpdates ?? {}),
     ...freshHoldingUpdates,
-  };
+  }).map(([productId, amount]) => [catalogProductIds[productId] ?? productId, amount]));
+  const freshHoldingProductIds = new Set(Object.keys(freshHoldingUpdates).map((productId) => catalogProductIds[productId] ?? productId));
   const privateStatus: PrivateStatuses = {
     binanceGlobal: binanceGlobalResult.status,
     binanceBahrain: binanceBahrainResult.status,
@@ -251,8 +258,8 @@ async function buildPrivatePayload(
     okx: okxResult.diagnostic,
   };
   const configuredError = Object.values(privateStatus).some((status) => status === "error" || status === "partial");
-  const freshHoldingProductIds = new Set(Object.keys(freshHoldingUpdates));
   const holdingFallbacks = Object.fromEntries(Object.keys(cached?.payload?.holdingUpdates ?? {})
+    .map((productId) => catalogProductIds[productId] ?? productId)
     .filter((productId) => !freshHoldingProductIds.has(productId))
     .map((productId) => [productId, cached?.updatedAt ?? updatedFallbackTime(cached?.payload?.fetchedAt)]));
   const successfulPrivateJobs = Object.values(privateStatus).filter((status) => status === "synced" || status === "partial").length;
@@ -267,12 +274,13 @@ async function buildPrivatePayload(
     ? `未成功更新的项目沿用 ${formatCacheTime(cached.updatedAt)} 的最近一次成功数据。`
     : "";
   return {
+    products: catalog.products,
     rates,
     rateFallbacks,
     holdingUpdates,
     holdingSourceIds: [...new Set([
       ...(cached?.payload?.holdingSourceIds ?? []),
-      ...Object.keys(freshHoldingUpdates),
+      ...Object.keys(freshHoldingUpdates).map((productId) => catalogProductIds[productId] ?? productId),
     ])],
     holdingFallbacks,
     fetchedAt: updatedAt,

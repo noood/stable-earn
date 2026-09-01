@@ -4,6 +4,7 @@ import { buildProductIdentity } from "@/lib/product-identity";
 
 export type LiveRate = {
   productId: string;
+  canonicalProductId?: string;
   name?: string;
   apr: number;
   tierAprs?: number[];
@@ -90,7 +91,7 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
       const externalProductId = item?.productId;
       return {
         productId: endpoint.productId,
-        ...buildProductIdentity(endpoint.productId, { productType: "flexible" }, { externalProductId }),
+        ...buildProductIdentity(endpoint.productId, { productType: "flexible" }, { externalProductId, includeExternalProductId: true }),
         apr: baseApr,
         fetchedAt: new Date().toISOString(),
         sourceLabel: endpoint.label,

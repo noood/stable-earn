@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { getDatabase, getUserId } from "@/lib/db";
-import { seedProducts } from "@/lib/seed-data";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
 import type { HoldingMap } from "@/lib/domain";
 import { productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, type ProductOverrideMap } from "@/lib/product-overrides";
 import { productCanBeRemoved } from "@/lib/product-status";
 import { loadUserProducts, productToUserProduct, sanitizeUserProducts, saveUserProducts, userProductInputToProduct } from "@/lib/user-products";
 import { isLocalPreviewRequest, localPrivateHoldingsPreview } from "@/lib/local-preview";
+import { loadCatalogProducts } from "@/lib/product-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +16,6 @@ type LimitRow = { product_id: string; first_tier_limit: number | null };
 type TermRow = { product_id: string; term_days: number | null };
 type HiddenSeedProductRow = { product_id: string };
 
-const removableSeedProductIds = new Set(seedProducts.filter(productCanBeRemoved).map((product) => product.id));
-
 export async function GET(request: Request) {
   const userId = await getUserId(request);
   if (!userId) return NextResponse.json({ error: "请先登录后再读取持仓。" }, { status: 401, headers: privateResponseHeaders });
@@ -26,7 +24,8 @@ export async function GET(request: Request) {
   }
 
   const db = await getDatabase();
-  const [manualProducts, holdingResult, overrideResult, limitResult, termResult, hiddenResult] = await Promise.all([
+  const [catalogProducts, manualProducts, holdingResult, overrideResult, limitResult, termResult, hiddenResult, hiddenCatalogResult] = await Promise.all([
+    loadCatalogProducts(db, userId),
     loadUserProducts(db, userId),
     db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
     db.prepare(`SELECT product_id, confirmed_apr, purchase_date, updated_at
@@ -36,10 +35,15 @@ export async function GET(request: Request) {
     db.prepare(`SELECT product_id, term_days
       FROM product_override_terms WHERE user_id = ? ORDER BY product_id`).bind(userId).all<TermRow>(),
     db.prepare("SELECT product_id FROM hidden_seed_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenSeedProductRow>(),
+    db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenSeedProductRow>(),
   ]);
-  const hiddenSeedProductIds = hiddenResult.results.map((row) => row.product_id).filter((productId) => removableSeedProductIds.has(productId));
-  const hiddenSeedProductIdSet = new Set(hiddenSeedProductIds);
-  const productIds = new Set([...seedProducts.filter((product) => !hiddenSeedProductIdSet.has(product.id)), ...manualProducts].map((product) => product.id));
+  const removableProducts = new Set([...catalogProducts, ...manualProducts].filter(productCanBeRemoved).map((product) => product.id));
+  const hiddenProductIds = [...new Set([
+    ...hiddenResult.results.map((row) => row.product_id),
+    ...hiddenCatalogResult.results.map((row) => row.product_id),
+  ])].filter((productId) => removableProducts.has(productId));
+  const hiddenProductIdSet = new Set(hiddenProductIds);
+  const productIds = new Set([...catalogProducts.filter((product) => !hiddenProductIdSet.has(product.id)), ...manualProducts].map((product) => product.id));
   const limits = new Map(limitResult.results.map((row) => [row.product_id, row.first_tier_limit]));
   const terms = new Map(termResult.results.map((row) => [row.product_id, row.term_days]));
   const holdings = Object.fromEntries(holdingResult.results
@@ -54,7 +58,7 @@ export async function GET(request: Request) {
       purchaseDate: row.purchase_date,
       updatedAt: row.updated_at,
     }])) as ProductOverrideMap;
-  return NextResponse.json({ holdings, overrides, manualProducts, hiddenSeedProductIds, found: holdingResult.results.length > 0 || overrideResult.results.length > 0 || manualProducts.length > 0 || hiddenSeedProductIds.length > 0 }, { headers: privateResponseHeaders });
+  return NextResponse.json({ products: catalogProducts, holdings, overrides, manualProducts, hiddenProductIds, hiddenSeedProductIds: hiddenProductIds, found: holdingResult.results.length > 0 || overrideResult.results.length > 0 || manualProducts.length > 0 || hiddenProductIds.length > 0 }, { headers: privateResponseHeaders });
 }
 
 export async function PUT(request: Request) {
@@ -67,7 +71,7 @@ export async function PUT(request: Request) {
 
   let body: unknown;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "持仓数据格式不正确。" }, { status: 400, headers: privateResponseHeaders }); }
-  const payload = typeof body === "object" && body !== null ? body as { holdings?: unknown; overrides?: unknown; changedProductIds?: unknown; manualProducts?: unknown; deletedManualProductIds?: unknown; hiddenSeedProductIds?: unknown } : null;
+  const payload = typeof body === "object" && body !== null ? body as { holdings?: unknown; overrides?: unknown; changedProductIds?: unknown; manualProducts?: unknown; deletedManualProductIds?: unknown; hiddenProductIds?: unknown; hiddenSeedProductIds?: unknown } : null;
   const candidate = payload?.holdings ?? null;
   if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
     return NextResponse.json({ error: "缺少持仓数据。" }, { status: 400, headers: privateResponseHeaders });
@@ -82,22 +86,23 @@ export async function PUT(request: Request) {
   const deletedManualProductIds = Array.isArray(payload?.deletedManualProductIds)
     ? [...new Set(payload.deletedManualProductIds.filter((value): value is string => typeof value === "string" && /^manual-[a-z0-9-]{8,80}$/i.test(value)))]
     : [];
-  const hiddenSeedProductIds = payload?.hiddenSeedProductIds === undefined
-    ? (await db.prepare("SELECT product_id FROM hidden_seed_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenSeedProductRow>()).results
-      .map((row) => row.product_id)
-      .filter((productId) => removableSeedProductIds.has(productId))
-    : sanitizeHiddenSeedProductIds(payload.hiddenSeedProductIds);
-  if (!hiddenSeedProductIds) return NextResponse.json({ error: "隐藏的产品格式不正确。" }, { status: 400, headers: privateResponseHeaders });
-  const hiddenSeedProductIdSet = new Set(hiddenSeedProductIds);
+  const catalogProducts = await loadCatalogProducts(db, userId);
+  const allCatalogProducts = [...catalogProducts, ...existingManualProducts];
+  const removableProductIds = new Set(allCatalogProducts.filter(productCanBeRemoved).map((product) => product.id));
+  const hiddenProductIds = payload?.hiddenProductIds !== undefined || payload?.hiddenSeedProductIds !== undefined
+    ? sanitizeHiddenProductIds(payload.hiddenProductIds ?? payload.hiddenSeedProductIds, removableProductIds)
+    : (await db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenSeedProductRow>()).results.map((row) => row.product_id).filter((productId) => removableProductIds.has(productId));
+  if (!hiddenProductIds) return NextResponse.json({ error: "隐藏的产品格式不正确。" }, { status: 400, headers: privateResponseHeaders });
+  const hiddenProductIdSet = new Set(hiddenProductIds);
   const manualProducts = manualProductInputs.map(userProductInputToProduct);
-  const allProducts = [...seedProducts.filter((product) => !hiddenSeedProductIdSet.has(product.id)), ...manualProducts];
+  const allProducts = [...catalogProducts.filter((product) => !hiddenProductIdSet.has(product.id)), ...manualProducts];
   const productIds = new Set(allProducts.map((product) => product.id));
 
   const entries = Object.entries(candidate).flatMap(([productId, rawAmount]) => {
     const amount = typeof rawAmount === "number" ? rawAmount : Number(rawAmount);
     return productIds.has(productId) && Number.isFinite(amount) && amount >= 0 && amount <= 1e15 ? [[productId, amount] as const] : [];
   });
-  if (entries.length === 0 && manualProductInputs.length === 0 && deletedManualProductIds.length === 0 && hiddenSeedProductIds.length === 0) return NextResponse.json({ error: "没有可保存的有效持仓。" }, { status: 400, headers: privateResponseHeaders });
+  if (entries.length === 0 && manualProductInputs.length === 0 && deletedManualProductIds.length === 0 && hiddenProductIds.length === 0) return NextResponse.json({ error: "没有可保存的有效持仓。" }, { status: 400, headers: privateResponseHeaders });
 
   const changedProductIds = Array.isArray(payload?.changedProductIds)
     ? [...new Set(payload.changedProductIds.filter((value): value is string => typeof value === "string" && productIds.has(value)))]
@@ -124,11 +129,12 @@ export async function PUT(request: Request) {
   const updatedAt = new Date().toISOString();
   await saveUserProducts(db, userId, manualProductInputs, deletedManualProductIds);
   await db.batch([
+    db.prepare("DELETE FROM hidden_products WHERE user_id = ?").bind(userId),
     db.prepare("DELETE FROM hidden_seed_products WHERE user_id = ?").bind(userId),
-    ...hiddenSeedProductIds.map((productId) => db.prepare(`INSERT INTO hidden_seed_products (user_id, product_id, hidden_at)
+    ...hiddenProductIds.map((productId) => db.prepare(`INSERT INTO hidden_products (user_id, product_id, hidden_at)
       VALUES (?, ?, ?)`)
       .bind(userId, productId, updatedAt)),
-    ...hiddenSeedProductIds.flatMap((productId) => [
+    ...hiddenProductIds.flatMap((productId) => [
       db.prepare("DELETE FROM holdings WHERE user_id = ? AND product_id = ?").bind(userId, productId),
       db.prepare("DELETE FROM product_overrides WHERE user_id = ? AND product_id = ?").bind(userId, productId),
       db.prepare("DELETE FROM product_override_limits WHERE user_id = ? AND product_id = ?").bind(userId, productId),
@@ -162,13 +168,13 @@ export async function PUT(request: Request) {
           updated_at = excluded.updated_at`)
       .bind(userId, entry.productId, entry.termDays, updatedAt)] : []),
   ]);
-  return NextResponse.json({ saved: entries.length, manualUpdated: overrideEntries.length, productUpdated: manualProductInputs.length, productDeleted: deletedManualProductIds.length + hiddenSeedProductIds.length, updatedAt }, { headers: privateResponseHeaders });
+  return NextResponse.json({ saved: entries.length, manualUpdated: overrideEntries.length, productUpdated: manualProductInputs.length, productDeleted: deletedManualProductIds.length + hiddenProductIds.length, updatedAt }, { headers: privateResponseHeaders });
 }
 
-function sanitizeHiddenSeedProductIds(value: unknown) {
-  if (!Array.isArray(value) || value.length > removableSeedProductIds.size) return null;
+function sanitizeHiddenProductIds(value: unknown, removableProductIds: Set<string>) {
+  if (!Array.isArray(value) || value.length > removableProductIds.size) return null;
   const ids = [...new Set(value.filter((productId): productId is string => typeof productId === "string"))];
-  return ids.length === value.length && ids.every((productId) => removableSeedProductIds.has(productId)) ? ids : null;
+  return ids.length === value.length && ids.every((productId) => removableProductIds.has(productId)) ? ids : null;
 }
 
 function optionalApr(value: unknown) {

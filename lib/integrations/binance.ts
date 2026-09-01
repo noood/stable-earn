@@ -86,7 +86,7 @@ export async function fetchBinanceFlexibleSnapshot(
     return {
       rate: {
         productId: accountConfig.productIds[asset],
-        ...buildProductIdentity(accountConfig.productIds[asset], { productType: "flexible", tiers }, { externalProductId: rateSource.productId }),
+        ...buildProductIdentity(accountConfig.productIds[asset], { productType: "flexible", tiers }, { externalProductId: rateSource.productId, includeExternalProductId: true }),
         apr: tiers[0]?.apr ?? 0,
         tiers,
         fetchedAt,

@@ -12,6 +12,7 @@ import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/l
 import { accounts, seedProducts } from "@/lib/seed-data";
 
 type ApiResult = {
+  products?: Product[];
   rates: Array<{
     productId: string;
     name?: string;
@@ -50,7 +51,7 @@ type ApiResult = {
     lastError: string | null;
   };
 };
-type HoldingsApiResult = { holdings: HoldingMap; overrides: ProductOverrideMap; manualProducts: Product[]; hiddenSeedProductIds: string[]; found: boolean };
+type HoldingsApiResult = { products?: Product[]; holdings: HoldingMap; overrides: ProductOverrideMap; manualProducts: Product[]; hiddenProductIds?: string[]; hiddenSeedProductIds?: string[]; found: boolean };
 type ManualProductPatch = { accountId?: string; manualKind?: Product["manualKind"]; termDays?: number };
 const emptyHoldings = Object.fromEntries(seedProducts.map((product) => [product.id, 0])) as HoldingMap;
 const minimumVisibleApr = 4;
@@ -112,12 +113,14 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         const response = await fetch(holdingsEndpoint, { cache: "no-store" });
         if (!response.ok) throw new Error("cloud holdings unavailable");
         const data = await response.json() as HoldingsApiResult;
+        if (data.products?.length) setProducts(data.products);
         setProductOverrides(data.overrides ?? {});
         setManualProducts(data.manualProducts ?? []);
-        setHiddenSeedProductIds(data.hiddenSeedProductIds ?? []);
+        const hiddenIds = data.hiddenProductIds ?? data.hiddenSeedProductIds ?? [];
+        setHiddenSeedProductIds(hiddenIds);
         productOverridesRef.current = data.overrides ?? {};
         manualProductsRef.current = data.manualProducts ?? [];
-        hiddenSeedProductIdsRef.current = data.hiddenSeedProductIds ?? [];
+        hiddenSeedProductIdsRef.current = hiddenIds;
         if (data.found) {
           const next = { ...emptyHoldings, ...data.holdings };
           setHoldings(next);
@@ -170,7 +173,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       setRateFallbacks(data.rateFallbacks ?? {});
       setApiHoldingProductIds(new Set(data.holdingSourceIds ?? Object.keys(data.holdingUpdates ?? {})));
       setHoldingFallbacks(data.holdingFallbacks ?? {});
-      setProducts(seedProducts.map((product) => {
+      const nextProducts: Product[] = data.products?.length ? data.products : seedProducts.map((product) => {
         const live = product.productDataMode === "api"
           ? data.rates.find((rate) => rate.productId === product.id)
           : undefined;
@@ -194,11 +197,12 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
           identityFingerprint: live.identityFingerprint ?? product.identityFingerprint,
           tiers,
           rateCoverage: live.rateCoverage ?? (live.tiers ? "complete" : product.rateCoverage),
-          source: { kind: "live", label: live.sourceLabel, fetchedAt: live.fetchedAt },
+          source: { kind: "live" as const, label: live.sourceLabel, fetchedAt: live.fetchedAt },
         };
-      }));
+      });
+      setProducts(nextProducts);
       const acceptedHoldingUpdates = Object.fromEntries(Object.entries(data.holdingUpdates ?? {}).filter(([productId]) => (
-        seedProducts.find((product) => product.id === productId)?.holdingDataMode === "api"
+        nextProducts.find((product) => product.id === productId)?.holdingDataMode === "api"
       )));
       if (!isDemo && Object.keys(acceptedHoldingUpdates).length > 0) {
         const next = { ...baseHoldings, ...acceptedHoldingUpdates };
