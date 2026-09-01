@@ -35,6 +35,7 @@ yarn-error.log*
 next-env.d.ts
 /dist/
 /.wrangler/
+/.wrangler-deploy.jsonc
 /wrangler.local.jsonc
 /outputs/
 /work/

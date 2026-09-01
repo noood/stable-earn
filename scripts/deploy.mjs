@@ -1,10 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const projectRoot = resolve(import.meta.dirname, '..');
 const sourceConfigPath = resolve(projectRoot, 'wrangler.jsonc');
-const generatedConfigPath = resolve(projectRoot, '.wrangler', 'deploy-wrangler.jsonc');
+// Keep the generated config beside the source config so relative paths such as
+// `main` and `assets.directory` continue to resolve from the project root.
+const generatedConfigPath = resolve(projectRoot, '.wrangler-deploy.jsonc');
 
 const requiredValues = [
   ['CLOUDFLARE_ACCOUNT_ID', process.env.CLOUDFLARE_ACCOUNT_ID],
@@ -38,7 +40,6 @@ if (!Array.isArray(config.d1_databases) || config.d1_databases.length === 0) {
 
 config.d1_databases[0].database_id = process.env.D1_DATABASE_ID;
 
-mkdirSync(resolve(projectRoot, '.wrangler'), { recursive: true });
 writeFileSync(generatedConfigPath, `${JSON.stringify(config, null, 2)}\n`);
 
 const cliPath = resolve(projectRoot, 'node_modules', '.bin', 'vinext-cloudflare');
