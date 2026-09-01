@@ -11,6 +11,12 @@ export type ProductOverride = {
 export type ProductOverrideMap = Record<string, ProductOverride>;
 
 const dayMs = 24 * 60 * 60 * 1000;
+const shanghaiDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 
 export function applyProductOverride(product: Product, override?: ProductOverride) {
   const hasApr = override?.apr !== null && override?.apr !== undefined && Number.isFinite(override.apr);
@@ -65,7 +71,7 @@ export function productTermStatus(product: Product, purchaseDate: string | null 
   const start = parseDateOnly(purchaseDate);
   if (durationDays === null || !start) return null;
 
-  const todayDay = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const todayDay = calendarDayTimestamp(today);
   const elapsedDays = Math.max(0, Math.floor((todayDay - start) / dayMs));
   const remainingDays = durationDays - elapsedDays;
   const maturity = new Date(start + durationDays * dayMs);
@@ -82,8 +88,8 @@ export function manualUpdateAge(updatedAt: string | null | undefined, today = ne
   if (!updatedAt) return null;
   const updated = new Date(updatedAt);
   if (!Number.isFinite(updated.getTime())) return null;
-  const todayDay = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-  const updatedDay = Date.UTC(updated.getFullYear(), updated.getMonth(), updated.getDate());
+  const todayDay = calendarDayTimestamp(today);
+  const updatedDay = calendarDayTimestamp(updated);
   return Math.max(0, Math.floor((todayDay - updatedDay) / dayMs));
 }
 
@@ -102,6 +108,11 @@ function parseDateOnly(value: string | null | undefined) {
   return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day
     ? timestamp
     : null;
+}
+
+function calendarDayTimestamp(value: Date) {
+  const parts = Object.fromEntries(shanghaiDateFormatter.formatToParts(value).map(({ type, value: part }) => [type, part]));
+  return Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day));
 }
 
 function formatDateOnly(date: Date) {
