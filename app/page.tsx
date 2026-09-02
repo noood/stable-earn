@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
+import Image from "next/image";
 import { ApiSettings } from "@/app/components/api-settings";
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
 import { AccountBadge, ActionButton, HoldingSummary, Metric, ModalFrame, TableCell } from "@/app/components/ui";
@@ -491,7 +492,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
           }) : <tr><td colSpan={4}><EmptyProductState /></td></tr> : <tr><td colSpan={4} className="text-muted type-body px-5 py-12 text-center">正在同步持仓…</td></tr>}</tbody></table></div>
         </section>
 
-        <footer className="text-muted type-caption py-6"><p>数据仅用于监控与比较，不构成投资建议。实际到账以平台账户为准。</p></footer>
+        <footer className="site-footer text-muted type-caption py-6"><p>数据仅用于监控与比较，不构成投资建议。实际到账以平台账户为准。</p><a className="github-footer-link" href="https://github.com/noood/stable-earn" target="_blank" rel="noreferrer" aria-label="GitHub 源码仓库" title="GitHub 源码仓库"><Image src="/GitHub_Lockup_Black_Clearspace.svg" width={448} height={127} alt="" aria-hidden="true" /></a></footer>
       </div>
 
       {!isDemo && showApiSettings && <ApiSettings onClose={() => setShowApiSettings(false)} onCooldownChange={() => setManualRefreshAvailableAt(null)} />}
@@ -502,7 +503,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
 
 function AssetSwitch({ asset, onChange }: { asset: Asset; onChange: (asset: Asset) => void }) {
   const assets: Asset[] = ["USDT", "USDC", "USDGO", "BTC"];
-  return <div className="inline-flex h-full w-fit flex-wrap items-stretch gap-1">{assets.map((item) => <button key={item} onClick={() => onChange(item)} aria-current={asset === item ? "page" : undefined} className={`type-label -mb-px flex items-center gap-2 border-b-[3px] px-3.5 font-semibold transition-colors ${asset === item ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"}`}><AssetIcon asset={item} /><span>{item}</span></button>)}</div>;
+  return <div className="asset-switch inline-flex h-full w-fit max-w-full flex-nowrap items-stretch gap-1 overflow-x-auto">{assets.map((item) => <button key={item} onClick={() => onChange(item)} aria-current={asset === item ? "page" : undefined} className={`type-label -mb-px flex shrink-0 items-center gap-2 border-b-[3px] px-3.5 font-semibold transition-colors ${asset === item ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"}`}><AssetIcon asset={item} /><span>{item}</span></button>)}</div>;
 }
 
 function AssetIcon({ asset }: { asset: Asset }) {
