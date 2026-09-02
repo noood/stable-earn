@@ -27,6 +27,9 @@ type RateSource = {
 
 export type RateCoverage = "complete" | "base_only" | "max_only" | "unavailable";
 
+/** Result of the latest account-holding synchronization for an API product. */
+export type HoldingSyncState = "not_configured" | "synced" | "partial" | "error";
+
 export type ProductDataSource =
   | { productDataMode: "api"; apiAccess: "public" | "authenticated" }
   | { productDataMode: "manual"; apiAccess?: never };

@@ -1,5 +1,5 @@
 import { exchangeFetch } from "@/lib/exchange-fetch";
-import type { RateCoverage } from "@/lib/domain";
+import type { Product, RateCoverage } from "@/lib/domain";
 import { buildProductIdentity } from "@/lib/product-identity";
 
 export type LiveRate = {
@@ -21,6 +21,15 @@ export type LiveRate = {
   externalProductId?: string;
   identityKey?: string;
   identityFingerprint?: string;
+  /** Required when an adapter can return a product absent from seed-data. */
+  catalog?: {
+    accountId: string;
+    exchange: Product["exchange"];
+    region: Product["region"];
+    asset: Product["asset"];
+    holdingDataMode: Product["holdingDataMode"];
+    apiAccess: "public" | "authenticated";
+  };
 };
 
 type BybitEndpoint = {
@@ -95,6 +104,14 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
         apr: baseApr,
         fetchedAt: new Date().toISOString(),
         sourceLabel: endpoint.label,
+        catalog: {
+          accountId: endpoint.platform === "Bybit.com" ? "bybit-global" : "bybit-eu",
+          exchange: "bybit",
+          region: endpoint.platform === "Bybit.com" ? "global" : "eu",
+          asset: endpoint.coin as Product["asset"],
+          holdingDataMode: endpoint.platform === "Bybit.com" ? "api" : "manual",
+          apiAccess: "public",
+        },
       };
     } catch (error) {
       lastError = error;

@@ -152,6 +152,14 @@ async function fetchBybitShortFixedSnapshot(
       subscriptionEndsAt: subscriptionEnd > 0 ? new Date(subscriptionEnd).toISOString() : undefined,
       eligibilityRequired: selected.row.specialUserGroupRequired ?? false,
       eligibilityLabel: selected.row.specialUserGroupInfo || undefined,
+      catalog: {
+        accountId: "bybit-global",
+        exchange: "bybit" as const,
+        region: "global" as const,
+        asset: target.coin,
+        holdingDataMode: "api" as const,
+        apiAccess: "authenticated" as const,
+      },
     },
     holding,
   };

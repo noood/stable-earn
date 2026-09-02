@@ -14,7 +14,7 @@ import { isLocalPreviewRequest, localPrivateProductsPreview } from "@/lib/local-
 import { filterFallbacksByFailures } from "@/lib/sync-fallback";
 import { compareProductIdentity, type ProductIdentityChange } from "@/lib/product-identity";
 import { resolveCatalogProductIds, syncProductCatalog } from "@/lib/product-catalog";
-import type { Product } from "@/lib/domain";
+import type { HoldingSyncState, Product } from "@/lib/domain";
 import {
   formatCacheTime,
   loadSyncCache,
@@ -44,6 +44,7 @@ type PrivateProductsPayload = {
   holdingUpdates: Record<string, number>;
   holdingSourceIds: string[];
   holdingFallbacks: Record<string, string>;
+  holdingSyncStates: Record<string, HoldingSyncState>;
   fetchedAt: string;
   partial: boolean;
   note: string;
@@ -218,8 +219,15 @@ async function buildPrivatePayload(
     ...(bybitGlobalResult.snapshot?.rates ?? []),
     ...(bitget?.rates ?? []),
   ];
+  const freshHoldingUpdates = {
+    ...(binanceGlobal?.holdings ?? {}),
+    ...(binanceBahrain?.holdings ?? {}),
+    ...(bybitGlobalResult.snapshot?.holdings ?? {}),
+    ...(bitget?.holdings ?? {}),
+    ...(okxResult.snapshot?.holdings ?? {}),
+  };
   const fallbackRates = cached?.payload?.rates ?? [];
-  const catalog = await syncProductCatalog(db, userId, freshRates);
+  const catalog = await syncProductCatalog(db, userId, freshRates, Object.keys(freshHoldingUpdates));
   const rates = mergeRates(catalog.rates, fallbackRates);
   const previousRates = new Map((cached?.payload?.rates ?? []).map((rate) => [rate.productId, rate]));
   const identityChanges = Object.fromEntries(catalog.rates.map((rate) => [
@@ -230,13 +238,6 @@ async function buildPrivatePayload(
   const rateFallbacks = Object.fromEntries(rates
     .filter((rate) => !freshRateProductIds.has(rate.productId))
     .map((rate) => [rate.productId, rate.fetchedAt]));
-  const freshHoldingUpdates = {
-    ...(binanceGlobal?.holdings ?? {}),
-    ...(binanceBahrain?.holdings ?? {}),
-    ...(bybitGlobalResult.snapshot?.holdings ?? {}),
-    ...(bitget?.holdings ?? {}),
-    ...(okxResult.snapshot?.holdings ?? {}),
-  };
   const catalogProductIds = { ...await resolveCatalogProductIds(db, userId), ...catalog.productIds };
   const holdingUpdates = Object.fromEntries(Object.entries({
     ...(cached?.payload?.holdingUpdates ?? {}),
@@ -250,6 +251,10 @@ async function buildPrivatePayload(
     bitget: bitgetStatus,
     okx: okxResult.status,
   };
+  const holdingSyncStates = Object.fromEntries(catalog.products.flatMap((product) => {
+    const state = productHoldingSyncState(product, privateStatus);
+    return state ? [[product.id, state] as const] : [];
+  }));
   const privateDiagnostics: PrivateDiagnostics = {
     binanceGlobal: binanceGlobalResult.diagnostic,
     binanceBahrain: binanceBahrainResult.diagnostic,
@@ -283,6 +288,7 @@ async function buildPrivatePayload(
       ...Object.keys(freshHoldingUpdates).map((productId) => catalogProductIds[productId] ?? productId),
     ])],
     holdingFallbacks,
+    holdingSyncStates,
     fetchedAt: updatedAt,
     partial,
     note: `${buildNote(failures)} ${fallbackNote}`.trim(),
@@ -423,6 +429,18 @@ function privateFailureLabel(key: keyof PrivateStatuses, label: string, diagnost
   if (diagnostic === "timeout") return `${label}（请求超时）`;
   if (!diagnostic || diagnostic === "unknown") return `${label}（连接失败，原因待检查）`;
   return `${label}（接口返回 ${diagnostic}）`;
+}
+
+function productHoldingSyncState(product: Product, statuses: PrivateStatuses): HoldingSyncState | null {
+  if (product.holdingDataMode !== "api") return null;
+  const statusByAccountId: Record<string, PrivateStatus> = {
+    "binance-global": statuses.binanceGlobal,
+    "binance-bahrain": statuses.binanceBahrain,
+    "bybit-global": statuses.bybitGlobal,
+    "bitget-global": statuses.bitget,
+    "okx-global": statuses.okx,
+  };
+  return statusByAccountId[product.accountId] ?? "not_configured";
 }
 
 function friendlyBitgetDiagnostic(area: "产品" | "持仓", diagnostic?: string) {

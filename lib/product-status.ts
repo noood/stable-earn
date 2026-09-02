@@ -1,4 +1,4 @@
-import type { Product } from "./domain";
+import type { HoldingSyncState, Product } from "./domain";
 import {
   productNeedsManualLimit,
   productNeedsManualTerm,
@@ -19,6 +19,8 @@ export type ProductInformationIssue =
   | "锁定期限待填写"
   | "锁定期限待获取"
   | "买入日待填写";
+
+export const productIncompleteNote = "产品信息不完整，不参与收益计算";
 
 export function productInformationIssues(
   product: Product,
@@ -54,6 +56,25 @@ export function productParticipatesInInterest(
   override?: ProductOverride,
 ) {
   return productInformationIssues(product, holding, override).length === 0;
+}
+
+/**
+ * One shared explanation for an unavailable API holding. The same note is
+ * used in view and edit mode; edit mode only omits the redundant amount label
+ * because its input already says “未获取”.
+ */
+export function holdingSyncNote(state?: HoldingSyncState) {
+  switch (state) {
+    case "not_configured":
+      return "未配置 API；配置后可同步持仓";
+    case "partial":
+    case "error":
+      return "API 同步失败，持仓未获取";
+    case "synced":
+      return "接口未返回该产品持仓";
+    default:
+      return undefined;
+  }
 }
 
 /**

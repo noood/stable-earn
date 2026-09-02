@@ -118,6 +118,14 @@ export async function fetchBitgetSavingsSnapshot(
         tiers: item.tiers,
         fetchedAt,
         sourceLabel: availableRows.length > 0 ? "Bitget 官方账户产品 API" : "Bitget 官方账户持仓 API",
+        catalog: {
+          accountId: "bitget-global",
+          exchange: "bitget" as const,
+          region: "global" as const,
+          asset,
+          holdingDataMode: "api" as const,
+          apiAccess: "authenticated" as const,
+        },
       });
     });
   }

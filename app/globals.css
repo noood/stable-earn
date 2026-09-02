@@ -130,6 +130,7 @@ input:focus-visible,
   text-underline-offset: 4px;
 }
 .button-text:hover:not(:disabled) { background: var(--surface-highlight); }
+.inline-action { vertical-align: baseline; }
 
 .top-nav { border-bottom: var(--hairline) solid var(--border); background: var(--surface-nav); }
 .asset-icon { width: 1.25rem; height: 1.25rem; flex: 0 0 auto; overflow: visible; }
@@ -498,6 +499,7 @@ input:focus-visible,
   color: var(--text-secondary);
 }
 .holding-summary-muted { color: var(--text-muted); }
+.holding-summary-compact { min-height: 0; gap: .25rem; }
 .holding-summary-head {
   display: flex;
   min-width: 0;
