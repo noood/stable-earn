@@ -30,6 +30,9 @@ export type RateCoverage = "complete" | "base_only" | "max_only" | "unavailable"
 /** Result of the latest account-holding synchronization for an API product. */
 export type HoldingSyncState = "not_configured" | "synced" | "partial" | "error";
 
+/** Account-level eligibility returned by an authenticated API, or confirmed by the user. */
+export type EligibilityStatus = "eligible" | "ineligible" | "unknown";
+
 export type ProductDataSource =
   | { productDataMode: "api"; apiAccess: "public" | "authenticated" }
   | { productDataMode: "manual"; apiAccess?: never };
@@ -49,6 +52,7 @@ export type Product = {
   subscriptionEndsAt?: string;
   eligibilityRequired?: boolean;
   eligibilityLabel?: string;
+  eligibilityStatus?: EligibilityStatus;
   tiers: Tier[];
   source: RateSource;
   rateCoverage: RateCoverage;

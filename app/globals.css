@@ -252,9 +252,9 @@ input:focus-visible,
 
 .product-table { width: 100%; min-width: 61.25rem; table-layout: fixed; text-align: left; }
 .product-table-col-platform { width: 24%; }
-.product-table-col-rate { width: 24%; }
-.product-table-col-holding { width: 28%; }
-.product-table-col-effective { width: 24%; }
+.product-table-col-rate { width: 30%; }
+.product-table-col-holding { width: 30%; }
+.product-table-col-effective { width: 16%; }
 .product-table thead { background: var(--surface-subtle); color: var(--text-muted); text-transform: uppercase; letter-spacing: .07em; }
 .product-table th,
 .product-table td { vertical-align: middle; }
@@ -565,6 +565,8 @@ input:focus-visible,
   box-shadow: 0 0 0 3px var(--focus);
 }
 .holding-editor-readonly { justify-content: space-between; margin-bottom: var(--space-3); background: var(--track); }
+.eligibility-confirmation { display: flex; align-items: flex-start; gap: .4rem; color: var(--text-secondary); font-size: var(--type-micro); line-height: var(--leading-micro); }
+.eligibility-confirmation input { flex: 0 0 auto; margin: .05rem 0 0; accent-color: var(--brand); }
 
 .modal-backdrop {
   position: fixed;

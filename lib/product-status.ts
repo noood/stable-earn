@@ -18,9 +18,17 @@ export type ProductInformationIssue =
   | "活动期限待获取"
   | "锁定期限待填写"
   | "锁定期限待获取"
-  | "买入日待填写";
+  | "买入日待填写"
+  | "资格待确认"
+  | "账号不符合资格";
 
 export const productIncompleteNote = "产品信息不完整，不参与收益计算";
+
+export function productInformationNote(issues: ProductInformationIssue[]) {
+  return issues.length > 0
+    ? `${issues.join("、")}，不参与收益计算`
+    : productIncompleteNote;
+}
 
 export function productInformationIssues(
   product: Product,
@@ -29,6 +37,11 @@ export function productInformationIssues(
 ): ProductInformationIssue[] {
   const issues: ProductInformationIssue[] = [];
   const apiManaged = product.productDataMode === "api";
+
+  if (product.eligibilityRequired) {
+    if (product.eligibilityStatus === "ineligible") issues.push("账号不符合资格");
+    else if (product.eligibilityStatus !== "eligible" && override?.eligibilityConfirmed !== true) issues.push("资格待确认");
+  }
 
   if (product.rateCoverage === "unavailable" && apiManaged) return ["产品数据待获取"];
   if (product.rateCoverage === "unavailable") issues.push("APR 待填写");
@@ -43,7 +56,7 @@ export function productInformationIssues(
     issues.push(activity
       ? apiManaged ? "活动期限待获取" : "活动期限待填写"
       : apiManaged ? "锁定期限待获取" : "锁定期限待填写");
-  } else if (holding > 0 && productNeedsPurchaseDate(product) && !productTermStatus(product, override?.purchaseDate)) {
+  } else if (productNeedsPurchaseDate(product) && !productTermStatus(product, override?.purchaseDate)) {
     issues.push("买入日待填写");
   }
 

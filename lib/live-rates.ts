@@ -1,5 +1,5 @@
 import { exchangeFetch } from "@/lib/exchange-fetch";
-import type { Product, RateCoverage } from "@/lib/domain";
+import type { EligibilityStatus, Product, RateCoverage } from "@/lib/domain";
 import { buildProductIdentity } from "@/lib/product-identity";
 
 export type LiveRate = {
@@ -17,6 +17,7 @@ export type LiveRate = {
   subscriptionEndsAt?: string;
   eligibilityRequired?: boolean;
   eligibilityLabel?: string;
+  eligibilityStatus?: EligibilityStatus;
   rateCoverage?: RateCoverage;
   externalProductId?: string;
   identityKey?: string;

@@ -18,8 +18,15 @@ export function localPrivateProductsPreview(now = new Date()) {
     previewRate("by-g-btc-3d", [[0, 1, 6.4]], freshAt, "Bybit.com 官方固定期限 API", { productType: "fixed", termDays: 3 }),
     previewRate("bg-usdc", [[0, 300, 5.8], [300, null, 1.75]], cachedAt, "Bitget 官方账户 API"),
   ];
+  // Two identical Bybit products exercise the same missing purchase-date rule
+  // with different holding sources: one is read-only from API and one is
+  // editable by the user.
+  const bybitEligibilityApi = previewBybitEligibilityProduct("preview-bybit-fixed-api", "api", freshAt, now);
+  const bybitEligibilityManual = previewBybitEligibilityProduct("preview-bybit-fixed-manual", "manual", freshAt, now);
   const products = [
     ...rates.map((rate) => previewProduct(rate.productId, rate)),
+    bybitEligibilityApi,
+    bybitEligibilityManual,
     previewProduct("bn-bh-usdc", undefined, { rateCoverage: "unavailable" }),
     previewProduct("bg-usdgo"),
     previewProduct("mexc-ph-usdt"),
@@ -38,6 +45,8 @@ export function localPrivateProductsPreview(now = new Date()) {
     // from the product-rate cache above.
     "by-g-btc-3d": 0.2,
     "bg-usdc": 200,
+    "preview-bybit-fixed-api": 0,
+    "preview-bybit-fixed-manual": 80,
     "okx-usdt": 500,
     "okx-usdc": 500,
     "okx-btc": 0,
@@ -47,7 +56,7 @@ export function localPrivateProductsPreview(now = new Date()) {
     rates,
     rateFallbacks: { "bn-g-usdt": cachedAt, "bg-usdc": cachedAt },
     holdingUpdates,
-    holdingSourceIds: Object.keys(holdingUpdates),
+    holdingSourceIds: Object.keys(holdingUpdates).filter((productId) => productId !== "preview-bybit-fixed-manual"),
     holdingFallbacks: { "bn-g-usdt": cachedAt, "bg-usdc": cachedAt, "by-g-btc-3d": cachedAt },
     fetchedAt: freshAt,
     partial: true,
@@ -56,8 +65,9 @@ export function localPrivateProductsPreview(now = new Date()) {
       "bn-g-usdc": "synced",
       "by-g-btc-3d": "error",
       "by-g-usdt-short-fixed": "partial",
+      "preview-bybit-fixed-api": "synced",
     },
-    note: "本地测试数据：包含完整、缓存、待确认、未获取、同步失败、部分同步和手动维护场景。",
+    note: "本地测试数据：包含完整、缓存、字段缺失、资格待确认、未获取、同步失败、部分同步和两种 Bybit 持仓来源。",
     failures: ["Bybit.com BTC"],
     fallbackUpdatedAt: cachedAt,
     cache: {
@@ -78,6 +88,7 @@ export function localPrivateHoldingsPreview(now = new Date()) {
     "by-eu-usdc": 500,
     "bg-usdgo": 200,
     "mexc-ph-usdt": 100,
+    "preview-bybit-fixed-manual": 80,
   };
   const overrides: ProductOverrideMap = {
     "bg-usdgo": manualOverride(5.5, 1000, updatedAt),
@@ -103,6 +114,27 @@ export function localPrivateHoldingsPreview(now = new Date()) {
   overrides["manual-preview-fixed-missing-term"] = { apr: 6.2, firstTierLimit: 100, termDays: null, purchaseDate: null, updatedAt };
   overrides["manual-preview-fixed-missing-date"] = { apr: 6.0, firstTierLimit: 100, termDays: null, purchaseDate: null, updatedAt };
   return { holdings, overrides, manualProducts, hiddenSeedProductIds: [], found: true };
+}
+
+function previewBybitEligibilityProduct(id: string, holdingDataMode: "api" | "manual", fetchedAt: string, now: Date): Product {
+  const base = seedProducts.find((product) => product.id === "by-g-usdt-short-fixed")!;
+  return {
+    ...base,
+    id,
+    name: "Fixed Saving · 3 天",
+    holdingDataMode,
+    productType: "fixed",
+    termDays: 3,
+    minimumAmount: 100,
+    subscriptionEndsAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    eligibilityRequired: true,
+    eligibilityLabel: "Crazy Thursday: New User",
+    eligibilityStatus: "unknown",
+    tiers: [{ id: `${id}-tier-0`, min: 0, max: 200, apr: 555 }],
+    source: { kind: "live", label: "Bybit.com 官方固定期限 API", fetchedAt },
+    rateCoverage: "complete",
+    identityKey: id,
+  };
 }
 
 export function isLocalPreviewRequest(request: Request) {

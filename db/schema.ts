@@ -13,6 +13,7 @@ export const schemaStatements = [
     product_id TEXT NOT NULL,
     confirmed_apr REAL CHECK (confirmed_apr IS NULL OR (confirmed_apr >= 0 AND confirmed_apr <= 10000)),
     purchase_date TEXT,
+    eligibility_confirmed INTEGER,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (user_id, product_id)
   )`,

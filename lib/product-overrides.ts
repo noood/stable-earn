@@ -5,6 +5,8 @@ export type ProductOverride = {
   firstTierLimit: number | null;
   termDays: number | null;
   purchaseDate: string | null;
+  /** User confirmation used only when the API cannot determine account eligibility. */
+  eligibilityConfirmed?: boolean | null;
   updatedAt: string | null;
 };
 

@@ -11,7 +11,7 @@ import { loadCatalogProducts } from "@/lib/product-catalog";
 export const dynamic = "force-dynamic";
 
 type HoldingRow = { product_id: string; amount: number };
-type OverrideRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null; updated_at: string };
+type OverrideRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null; eligibility_confirmed: number | null; updated_at: string };
 type LimitRow = { product_id: string; first_tier_limit: number | null };
 type TermRow = { product_id: string; term_days: number | null };
 type HiddenSeedProductRow = { product_id: string };
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     loadCatalogProducts(db, userId),
     loadUserProducts(db, userId),
     db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
-    db.prepare(`SELECT product_id, confirmed_apr, purchase_date, updated_at
+    db.prepare(`SELECT product_id, confirmed_apr, purchase_date, eligibility_confirmed, updated_at
       FROM product_overrides WHERE user_id = ? ORDER BY product_id`).bind(userId).all<OverrideRow>(),
     db.prepare(`SELECT product_id, first_tier_limit
       FROM product_override_limits WHERE user_id = ? ORDER BY product_id`).bind(userId).all<LimitRow>(),
@@ -56,6 +56,7 @@ export async function GET(request: Request) {
       firstTierLimit: limits.get(row.product_id) === null || limits.get(row.product_id) === undefined ? null : Number(limits.get(row.product_id)),
       termDays: terms.get(row.product_id) === null || terms.get(row.product_id) === undefined ? null : Number(terms.get(row.product_id)),
       purchaseDate: row.purchase_date,
+      eligibilityConfirmed: row.eligibility_confirmed === null ? null : row.eligibility_confirmed === 1,
       updatedAt: row.updated_at,
     }])) as ProductOverrideMap;
   return NextResponse.json({ products: catalogProducts, holdings, overrides, manualProducts, hiddenProductIds, hiddenSeedProductIds: hiddenProductIds, found: holdingResult.results.length > 0 || overrideResult.results.length > 0 || manualProducts.length > 0 || hiddenProductIds.length > 0 }, { headers: privateResponseHeaders });
@@ -113,17 +114,20 @@ export async function PUT(request: Request) {
   const overrideEntries = changedProductIds.map((productId) => {
     const product = allProducts.find((item) => item.id === productId)!;
     const raw = typeof overrideCandidate[productId] === "object" && overrideCandidate[productId] !== null
-      ? overrideCandidate[productId] as { apr?: unknown; firstTierLimit?: unknown; termDays?: unknown; purchaseDate?: unknown }
+      ? overrideCandidate[productId] as { apr?: unknown; firstTierLimit?: unknown; termDays?: unknown; purchaseDate?: unknown; eligibilityConfirmed?: unknown }
       : {};
     const apr = productNeedsManualApr(product) ? optionalApr(raw.apr) : null;
     const firstTierLimit = productNeedsManualLimit(product) ? optionalLimit(raw.firstTierLimit) : null;
     const termDays = productNeedsManualTerm(product) ? optionalTerm(raw.termDays) : null;
     const purchaseDate = productNeedsPurchaseDate(product) ? optionalDate(raw.purchaseDate) : null;
-    if (apr === undefined || firstTierLimit === undefined || termDays === undefined || purchaseDate === undefined) return null;
-    return { productId, apr, firstTierLimit, termDays, purchaseDate };
+    const eligibilityConfirmed = product.eligibilityRequired && product.eligibilityStatus !== "eligible" && product.eligibilityStatus !== "ineligible"
+      ? optionalEligibilityConfirmed(raw.eligibilityConfirmed)
+      : null;
+    if (apr === undefined || firstTierLimit === undefined || termDays === undefined || purchaseDate === undefined || eligibilityConfirmed === undefined) return null;
+    return { productId, apr, firstTierLimit, termDays, purchaseDate, eligibilityConfirmed };
   });
   if (overrideEntries.some((entry) => entry === null)) {
-    return NextResponse.json({ error: "人工额度、APR、期限或买入日格式不正确。" }, { status: 400, headers: privateResponseHeaders });
+    return NextResponse.json({ error: "人工额度、APR、期限、买入日或资格确认格式不正确。" }, { status: 400, headers: privateResponseHeaders });
   }
 
   const updatedAt = new Date().toISOString();
@@ -146,13 +150,14 @@ export async function PUT(request: Request) {
       DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`)
       .bind(userId, productId, amount, updatedAt)),
     ...overrideEntries.flatMap((entry) => entry ? [db.prepare(`INSERT INTO product_overrides
-        (user_id, product_id, confirmed_apr, purchase_date, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        (user_id, product_id, confirmed_apr, purchase_date, eligibility_confirmed, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, product_id)
         DO UPDATE SET confirmed_apr = excluded.confirmed_apr,
           purchase_date = excluded.purchase_date,
+          eligibility_confirmed = excluded.eligibility_confirmed,
           updated_at = excluded.updated_at`)
-      .bind(userId, entry.productId, entry.apr, entry.purchaseDate, updatedAt)] : []),
+      .bind(userId, entry.productId, entry.apr, entry.purchaseDate, entry.eligibilityConfirmed === null ? null : entry.eligibilityConfirmed ? 1 : 0, updatedAt)] : []),
     ...overrideEntries.flatMap((entry) => entry ? [db.prepare(`INSERT INTO product_override_limits
         (user_id, product_id, first_tier_limit, updated_at)
         VALUES (?, ?, ?, ?)
@@ -201,4 +206,9 @@ function optionalDate(value: unknown) {
   const [year, month, day] = value.split("-").map(Number);
   const parsed = new Date(Date.UTC(year, month - 1, day));
   return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day ? value : undefined;
+}
+
+function optionalEligibilityConfirmed(value: unknown) {
+  if (value === null || value === undefined) return null;
+  return typeof value === "boolean" ? value : undefined;
 }

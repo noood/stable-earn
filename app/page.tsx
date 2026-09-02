@@ -7,7 +7,7 @@ import { useDismissibleDetails } from "@/app/components/use-dismissible-details"
 import { AccountBadge, ActionButton, HoldingSummary, Metric, ModalFrame, TableCell } from "@/app/components/ui";
 import { effectiveApr, formatAmount, remainingHighYield, type Account, type Asset, type HoldingMap, type HoldingSyncState, type Product } from "@/lib/domain";
 import { applyProductOverride, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
-import { holdingSyncNote, productCanBeRemoved, productIncompleteNote, productInformationIssues, productParticipatesInInterest } from "@/lib/product-status";
+import { holdingSyncNote, productCanBeRemoved, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
 import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
 import { accounts, seedProducts } from "@/lib/seed-data";
 
@@ -27,6 +27,7 @@ type ApiResult = {
     subscriptionEndsAt?: string;
     eligibilityRequired?: boolean;
     eligibilityLabel?: string;
+    eligibilityStatus?: Product["eligibilityStatus"];
     rateCoverage?: Product["rateCoverage"];
     externalProductId?: string;
     identityKey?: string;
@@ -246,6 +247,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
           firstTierLimit: current[productId]?.firstTierLimit ?? null,
           termDays: current[productId]?.termDays ?? null,
           purchaseDate: current[productId]?.purchaseDate ?? null,
+          eligibilityConfirmed: current[productId]?.eligibilityConfirmed ?? null,
           updatedAt: result.updatedAt,
         }])),
       }));
@@ -289,6 +291,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         firstTierLimit: current[productId]?.firstTierLimit ?? productOverrides[productId]?.firstTierLimit ?? null,
         termDays: current[productId]?.termDays ?? productOverrides[productId]?.termDays ?? null,
         purchaseDate: current[productId]?.purchaseDate ?? productOverrides[productId]?.purchaseDate ?? null,
+        eligibilityConfirmed: current[productId]?.eligibilityConfirmed ?? productOverrides[productId]?.eligibilityConfirmed ?? null,
         updatedAt: current[productId]?.updatedAt ?? productOverrides[productId]?.updatedAt ?? null,
         ...patch,
       },
@@ -620,16 +623,17 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holding, edi
   const rateHeadline = rateHeadlineFor(product, apiManaged);
   const sourceText = rateFallbackAt && product.rateCoverage !== "unavailable"
     ? `产品信息沿用 ${formatSyncDateTime(rateFallbackAt)} 的缓存数据`
-    : apiManaged && editing ? "来自 API" : "";
+    : productInfoIssues.length === 0 && apiManaged && editing ? "来自 API" : "";
   const termStatusText: ReactNode = termStatus
     ? termStatus.remainingDays > 0
       ? <>买入 {formatShortDate(manualSettings?.purchaseDate)} · 已进行 {termStatus.elapsedDays}/{termStatus.durationDays} 天 · 还有 <span className="font-semibold tabular-nums">{termStatus.remainingDays} 天到期</span></>
       : <>买入 {formatShortDate(manualSettings?.purchaseDate)} · 已到期 <span className="font-semibold tabular-nums">{Math.abs(termStatus.remainingDays)} 天</span></>
     : "";
-  const incompleteText = productInfoIssues.length > 0 ? productIncompleteNote : "";
+  const incompleteText = productInfoIssues.length > 0 ? productInformationNote(productInfoIssues) : "";
 
   return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
     {fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
+    {product.eligibilityRequired && product.eligibilityStatus !== "eligible" && product.eligibilityStatus !== "ineligible" && editing && <label className="eligibility-confirmation"><input type="checkbox" checked={manualSettings?.eligibilityConfirmed === true} disabled={saving} onChange={(event) => onOverrideChange({ eligibilityConfirmed: event.currentTarget.checked })} /><span>我确认账号符合该资格</span></label>}
     {!editing && manualTerm && <ProductFact label="活动期限" value={durationDays ? formatTerm(durationDays) : "待填写"} />}
     {sourceText && <ProductMeta text={sourceText} warning={Boolean(rateFallbackAt)} />}
     {incompleteText && <ProductMeta text={incompleteText} warning={holding > 0} />}
@@ -704,16 +708,12 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
       ? holdingCacheNote ? <HoldingSummary muted compact cacheNote={holdingCacheNote} /> : null
       : <HoldingSummary muted compact label={holdingLabel()} cacheNote={holdingCacheNote} />;
   } else if (firstTierCapacity === null) {
-    summary = editing
-      ? holdingCacheNote ? <HoldingSummary muted compact cacheNote={holdingCacheNote} /> : null
-      : <HoldingSummary compact label={holdingLabel(`${capacityLabel}不限额`)} cacheNote={holdingCacheNote} />;
+    summary = <HoldingSummary compact label={holdingLabel(`${capacityLabel}不限额`)} cacheNote={holdingCacheNote} />;
   } else {
     const note = overflow > 0
       ? `超出${capacityLabel} +${formatAmount(overflow)} ${product.asset}${nextApr !== undefined ? ` · 按 ${nextApr.toFixed(2)}%` : " · 不再计入本产品"}`
-      : product.eligibilityRequired && holding <= 0
-        ? `限${product.eligibilityLabel || "特定用户"} · 账号资格需先确认`
-        : `${product.productType === "fixed" ? "还可申购" : "还可放"} ${formatAmount(Math.max(0, firstTierCapacity - usedInFirstTier))} ${product.asset}`;
-    summary = <HoldingSummary label={editing ? undefined : holdingLabel(`${capacityLabel} ${formatAmount(firstTierCapacity)}`)} cacheNote={holdingCacheNote} note={note} progress={firstTierProgress} progressLabel={`${account.name} ${capacityLabel}使用进度`} noteTone={overflow > 0 ? "warning" : "default"} muted={product.eligibilityRequired && holding <= 0} compact={editing} />;
+      : `${product.productType === "fixed" ? "还可申购" : "还可放"} ${formatAmount(Math.max(0, firstTierCapacity - usedInFirstTier))} ${product.asset}`;
+    summary = <HoldingSummary label={holdingLabel(`${capacityLabel} ${formatAmount(firstTierCapacity)}`)} cacheNote={holdingCacheNote} note={note} progress={firstTierProgress} progressLabel={`${account.name} ${capacityLabel}使用进度`} noteTone={overflow > 0 ? "warning" : "default"} muted={product.eligibilityRequired && holding <= 0} compact={editing} />;
   }
 
   return <div className="holding-column">{editing && (editable
@@ -843,7 +843,7 @@ function fixedProductFacts(product: Product): Array<[string, string]> {
     Date.now() < Date.parse(product.subscriptionEndsAt) ? "认购截止" : "认购已截止",
     new Date(product.subscriptionEndsAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }),
   ]);
-  if (product.eligibilityRequired) facts.push(["申购资格", product.eligibilityLabel || "待确认"]);
+  if (product.eligibilityRequired) facts.push(["申购资格", product.eligibilityStatus === "ineligible" ? "账号不符合资格" : product.eligibilityLabel || "待确认"]);
   return facts;
 }
 function formatTerm(termDays: number) {
@@ -903,7 +903,8 @@ function sameOverride(left?: ProductOverride, right?: ProductOverride) {
   return (left?.apr ?? null) === (right?.apr ?? null)
     && (left?.firstTierLimit ?? null) === (right?.firstTierLimit ?? null)
     && (left?.termDays ?? null) === (right?.termDays ?? null)
-    && (left?.purchaseDate ?? null) === (right?.purchaseDate ?? null);
+    && (left?.purchaseDate ?? null) === (right?.purchaseDate ?? null)
+    && (left?.eligibilityConfirmed ?? null) === (right?.eligibilityConfirmed ?? null);
 }
 
 function sameManualProduct(left: Product, right?: Product) {
