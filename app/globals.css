@@ -249,7 +249,7 @@ input:focus-visible,
 .surface-popover { border: var(--hairline) solid var(--border-strong); border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow-dialog); }
 .progress-track { height: var(--progress-height); overflow: hidden; border-radius: 999px; background: var(--track); }
 .progress-fill { height: 100%; border-radius: inherit; background: var(--brand-muted); }
-.asset-switch { scrollbar-width: none; }
+.asset-switch { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; touch-action: pan-x; overscroll-behavior-x: contain; }
 .asset-switch::-webkit-scrollbar { display: none; }
 
 .product-table { width: 100%; min-width: 61.25rem; table-layout: fixed; text-align: left; }

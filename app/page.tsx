@@ -503,7 +503,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
 
 function AssetSwitch({ asset, onChange }: { asset: Asset; onChange: (asset: Asset) => void }) {
   const assets: Asset[] = ["USDT", "USDC", "USDGO", "BTC"];
-  return <div className="asset-switch inline-flex h-full w-fit max-w-full flex-nowrap items-stretch gap-1 overflow-x-auto">{assets.map((item) => <button key={item} onClick={() => onChange(item)} aria-current={asset === item ? "page" : undefined} className={`type-label -mb-px flex shrink-0 items-center gap-2 border-b-[3px] px-3.5 font-semibold transition-colors ${asset === item ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"}`}><AssetIcon asset={item} /><span>{item}</span></button>)}</div>;
+  return <div className="asset-switch inline-flex h-full w-fit max-w-full flex-nowrap items-stretch gap-1">{assets.map((item) => <button key={item} onClick={() => onChange(item)} aria-current={asset === item ? "page" : undefined} className={`type-label -mb-px flex shrink-0 items-center gap-2 border-b-[3px] px-3.5 font-semibold transition-colors ${asset === item ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"}`}><AssetIcon asset={item} /><span>{item}</span></button>)}</div>;
 }
 
 function AssetIcon({ asset }: { asset: Asset }) {
