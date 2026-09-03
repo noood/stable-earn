@@ -546,7 +546,9 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
             const manualSettings = activeOverrides[listedProduct.id];
             const displayProduct = applyProductOverride(baseProduct, manualSettings);
             const isManualProduct = listedProduct.id.startsWith("manual-");
-            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || baseProduct.holdingDataMode === "manual"} saving={savingHoldings} manualProduct={isManualProduct} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && baseProduct.holdingDataMode === "api" ? holdingFallbacks[listedProduct.id] : undefined} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
+            const apiHoldingSource = !isDemo && apiHoldingProductIds.has(baseProduct.id);
+            const holdingFromApi = baseProduct.holdingDataMode === "api" || apiHoldingSource;
+            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
           }) : <tr><td colSpan={4}><EmptyProductState /></td></tr>}</tbody></table></div>
         </section>
 
@@ -939,6 +941,8 @@ function failureTarget(value: string) {
   if (value.includes("交易所数据更新失败")) return "交易所";
   if (!platform) return value.replace(/（.*$/, "").trim();
   const failedAssets = platformAssets[platform].filter((asset) => value.includes(asset));
+  const failedArea = ["定期产品", "定期持仓"].find((area) => value.includes(area));
+  if (failedArea) return `${platform} ${failedArea}`;
   return failedAssets.length > 0 && failedAssets.length < platformAssets[platform].length
     ? `${platform} ${failedAssets.join("/")}`
     : platform;

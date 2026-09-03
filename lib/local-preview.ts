@@ -136,7 +136,7 @@ export function localPrivateProductsPreview(now = new Date()) {
       "preview-cycle-new": "synced",
     },
     note: "本地测试数据：包含完整、缓存、字段缺失、资格待确认、未获取、同步失败、部分同步和两种 Bybit 持仓来源。",
-    failures: ["Bybit.com BTC"],
+    failures: ["Bybit.com 定期产品"],
     fallbackUpdatedAt: cachedAt,
     cache: {
       state: "fresh" as const,

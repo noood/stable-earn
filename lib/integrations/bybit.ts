@@ -61,7 +61,7 @@ export async function fetchBybitFlexibleHoldings(
   assets: readonly SupportedAsset[] = ["USDT", "USDC"],
 ) {
   const holdings: Record<string, number> = {};
-  const rows = await Promise.all(assets.map(async (asset) => {
+  const results = await Promise.allSettled(assets.map(async (asset) => {
     const query = new URLSearchParams({ category: "FlexibleSaving", coin: asset });
     const response = await signedGet<BybitPositionRow>("/v5/earn/position", query, credentials);
     const amount = (response.result?.list ?? [])
@@ -72,12 +72,20 @@ export async function fetchBybitFlexibleHoldings(
     return [productId, amount] as const;
   }));
 
-  for (const [productId, amount] of rows) holdings[productId] = amount;
-  return { holdings };
+  results.forEach((result) => {
+    if (result.status === "fulfilled") holdings[result.value[0]] = result.value[1];
+  });
+  return {
+    holdings,
+    sync: {
+      successfulAssets: assets.filter((_, index) => results[index].status === "fulfilled"),
+      failedAssets: assets.filter((_, index) => results[index].status === "rejected"),
+    },
+  };
 }
 
 export async function fetchBybitShortFixedSnapshots(credentials: BybitCredentials) {
-  const [productResponse, positionResponse] = await Promise.all([
+  const [productResult, positionResult] = await Promise.allSettled([
     publicGet<BybitFixedProductRow>(
       "/v5/earn/fixed-term/product",
       new URLSearchParams(),
@@ -89,30 +97,39 @@ export async function fetchBybitShortFixedSnapshots(credentials: BybitCredential
       credentials,
     ),
   ]);
-  const positions = (positionResponse.result?.list ?? []).filter((row) => (
+  const productRows = productResult.status === "fulfilled" ? productResult.value.result?.list ?? [] : [];
+  const positions = (positionResult.status === "fulfilled" ? positionResult.value.result?.list ?? [] : []).filter((row) => (
     Boolean(row.productId)
     && supportedFixedAssets.has(row.coin as Product["asset"])
   ));
-  const rates = (productResponse.result?.list ?? []).flatMap((row) => {
+  const rates = productRows.flatMap((row) => {
     const rate = fixedProductRate(row);
     return rate ? [rate] : [];
   });
   const holdings: Record<string, number> = {};
 
-  for (const rate of rates) {
-    holdings[rate.productId] = positions
-      .filter((row) => row.productId === rate.externalProductId && row.coin === rate.catalog?.asset)
-      .reduce((sum, row) => sum + finiteNumber(row.amount), 0);
-  }
-  for (const position of positions) {
-    if (!position.productId) continue;
-    const matched = rates.some((rate) => rate.externalProductId === position.productId && rate.catalog?.asset === position.coin);
-    if (!matched) holdings[position.productId] = (holdings[position.productId] ?? 0) + finiteNumber(position.amount);
+  if (positionResult.status === "fulfilled") {
+    for (const rate of rates) {
+      const amount = positions
+        .filter((row) => row.productId === rate.externalProductId && row.coin === rate.catalog?.asset)
+        .reduce((sum, row) => sum + finiteNumber(row.amount), 0);
+      holdings[rate.productId] = amount;
+      if (rate.externalProductId) holdings[rate.externalProductId] = amount;
+    }
+    for (const position of positions) {
+      if (!position.productId) continue;
+      const matched = rates.some((rate) => rate.externalProductId === position.productId && rate.catalog?.asset === position.coin);
+      if (!matched) holdings[position.productId] = (holdings[position.productId] ?? 0) + finiteNumber(position.amount);
+    }
   }
 
   return {
     rates,
     holdings,
+    sync: {
+      products: productResult.status === "fulfilled",
+      holdings: positionResult.status === "fulfilled",
+    },
   };
 }
 

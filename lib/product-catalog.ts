@@ -4,20 +4,21 @@ import type { LiveRate } from "./live-rates";
 import { productShouldBeActive } from "./opportunity-policy";
 import { productIdentityFingerprint } from "./product-identity";
 import { resolveProductWithoutApiData } from "./product-status";
-import { defaultCatalogSeedProducts } from "./seed-data";
+import { catalogProductTemplates } from "./seed-data";
 
-const retiredDefaultProductIds = new Set(["by-eu-usdc"]);
+const retiredLegacyProductIds = new Set(["by-eu-usdc"]);
 
-export function isRetiredDefaultProduct(product: Pick<Product, "id" | "accountId" | "asset" | "productDataMode">) {
-  return retiredDefaultProductIds.has(product.id)
-    || (product.accountId === "bybit-eu" && product.asset === "USDC" && product.productDataMode === "manual");
+export function isLegacyCatalogPlaceholder(product: Pick<Product, "id" | "productDataMode" | "source" | "rateCoverage" | "tiers">) {
+  return retiredLegacyProductIds.has(product.id)
+    || (product.productDataMode === "api" && (product.source.kind !== "live" || !productHasKnownApr(product)));
 }
 
 /**
  * The catalogue is user-scoped because authenticated APIs may expose a
  * different product set for every account. Identity changes create a new row;
- * old rows are retained for history and are archived only when their holding
- * is explicitly known to be zero.
+ * old verified rows are retained for history and normally archived only when
+ * their holding is explicitly known to be zero. Unverified legacy placeholders
+ * are the exception and are retired during the next sync.
  */
 type CatalogRow = {
   owner_id: string;
@@ -80,11 +81,11 @@ export async function prepareProductCatalogSync(
   const statements: D1PreparedStatement[] = [];
   const selectedByCanonical = new Map<string, Set<string>>();
 
-  for (const rate of deduplicateRates(incomingRates)) {
+  for (const rate of deduplicateRates(incomingRates).filter(rateHasKnownApr)) {
     const canonicalProductId = rate.canonicalProductId ?? rate.productId;
     const identityKey = rate.identityKey ?? canonicalProductId;
     const fingerprint = normalizeFingerprint(rate.identityFingerprint);
-    const seed = defaultCatalogSeedProducts.find((product) => product.id === canonicalProductId);
+    const seed = catalogProductTemplates.find((product) => product.id === canonicalProductId);
     const exact = byIdentity.get(identityLookupKey(identityKey, fingerprint));
     const compatible = !exact ? rows.find((row) => {
       if (row.identity_key !== identityKey) return false;
@@ -133,15 +134,20 @@ export async function prepareProductCatalogSync(
     }
   }
 
-  // Some account APIs return holdings without product-rate rows. Positive
-  // holdings still activate the matching catalogue/seed product.
+  // Some account APIs return holdings without product-rate rows. A positive
+  // holding can activate a manual-information shell; an API-information
+  // template still cannot enter without a verified APR.
   for (const [sourceId, rawAmount] of Object.entries(freshHoldings)) {
     if (productIds[sourceId]) continue;
     const amount = Number(rawAmount);
     const current = resolveExistingRow(rows, sourceId);
-    const seed = defaultCatalogSeedProducts.find((product) => product.id === sourceId);
+    const seed = catalogProductTemplates.find((product) => product.id === sourceId);
     const base = current ? parseProduct(current.payload)[0] : seed;
-    if (!base || !Number.isFinite(amount)) continue;
+    if (!base || !Number.isFinite(amount) || isLegacyCatalogPlaceholder(base)) continue;
+    // A zero balance alone must not turn a normalization template into a
+    // user-visible manual product. Positive holdings still need a row so the
+    // user can complete product fields that the account API does not expose.
+    if (!current && base.productDataMode === "manual" && amount <= 0) continue;
     const id = current?.product_id ?? base.id;
     const product = { ...base, id };
     const active = productShouldBeActive(product, { known: true, amount }, current?.status === "active");
@@ -161,27 +167,23 @@ export async function prepareProductCatalogSync(
     }
   }
 
-  // Retire legacy default placeholders that are no longer part of the
-  // catalogue. Keep a positive holding visible, but allow a future API rate
-  // (with a real product payload) to create/reactivate the product normally.
+  // Old versions inserted API templates before the upstream API had ever
+  // returned a usable APR. Retire every such placeholder; a later valid API
+  // result can update/reactivate the same identity with a cached APR.
   for (const row of rows.filter((candidate) => candidate.status === "active")) {
     if (selectedByCanonical.has(row.canonical_product_id) || selectedByCanonical.has(row.product_id)) continue;
     const product = parseProduct(row.payload)[0];
-    if (!product || !isRetiredDefaultProduct(product)) continue;
-    const evidence = product
-      ? existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeAccounts)
-      : { known: false, amount: 0 };
-    if (evidence.known && evidence.amount > 0) continue;
-    if (product) planned.set(row.product_id, { product, status: "archived" });
+    if (!product || !isLegacyCatalogPlaceholder(product)) continue;
+    planned.set(row.product_id, { product, status: "archived" });
     statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
   }
-  // A previous delete should not block a later real API product with the same
-  // identifier. Only clear the marker when there is no positive holding to
-  // preserve the user's explicit hide choice for an owned product.
-  for (const productId of retiredDefaultProductIds) {
-    const freshAmount = firstHolding(freshHoldings, [productId]);
-    const persistedAmount = persistedHoldings.get(productId);
-    if ((freshAmount !== undefined && freshAmount > 0) || (persistedAmount !== undefined && persistedAmount > 0)) continue;
+  // Deleting an old placeholder must not hide a real API-backed product that
+  // later reuses its stable id.
+  const legacyPlaceholderIds = rows.flatMap((row) => {
+    const product = parseProduct(row.payload)[0];
+    return product && isLegacyCatalogPlaceholder(product) ? [row.product_id] : [];
+  });
+  for (const productId of new Set([...retiredLegacyProductIds, ...legacyPlaceholderIds])) {
     statements.push(db.prepare("DELETE FROM hidden_products WHERE user_id = ? AND product_id = ?").bind(ownerId, productId));
     statements.push(db.prepare("DELETE FROM hidden_seed_products WHERE user_id = ? AND product_id = ?").bind(ownerId, productId));
   }
@@ -218,7 +220,8 @@ function holdingEvidence(
   if (freshValue !== undefined) return { known: true, amount: freshValue };
   if (completeAccounts.has(product.accountId)) return { known: true, amount: 0 };
   const persistedValue = persisted.get(id);
-  return persistedValue === undefined ? { known: false, amount: 0 } : { known: true, amount: persistedValue };
+  if (persistedValue !== undefined) return { known: true, amount: persistedValue };
+  return product.holdingDataMode === "manual" ? { known: true, amount: 0 } : { known: false, amount: 0 };
 }
 
 function existingHoldingEvidence(
@@ -232,7 +235,8 @@ function existingHoldingEvidence(
   if (freshValue !== undefined) return { known: true, amount: freshValue };
   if (completeAccounts.has(product.accountId)) return { known: true, amount: 0 };
   const persistedValue = persisted.get(row.product_id);
-  return persistedValue === undefined ? { known: false, amount: 0 } : { known: true, amount: persistedValue };
+  if (persistedValue !== undefined) return { known: true, amount: persistedValue };
+  return product.holdingDataMode === "manual" ? { known: true, amount: 0 } : { known: false, amount: 0 };
 }
 
 function firstHolding(values: Record<string, number>, ids: Array<string | undefined>) {
@@ -265,6 +269,14 @@ function deduplicateRates(rates: LiveRate[]) {
     byIdentity.set(identityLookupKey(identity, normalizeFingerprint(rate.identityFingerprint)), rate);
   }
   return [...byIdentity.values()];
+}
+
+function rateHasKnownApr(rate: LiveRate) {
+  return rate.rateCoverage !== "unavailable" && Number.isFinite(rate.apr);
+}
+
+function productHasKnownApr(product: Pick<Product, "rateCoverage" | "tiers">) {
+  return product.rateCoverage !== "unavailable" && product.tiers.some((tier) => Number.isFinite(tier.apr));
 }
 
 function updateCatalogStatement(

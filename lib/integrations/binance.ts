@@ -75,6 +75,9 @@ export async function fetchBinanceFlexibleSnapshot(
     const position = positionRows[0];
     const rateSource = product ?? position;
     if (!rateSource) throw new Error(`Binance returned no ${asset} flexible product`);
+    if (!Number.isFinite(Number.parseFloat(rateSource.latestAnnualPercentageRate ?? ""))) {
+      throw new Error(`Binance returned no ${asset} APR`);
+    }
 
     const tiers = parseBinanceTiers(
       asset,

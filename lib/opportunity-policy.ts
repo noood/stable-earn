@@ -44,5 +44,5 @@ export function productShouldBeActive(
     return alreadyActive && !holding.known;
   }
   if (productQualifiesAsOpportunity(product)) return true;
-  return alreadyActive && !holding.known;
+  return false;
 }

@@ -186,7 +186,20 @@ async function buildPrivatePayload(
         fetchBybitFlexibleHoldings(bybitCredentials, "global"),
         fetchBybitShortFixedSnapshots(bybitCredentials),
       ]);
-      return { holdings: { ...flexible.holdings, ...fixed.holdings }, rates: fixed.rates };
+      const failedScopes = [
+        ...flexible.sync.failedAssets,
+        !fixed.sync.products ? "定期产品" : null,
+        !fixed.sync.holdings ? "定期持仓" : null,
+      ].filter((scope): scope is string => Boolean(scope));
+      const successfulParts = flexible.sync.successfulAssets.length
+        + Number(fixed.sync.products)
+        + Number(fixed.sync.holdings);
+      return {
+        holdings: { ...flexible.holdings, ...fixed.holdings },
+        rates: fixed.rates,
+        failedScopes,
+        successfulParts,
+      };
     },
   );
   const bitgetCredential = credentials["bitget-global"];
@@ -219,6 +232,17 @@ async function buildPrivatePayload(
   const publicFailures = publicSnapshot.failures;
   const binanceGlobal: BinanceFlexibleSnapshot | null = binanceGlobalResult.snapshot;
   const binanceBahrain: BinanceFlexibleSnapshot | null = binanceBahrainResult.snapshot;
+  const bybitGlobal = bybitGlobalResult.snapshot;
+  const bybitGlobalStatus: PrivateStatus = bybitGlobalResult.status !== "synced" || !bybitGlobal
+    ? bybitGlobalResult.status
+    : bybitGlobal.failedScopes.length === 0
+      ? "synced"
+      : bybitGlobal.successfulParts > 0
+        ? "partial"
+        : "error";
+  const bybitGlobalDiagnostic = bybitGlobal?.failedScopes.length
+    ? `scopes:${bybitGlobal.failedScopes.join("|")}`
+    : bybitGlobalResult.diagnostic;
   const bitget: BitgetSavingsSnapshot | null = bitgetResult.snapshot;
   const bitgetStatus: PrivateStatus = bitgetResult.status !== "synced" || !bitget
     ? bitgetResult.status
@@ -237,13 +261,13 @@ async function buildPrivatePayload(
     ...publicRates,
     ...(binanceGlobal?.rates ?? []),
     ...(binanceBahrain?.rates ?? []),
-    ...(bybitGlobalResult.snapshot?.rates ?? []),
+    ...(bybitGlobal?.rates ?? []),
     ...(bitget?.rates ?? []),
   ];
   const freshHoldingUpdates = {
     ...(binanceGlobal?.holdings ?? {}),
     ...(binanceBahrain?.holdings ?? {}),
-    ...(bybitGlobalResult.snapshot?.holdings ?? {}),
+    ...(bybitGlobal?.holdings ?? {}),
     ...(bitget?.holdings ?? {}),
     ...(okxResult.snapshot?.holdings ?? {}),
   };
@@ -251,7 +275,7 @@ async function buildPrivatePayload(
   const completeAccountIds = [
     binanceGlobalResult.status === "synced" ? "binance-global" : null,
     binanceBahrainResult.status === "synced" ? "binance-bahrain" : null,
-    bybitGlobalResult.status === "synced" ? "bybit-global" : null,
+    bybitGlobalStatus === "synced" ? "bybit-global" : null,
     bitgetStatus === "synced" ? "bitget-global" : null,
     okxResult.status === "synced" ? "okx-global" : null,
   ].filter((accountId): accountId is string => Boolean(accountId));
@@ -264,9 +288,17 @@ async function buildPrivatePayload(
     compareProductIdentity(previousRates.get(rate.productId), rate),
   ]));
   const freshRateProductIds = new Set(catalog.rates.map((rate) => rate.productId));
-  const rateFallbacks = Object.fromEntries(rates
+  const fallbackRateTimes = new Map(rates
     .filter((rate) => !freshRateProductIds.has(rate.productId))
     .map((rate) => [rate.productId, rate.fetchedAt]));
+  const rateFallbacks = Object.fromEntries(catalog.products
+    .filter((product) => product.productDataMode === "api"
+      && product.source.kind === "live"
+      && !freshRateProductIds.has(product.id))
+    .flatMap((product) => {
+      const fallbackAt = fallbackRateTimes.get(product.id) ?? product.source.fetchedAt ?? cached?.updatedAt;
+      return fallbackAt ? [[product.id, fallbackAt] as const] : [];
+    }));
   const catalogProductIds = { ...await resolveCatalogProductIds(db, userId), ...catalog.productIds };
   const normalizedFreshHoldings: Record<string, number> = Object.fromEntries(Object.entries(freshHoldingUpdates)
     .map(([productId, amount]) => [catalogProductIds[productId] ?? productId, amount]));
@@ -286,7 +318,7 @@ async function buildPrivatePayload(
   const privateStatus: PrivateStatuses = {
     binanceGlobal: binanceGlobalResult.status,
     binanceBahrain: binanceBahrainResult.status,
-    bybitGlobal: bybitGlobalResult.status,
+    bybitGlobal: bybitGlobalStatus,
     bitget: bitgetStatus,
     okx: okxResult.status,
   };
@@ -297,7 +329,7 @@ async function buildPrivatePayload(
   const privateDiagnostics: PrivateDiagnostics = {
     binanceGlobal: binanceGlobalResult.diagnostic,
     binanceBahrain: binanceBahrainResult.diagnostic,
-    bybitGlobal: bybitGlobalResult.diagnostic,
+    bybitGlobal: bybitGlobalDiagnostic,
     bitget: bitgetDiagnostic,
     okx: okxResult.diagnostic,
   };
@@ -424,9 +456,10 @@ function buildFailures(status: PrivateStatuses, diagnostics: PrivateDiagnostics,
   ] as const).flatMap(([key, label]) => status[key] === "error"
     ? [privateFailureLabel(key, label, diagnostics[key])]
     : []);
-  const partialFailure = status.bitget === "partial"
-    ? [`Bitget（${diagnostics.bitget || "部分数据未返回"}）`]
-    : [];
+  const partialFailure = [
+    ...(status.bybitGlobal === "partial" ? scopedBybitFailures(diagnostics.bybitGlobal) : []),
+    ...(status.bitget === "partial" ? [`Bitget（${diagnostics.bitget || "部分数据未返回"}）`] : []),
+  ];
   const publicPlatforms = summarizePublicFailures(publicFailures);
   return [...failed, ...partialFailure, ...publicPlatforms.filter((platform) => (
     !failed.some((failure) => platform.startsWith(failure.replace(/（.*$/, "")))
@@ -458,6 +491,7 @@ function extractPlatforms(text: string) {
 }
 
 function privateFailureLabel(key: keyof PrivateStatuses, label: string, diagnostic?: string) {
+  if (key === "bybitGlobal" && diagnostic?.startsWith("scopes:")) return label;
   if (key === "bitget" && diagnostic?.includes("public_blocked")) {
     return `${label}（官方 API 暂时拒绝本站服务器访问）`;
   }
@@ -467,6 +501,19 @@ function privateFailureLabel(key: keyof PrivateStatuses, label: string, diagnost
   if (diagnostic === "timeout") return `${label}（请求超时）`;
   if (!diagnostic || diagnostic === "unknown") return `${label}（连接失败，原因待检查）`;
   return `${label}（接口返回 ${diagnostic}）`;
+}
+
+function scopedBybitFailures(diagnostic?: string) {
+  const scopes = diagnostic?.startsWith("scopes:")
+    ? diagnostic.slice("scopes:".length).split("|").filter(Boolean)
+    : [];
+  if (scopes.length === 0) return ["Bybit.com"];
+  const assets = ["USDT", "USDC"].filter((asset) => scopes.includes(asset));
+  const areas = scopes.filter((scope) => scope === "定期产品" || scope === "定期持仓");
+  return [
+    ...(assets.length > 0 ? [`Bybit.com ${assets.join("/")}`] : []),
+    ...areas.map((area) => `Bybit.com ${area}`),
+  ];
 }
 
 function productHoldingSyncState(product: Product, statuses: PrivateStatuses): HoldingSyncState | null {

@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: 'Stable Earn',
-  description: '跨平台 USDT 与 USDC 活期理财利率和持仓监控台',
+  description: '跨平台稳定币与 BTC 理财利率和持仓监控台',
   icons: {
     icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
     shortcut: '/favicon.svg',
