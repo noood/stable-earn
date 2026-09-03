@@ -49,7 +49,7 @@ type ApiResult = {
   identityChanges?: Record<string, { state: "new" | "unchanged" | "changed"; previousKey?: string; currentKey?: string }>;
   failures?: string[];
   cache?: {
-    state: "fresh" | "updated" | "stale" | "cooldown" | "error";
+    state: "fresh" | "updated" | "stale" | "syncing" | "cooldown" | "error";
     updatedAt: string | null;
     expiresAt: string | null;
     cooldownUntil: string | null;
@@ -100,6 +100,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const [loading, setLoading] = useState(false);
   const [hasSyncFailure, setHasSyncFailure] = useState(false);
   const [syncFailures, setSyncFailures] = useState<string[]>([]);
+  const [syncing, setSyncing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [manualRefreshAvailableAt, setManualRefreshAvailableAt] = useState<string | null>(null);
   const [clock, setClock] = useState(() => Date.now());
@@ -107,6 +108,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const productOverridesRef = useRef<ProductOverrideMap>({});
   const manualProductsRef = useRef<Product[]>([]);
   const hiddenProductIdsRef = useRef<string[]>([]);
+  const holdingsRef = useRef<HoldingMap>(holdings);
   const previewQuery = localPreview ? "?preview=1" : "";
   const holdingsEndpoint = `/private/api/holdings${previewQuery}`;
   const productsEndpoint = `/private/api/products${previewQuery}`;
@@ -132,11 +134,24 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   useEffect(() => { productOverridesRef.current = productOverrides; }, [productOverrides]);
   useEffect(() => { manualProductsRef.current = manualProducts; }, [manualProducts]);
   useEffect(() => { hiddenProductIdsRef.current = hiddenProductIds; }, [hiddenProductIds]);
+  useEffect(() => { holdingsRef.current = holdings; }, [holdings]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    // Keep polling even when the first request failed and there is no cache
+    // timestamp yet; a later scheduled refresh should appear without reload.
+    if (isDemo || editing) return;
+    const timer = window.setInterval(() => {
+      void refreshRates(holdingsRef.current, { silent: true });
+    }, 60_000);
+    return () => window.clearInterval(timer);
+    // Polling only reads the cache; avoid rerunning it for every portfolio update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, isDemo, productsEndpoint]);
 
   useEffect(() => {
     async function loadHoldings() {
@@ -193,15 +208,28 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function refreshRates(baseHoldings: HoldingMap = holdings, options?: { manual?: boolean; response?: Promise<Response> }) {
-    setLoading(true);
+  async function refreshRates(baseHoldings: HoldingMap = holdings, options?: { manual?: boolean; response?: Promise<Response>; silent?: boolean }) {
+    if (!options?.silent) setLoading(true);
     try {
       const endpoint = options?.manual ? `${productsEndpoint}${productsEndpoint.includes("?") ? "&" : "?"}refresh=1` : productsEndpoint;
       const response = await (options?.response ?? fetch(endpoint, { cache: "no-store" }));
-      if (!response.ok) throw new Error("rate refresh failed");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null) as { cache?: ApiResult["cache"] } | null;
+        if (errorData?.cache?.state === "error") {
+          setSyncing(false);
+          setHasSyncFailure(true);
+          setSyncFailures(["产品和持仓数据更新失败"]);
+          setLastUpdated(errorData.cache.updatedAt);
+          setManualRefreshAvailableAt(errorData.cache.cooldownUntil);
+          setClock(Date.now());
+          return;
+        }
+        throw new Error("rate refresh failed");
+      }
       const data = await response.json() as ApiResult;
       const hardFailure = data.cache?.state === "stale" || data.cache?.state === "error";
       const failures = data.failures?.filter(Boolean) ?? [];
+      setSyncing(data.cache?.state === "syncing");
       setHasSyncFailure(hardFailure || data.partial || failures.length > 0);
       setSyncFailures(failures);
       setRateFallbacks(data.rateFallbacks ?? {});
@@ -220,14 +248,16 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       if (!isDemo && Object.keys(acceptedHoldingUpdates).length > 0) {
         const next = { ...baseHoldings, ...acceptedHoldingUpdates };
         setHoldings(next);
-        void persistPortfolio(next, productOverridesRef.current, manualProductsRef.current, {
-          holdingProductIds: Object.keys(acceptedHoldingUpdates),
-          overrideProductIds: [],
-          manualProductIds: [],
-          deletedManualProductIds: [],
-        }).catch(() => {
-          // The freshly read values stay visible even if the background cloud save fails.
-        });
+        if (!options?.silent) {
+          void persistPortfolio(next, productOverridesRef.current, manualProductsRef.current, {
+            holdingProductIds: Object.keys(acceptedHoldingUpdates),
+            overrideProductIds: [],
+            manualProductIds: [],
+            deletedManualProductIds: [],
+          }).catch(() => {
+            // The freshly read values stay visible even if the background cloud save fails.
+          });
+        }
       }
       const updatedAt = data.cache?.updatedAt
         ?? data.fetchedAt
@@ -236,10 +266,13 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       setManualRefreshAvailableAt(data.cache?.cooldownUntil ?? null);
       setClock(Date.now());
     } catch {
-      setHasSyncFailure(true);
-      setSyncFailures(["交易所"]);
+      setSyncing(false);
+      if (!options?.silent) {
+        setHasSyncFailure(true);
+        setSyncFailures(["交易所"]);
+      }
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
     }
   }
 
@@ -468,8 +501,10 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     : sum, 0);
   const holdingProductCount = assetProducts.filter((product) => holdingIsKnown(product) && (activeHoldings[product.id] ?? 0) > 0).length;
   const manualRefreshCooling = Boolean(manualRefreshAvailableAt && Date.parse(manualRefreshAvailableAt) > clock);
-  const automaticRefreshSummary = formatSyncDateTime(nextScheduledRefreshAt(clock));
-  const currentDataSummary = loading
+  const automaticRefreshSummary = syncing ? null : formatSyncDateTime(nextScheduledRefreshAt(clock));
+  const currentDataSummary = syncing && !lastUpdated
+    ? "首次数据同步中，请稍候。"
+    : loading
     ? "正在更新…"
     : localPreview
       ? lastUpdated
@@ -485,7 +520,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const failureSummary = wholeUpdateFailed
     ? "本次产品和持仓数据更新失败；下次更新将重试。"
     : `${failedPlatforms.length ? failedPlatforms.join("、") : "交易所"} API 暂不可用；下次更新将重试。`;
-  const initialLoading = !isDemo && (!holdingsReady || (loading && !lastUpdated));
+  const initialLoading = !isDemo && (!holdingsReady || (loading && !lastUpdated) || (syncing && !lastUpdated));
 
   return (
     <main className="min-h-screen">
@@ -509,9 +544,9 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         <div className="card type-caption mb-5 flex items-center justify-between gap-4 px-5 py-3.5" aria-live="polite">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
-            {initialLoading
+            {initialLoading && !syncing
               ? <span className="skeleton-block skeleton-notice" aria-hidden="true" />
-              : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{!loading && !isDemo && hasSyncFailure && <span className="text-warning font-semibold"> {failureSummary}</span>}</p>}
+            : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{!loading && !isDemo && syncing && lastUpdated && <span className="text-secondary font-semibold"> 正在更新数据中，请稍候。</span>}{!loading && !isDemo && !syncing && hasSyncFailure && <span className="text-warning font-semibold"> {failureSummary}</span>}</p>}
           </div>
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
         </div>

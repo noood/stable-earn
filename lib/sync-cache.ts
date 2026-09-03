@@ -1,8 +1,9 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 
 const DEFAULT_MANUAL_REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
+const SYNC_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
 
-export type SyncCacheState = "fresh" | "updated" | "stale" | "cooldown" | "error";
+export type SyncCacheState = "fresh" | "updated" | "stale" | "syncing" | "cooldown" | "error";
 
 type SyncCacheMetadata = {
   state: SyncCacheState;
@@ -57,6 +58,19 @@ export function manualCooldownUntil(
   return futureTime(record?.lastManualAt, durationMs, now);
 }
 
+/**
+ * A scheduled refresh records its attempt before contacting any exchange.
+ * Until the cache is saved or a final error is recorded, a recent attempt is
+ * the only durable signal that the retry window is still in progress.
+ */
+export function syncAttemptInProgress(record: SyncCacheRecord<unknown> | null, now = Date.now()) {
+  const attemptedAt = timestamp(record?.lastAttemptAt);
+  const manualAt = timestamp(record?.lastManualAt);
+  const updatedAt = timestamp(record?.updatedAt);
+  if (attemptedAt === null || attemptedAt === manualAt || record?.lastError || (updatedAt !== null && attemptedAt <= updatedAt)) return false;
+  return now - attemptedAt <= SYNC_ATTEMPT_WINDOW_MS;
+}
+
 export function syncCacheMetadata(
   record: SyncCacheRecord<unknown> | null,
   state: SyncCacheState,
@@ -89,7 +103,8 @@ export async function recordSyncAttempt(
         last_manual_at = CASE
           WHEN excluded.last_manual_at IS NOT NULL THEN excluded.last_manual_at
           ELSE sync_snapshots.last_manual_at
-        END`)
+        END,
+        last_error = NULL`)
     .bind(ownerId, cacheKey, attemptedAt, manual ? attemptedAt : null)
     .run();
   return attemptedAt;

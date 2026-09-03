@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { credentialAccount, credentialAccounts, deleteCredential, listConfiguredCredentialIds, manualDataAccounts, saveCredential, type CredentialAccountId } from "@/lib/credentials";
 import { getDatabase, getUserIdentity } from "@/lib/db";
+import { archiveUnheldAuthenticatedCatalogProducts } from "@/lib/product-catalog";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
 import { deleteSyncCache } from "@/lib/sync-cache";
 
@@ -59,6 +60,7 @@ export async function DELETE(request: Request) {
   if (!account) return NextResponse.json({ error: "不支持该账户。" }, { status: 400, headers: privateResponseHeaders });
   const db = await getDatabase();
   await deleteCredential(db, identity.userId, account.id as CredentialAccountId);
+  await archiveUnheldAuthenticatedCatalogProducts(db, identity.userId, account.id);
   await deleteSyncCache(db, identity.userId, "private-products");
   return NextResponse.json({ deleted: true, accountId: account.id }, { headers: privateResponseHeaders });
 }

@@ -180,6 +180,34 @@ export async function resolveCatalogProductIds(db: D1Database, ownerId: string) 
   return map;
 }
 
+/**
+ * Removing an account key should stop showing API-only products that have no
+ * recorded holding. The catalog row remains archived for history and can be
+ * reactivated if the account is configured again and the product is found.
+ */
+export async function archiveUnheldAuthenticatedCatalogProducts(
+  db: D1Database,
+  ownerId: string,
+  accountId: string,
+) {
+  const archivedAt = new Date().toISOString();
+  await db.prepare(`UPDATE product_catalog
+      SET status = 'archived', archived_at = ?, last_seen_at = ?
+      WHERE owner_id = ?
+        AND status = 'active'
+        AND json_valid(payload)
+        AND json_extract(payload, '$.accountId') = ?
+        AND json_extract(payload, '$.productDataMode') = 'api'
+        AND json_extract(payload, '$.apiAccess') = 'authenticated'
+        AND COALESCE((
+          SELECT amount FROM holdings
+          WHERE holdings.user_id = product_catalog.owner_id
+            AND holdings.product_id = product_catalog.product_id
+        ), 0) <= 0`)
+    .bind(archivedAt, archivedAt, ownerId, accountId)
+    .run();
+}
+
 function holdingEvidence(
   product: Product,
   rate: LiveRate,

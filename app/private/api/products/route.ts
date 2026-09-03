@@ -22,6 +22,7 @@ import {
   prepareSyncCacheSave,
   recordSyncAttempt,
   recordSyncFailure,
+  syncAttemptInProgress,
   syncCacheMetadata,
   type SyncCacheRecord,
   type SyncCacheState,
@@ -83,12 +84,25 @@ export async function GET(request: Request) {
   const manualCooldownDuration = manualRefreshCooldownMs(manualCooldownMinutes);
 
   if (!manual) {
-    if (cached?.payload) return cachedResponse(cached, cached.lastError ? "error" : "fresh", "按每日 08:00、20:00 的计划缓存读取，未请求交易所。", now, manualCooldownDuration);
+    if (syncAttemptInProgress(cached, now)) {
+      return initialSyncingResponse(cached, now, manualCooldownDuration);
+    }
+    if (cached?.payload) {
+      const state = cached.lastError ? "error" : "fresh";
+      const statusText = "按每日 08:00、20:00 的计划缓存读取，未请求交易所。";
+      return cachedResponse(cached, state, statusText, now, manualCooldownDuration);
+    }
+    if (cached?.lastError) {
+      return initialErrorResponse(cached, now, manualCooldownDuration);
+    }
     try {
       const saved = await refreshPrivateProductsCache(db, identity.userId);
       return cachedResponse(saved, "updated", "已完成首次产品同步。", now, manualCooldownDuration);
     } catch {
       const failedCache = await loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey);
+      if (syncAttemptInProgress(failedCache, Date.now())) {
+        return initialSyncingResponse(failedCache, Date.now(), manualCooldownDuration);
+      }
       return NextResponse.json({ error: "交易所数据暂时无法获取，且当前账户尚无成功缓存。", cache: syncCacheMetadata(failedCache, "error", now, manualCooldownDuration) }, {
         status: 502,
         headers: privateResponseHeaders,
@@ -382,24 +396,56 @@ function cachedResponse(
 ) {
   const payload = record.payload!;
   const failures = payload.failures ?? legacyFailures(payload.note);
-  const responseFailures = state === "error"
-    ? ["产品和持仓数据更新失败"]
-    : failures;
+  const responseFailures = state === "error" ? ["产品和持仓数据更新失败"] : state === "syncing" ? [] : failures;
+  const showPartialFallbacks = state !== "syncing" && payload.partial;
   return NextResponse.json({
     ...payload,
+    partial: state === "syncing" ? false : payload.partial,
     rateFallbacks: state === "error"
       ? Object.fromEntries(payload.rates.map((rate) => [rate.productId, rate.fetchedAt || record.updatedAt]))
-      : payload.partial ? filterFallbacksByFailures(payload.rateFallbacks ?? {}, failures) : {},
+      : showPartialFallbacks ? filterFallbacksByFailures(payload.rateFallbacks ?? {}, failures) : {},
     holdingFallbacks: state === "error"
       ? Object.fromEntries(Object.keys(payload.holdingUpdates).map((productId) => [productId, record.updatedAt]))
-      : payload.partial ? filterFallbacksByFailures(payload.holdingFallbacks ?? {}, failures) : {},
+      : showPartialFallbacks ? filterFallbacksByFailures(payload.holdingFallbacks ?? {}, failures) : {},
     fetchedAt: record.updatedAt ?? payload.fetchedAt,
     cache: syncCacheMetadata(record, state, now, manualCooldownDuration),
-    note: `${statusText} ${normalizeLegacyNote(payload.note)}`.trim(),
+    note: state === "syncing" ? statusText : `${statusText} ${normalizeLegacyNote(payload.note)}`.trim(),
     failures: responseFailures,
-    fallbackUpdatedAt: payload.fallbackUpdatedAt
+    fallbackUpdatedAt: state === "syncing" ? null : payload.fallbackUpdatedAt
       ?? (state === "error" ? record.updatedAt : null),
   }, { headers: privateResponseHeaders });
+}
+
+function initialSyncingResponse(
+  record: SyncCacheRecord<PrivateProductsPayload> | null,
+  now: number,
+  manualCooldownDuration: number,
+) {
+  return NextResponse.json({
+    products: [],
+    rates: [],
+    rateFallbacks: {},
+    holdingUpdates: {},
+    holdingSourceIds: [],
+    holdingFallbacks: {},
+    holdingSyncStates: {},
+    partial: false,
+    note: "首次数据同步进行中，等待自动重试。",
+    failures: [],
+    fallbackUpdatedAt: null,
+    cache: syncCacheMetadata(record, "syncing", now, manualCooldownDuration),
+  }, { headers: privateResponseHeaders });
+}
+
+function initialErrorResponse(
+  record: SyncCacheRecord<PrivateProductsPayload>,
+  now: number,
+  manualCooldownDuration: number,
+) {
+  return NextResponse.json({
+    error: "交易所数据暂时无法获取，且当前账户尚无成功缓存。",
+    cache: syncCacheMetadata(record, "error", now, manualCooldownDuration),
+  }, { status: 502, headers: privateResponseHeaders });
 }
 
 function updatedFallbackTime(value: string | undefined) {

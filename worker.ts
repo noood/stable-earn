@@ -19,7 +19,9 @@ async function scheduledRefresh() {
         await refreshPrivateProductsCache(db, userId, {
           acceptPartial: finalAttempt,
           persistFailure: finalAttempt,
-          recordAttempt: finalAttempt,
+          // Record every attempt so the UI can show the retry window while
+          // the first two attempts are still in progress.
+          recordAttempt: true,
         });
       } catch (error) {
         failedUserIds.push(userId);
