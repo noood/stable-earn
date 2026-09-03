@@ -5,17 +5,21 @@ import { AccountBadge, ActionButton, ModalFrame, SectionIntro } from "@/app/comp
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
 import { accounts } from "@/lib/seed-data";
 
-type ApiConfigSource = {
+type ApiCredentialSource = {
   id: string;
   label: string;
+  mode: "api";
   configured: boolean;
   requiresPassphrase: boolean;
-  connectorReady: boolean;
-  keySync?: string;
-  publicSync?: string;
-  manualSync?: string;
+  syncDescription: string;
 };
-type ApiConfigResult = { sources: ApiConfigSource[] };
+type ManualDataSource = {
+  id: string;
+  label: string;
+  mode: "manual";
+  syncDescription: string;
+};
+type ApiConfigResult = { sources: ApiCredentialSource[]; manualSources: ManualDataSource[] };
 type ManualRefreshCooldownMinutes = 0 | 30;
 type PreferencesResult = { manualRefreshCooldownMinutes: ManualRefreshCooldownMinutes };
 
@@ -70,7 +74,7 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
       .catch(() => setCooldownMinutes(cooldownSessionCache ?? 30));
   }, []);
 
-  const selected = status?.sources.find((source) => source.id === selectedId && source.connectorReady) ?? null;
+  const selected = status?.sources.find((source) => source.id === selectedId) ?? null;
 
   function clearForm() {
     setApiKey("");
@@ -156,15 +160,13 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
       </section>
       {message && <div className="muted-panel type-caption px-3 py-2.5 font-medium">{message}</div>}
       <section>
-        <SectionIntro title="平台连接" description="每个平台按公开自动、账户 API 和人工维护划分数据范围；只有账户 API 能读取 Earn 数据的平台才需要添加 Key。" />
+        <SectionIntro title="平台连接" />
         <div className="space-y-2">
           {status?.sources.map((source) => {
             const account = accounts.find((item) => item.id === source.id);
             const isSelected = selected?.id === source.id;
-            const statusLabel = source.configured
-              ? source.connectorReady ? "已配置" : "已保存"
-              : source.connectorReady ? "未配置" : source.publicSync ? "无需 Key" : null;
-            const statusClass = source.configured && source.connectorReady ? "status-chip-highlight" : "status-chip-muted";
+            const statusLabel = source.configured ? "已配置" : "未配置";
+            const statusClass = source.configured ? "status-chip-highlight" : "status-chip-muted";
             const openEditor = () => {
               setSelectedId(source.id);
               clearForm();
@@ -179,24 +181,24 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="type-label font-semibold">{source.label}</span>
-                        {statusLabel && <span className={`status-chip status-chip-compact ${statusClass}`}>{statusLabel}</span>}
+                        <span className={`status-chip status-chip-compact ${statusClass}`}>{statusLabel}</span>
                       </div>
-                      <div className="type-caption mt-2 space-y-1">
-                        {source.publicSync && <ApiCapability label="公开自动" text={source.publicSync} />}
-                        {source.keySync && <ApiCapability label="账户 API" text={source.keySync} />}
-                        {source.manualSync && <ApiCapability label="人工维护" text={source.manualSync} muted />}
-                      </div>
+                      <p className="text-secondary type-caption mt-2">配置后{source.syncDescription}</p>
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
-                    {source.connectorReady && !source.configured && <ActionButton variant="secondary" disabled={modalBusy} onClick={openEditor}>添加</ActionButton>}
-                    {source.configured && <ApiRowMenu label={source.label} disabled={modalBusy || isSelected} onUpdate={source.connectorReady ? openEditor : undefined} onRemove={() => void remove(source.id, source.label)} />}
+                    {!source.configured && <ActionButton variant="secondary" disabled={modalBusy} onClick={openEditor}>添加</ActionButton>}
+                    {source.configured && <ApiRowMenu label={source.label} disabled={modalBusy || isSelected} onUpdate={openEditor} onRemove={() => void remove(source.id, source.label)} />}
                   </div>
                 </div>
                 {isSelected && <form className="api-credential-form mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void save(); }} autoComplete="off"><div><h4 className="type-body font-semibold">配置 {source.label}</h4><p className="text-muted type-caption mt-1">只填写只读密钥；交易、转账和提现权限必须关闭。</p></div><SecretField label="API Key" value={apiKey} onChange={setApiKey} /><SecretField label="API Secret" value={apiSecret} onChange={setApiSecret} />{source.requiresPassphrase && <SecretField label="Passphrase" value={passphrase} onChange={setPassphrase} />}<div className="flex justify-end gap-2"><ActionButton type="button" variant="secondary" disabled={modalBusy} onClick={() => { setSelectedId(null); clearForm(); }}>取消</ActionButton><ActionButton type="submit" disabled={modalBusy || !apiKey.trim() || !apiSecret.trim() || (source.requiresPassphrase && !passphrase.trim())}>{busy ? "加密保存中…" : "加密保存"}</ActionButton></div></form>}
               </div>
             );
           }) ?? <ApiSettingsSkeleton />}
+          {(status?.manualSources ?? []).map((source) => {
+            const account = accounts.find((item) => item.id === source.id);
+            return <div key={source.id} className="card px-4 py-3"><div className="flex items-center gap-3">{account && <AccountBadge account={account} />}<div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="type-label font-semibold">{source.label}</span><span className="status-chip status-chip-compact status-chip-muted">手动维护</span></div><p className="text-secondary type-caption mt-2">{source.syncDescription}</p></div></div></div>;
+          })}
         </div>
       </section>
     </ModalFrame>
@@ -207,14 +209,10 @@ function ApiSettingsSkeleton() {
   return <div className="api-settings-skeleton" aria-label="正在读取配置状态" aria-busy="true">{Array.from({ length: 5 }, (_, index) => <div key={index} className="api-settings-skeleton-row"><span className="api-settings-skeleton-badge" /><span className="api-settings-skeleton-copy"><span /><span /></span></div>)}</div>;
 }
 
-function ApiCapability({ label, text, muted = false }: { label: string; text: string; muted?: boolean }) {
-  return <p className={muted ? "text-muted" : "text-secondary"}><span className="font-semibold">{label}：</span>{text}</p>;
-}
-
-function ApiRowMenu({ label, disabled, onUpdate, onRemove }: { label: string; disabled: boolean; onUpdate?: () => void; onRemove: () => void }) {
+function ApiRowMenu({ label, disabled, onUpdate, onRemove }: { label: string; disabled: boolean; onUpdate: () => void; onRemove: () => void }) {
   const menuRef = useDismissibleDetails();
 
-  return <details ref={menuRef} className="api-row-menu relative"><summary className="icon-button api-row-menu-trigger list-none" aria-label={`${label} 更多操作`} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} onClick={(event) => { if (disabled) event.preventDefault(); }}><span aria-hidden="true">⋯</span></summary><div className="surface-popover api-row-menu-popover">{onUpdate && <button type="button" onClick={() => { menuRef.current?.removeAttribute("open"); onUpdate(); }} className="menu-item menu-item-compact">更新 API 配置</button>}<button type="button" onClick={() => { menuRef.current?.removeAttribute("open"); onRemove(); }} className="menu-item menu-item-compact menu-item-danger">移除 API 配置</button></div></details>;
+  return <details ref={menuRef} className="api-row-menu relative"><summary className="icon-button api-row-menu-trigger list-none" aria-label={`${label} 更多操作`} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} onClick={(event) => { if (disabled) event.preventDefault(); }}><span aria-hidden="true">⋯</span></summary><div className="surface-popover api-row-menu-popover"><button type="button" onClick={() => { menuRef.current?.removeAttribute("open"); onUpdate(); }} className="menu-item menu-item-compact">更新 API 配置</button><button type="button" onClick={() => { menuRef.current?.removeAttribute("open"); onRemove(); }} className="menu-item menu-item-compact menu-item-danger">移除 API 配置</button></div></details>;
 }
 
 function SecretField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {

@@ -1,5 +1,6 @@
 import { exchangeFetch } from "@/lib/exchange-fetch";
 import { buildProductIdentity } from "@/lib/product-identity";
+import type { Product } from "@/lib/domain";
 
 type BybitCredentials = {
   apiKey: string;
@@ -24,6 +25,7 @@ type BybitFixedProductRow = {
   tieredApyList?: Array<{ min?: string; max?: string; apy?: string }>;
   minStakeAmount?: string;
   maxStakeAmount?: string;
+  subscribeStartAt?: string;
   subscribeEndAt?: string;
   interestCoinApyList?: Array<{ apy?: string }>;
   isVip?: boolean;
@@ -51,13 +53,7 @@ const productIds = {
 
 type SupportedAsset = keyof typeof productIds;
 
-const shortFixedTargets = [
-  { coin: "BTC", productId: "by-g-btc-3d" },
-  { coin: "USDT", productId: "by-g-usdt-short-fixed" },
-] as const;
-
-const minimumShortFixedApr = 4;
-const maximumShortFixedDays = 7;
+const supportedFixedAssets = new Set<Product["asset"]>(["USDT", "USDC", "USDGO", "BTC"]);
 
 export async function fetchBybitFlexibleHoldings(
   credentials: BybitCredentials,
@@ -81,92 +77,91 @@ export async function fetchBybitFlexibleHoldings(
 }
 
 export async function fetchBybitShortFixedSnapshots(credentials: BybitCredentials) {
-  const snapshots = await Promise.all(shortFixedTargets.map((target) => fetchBybitShortFixedSnapshot(target, credentials)));
-  return {
-    rates: snapshots.flatMap((snapshot) => snapshot.rate ? [snapshot.rate] : []),
-    holdings: Object.fromEntries(snapshots.map((snapshot) => [snapshot.productId, snapshot.holding])),
-  };
-}
+  const [productResponse, positionResponse] = await Promise.all([
+    publicGet<BybitFixedProductRow>(
+      "/v5/earn/fixed-term/product",
+      new URLSearchParams(),
+      credentials.baseUrls,
+    ),
+    signedGet<BybitFixedPositionRow>(
+      "/v5/earn/fixed-term/position",
+      new URLSearchParams(),
+      credentials,
+    ),
+  ]);
+  const positions = (positionResponse.result?.list ?? []).filter((row) => (
+    Boolean(row.productId)
+    && supportedFixedAssets.has(row.coin as Product["asset"])
+  ));
+  const rates = (productResponse.result?.list ?? []).flatMap((row) => {
+    const rate = fixedProductRate(row);
+    return rate ? [rate] : [];
+  });
+  const holdings: Record<string, number> = {};
 
-async function fetchBybitShortFixedSnapshot(
-  target: typeof shortFixedTargets[number],
-  credentials: BybitCredentials,
-) {
-  const productResponse = await publicGet<BybitFixedProductRow>(
-    "/v5/earn/fixed-term/product",
-    new URLSearchParams({ coin: target.coin }),
-    credentials.baseUrls,
-  );
-  const now = Date.now();
-  const products = (productResponse.result?.list ?? [])
-    .filter((row) => row.coin === target.coin && row.status === "Available" && !row.isVip)
-    .filter((row) => {
-      const end = finiteNumber(row.subscribeEndAt);
-      const durationDays = parseDurationDays(row.duration);
-      return durationDays > 0 && durationDays <= maximumShortFixedDays && (end <= 0 || end > now);
-    })
-    .map((row) => ({ row, tiers: fixedProductTiers(row) }))
-    .filter((item) => item.row.productId && item.tiers.length > 0 && highestApr(item.tiers) >= minimumShortFixedApr)
-    .sort((left, right) => Math.max(...right.tiers.map((tier) => tier.apr)) - Math.max(...left.tiers.map((tier) => tier.apr)));
-
-  const selected = products[0];
-  if (!selected?.row.productId) {
-    return { productId: target.productId, rate: null, holding: 0 };
+  for (const rate of rates) {
+    holdings[rate.productId] = positions
+      .filter((row) => row.productId === rate.externalProductId && row.coin === rate.catalog?.asset)
+      .reduce((sum, row) => sum + finiteNumber(row.amount), 0);
+  }
+  for (const position of positions) {
+    if (!position.productId) continue;
+    const matched = rates.some((rate) => rate.externalProductId === position.productId && rate.catalog?.asset === position.coin);
+    if (!matched) holdings[position.productId] = (holdings[position.productId] ?? 0) + finiteNumber(position.amount);
   }
 
-  const positionResponse = await signedGet<BybitFixedPositionRow>(
-    "/v5/earn/fixed-term/position",
-    new URLSearchParams({ coin: target.coin, productId: selected.row.productId }),
-    credentials,
-  );
-  const holding = (positionResponse.result?.list ?? [])
-    .filter((row) => row.productId === selected.row.productId && row.coin === target.coin)
-    .reduce((sum, row) => sum + finiteNumber(row.amount), 0);
-  const subscriptionEnd = finiteNumber(selected.row.subscribeEndAt);
-  const termDays = parseDurationDays(selected.row.duration);
-  const termLabel = formatDuration(selected.row.duration);
-  const restriction = selected.row.specialUserGroupRequired && selected.row.specialUserGroupInfo
-    ? ` · ${selected.row.specialUserGroupInfo}`
-    : "";
-
   return {
-    productId: target.productId,
-    rate: {
-      productId: target.productId,
-      ...buildProductIdentity(target.productId, {
-        productType: "fixed",
-        termDays,
-        eligibilityRequired: selected.row.specialUserGroupRequired ?? false,
-        eligibilityLabel: selected.row.specialUserGroupInfo || undefined,
-        minimumAmount: finiteNumber(selected.row.minStakeAmount),
-        tiers: selected.tiers,
-      }, { externalProductId: selected.row.productId, includeExternalProductId: true }),
-      name: `Fixed Saving · ${termLabel}${restriction}`,
-      apr: selected.tiers[0]?.apr ?? 0,
-      tiers: selected.tiers,
-      fetchedAt: new Date().toISOString(),
-      sourceLabel: "Bybit 官方固定期限产品与账户持仓 API",
-      productType: "fixed" as const,
-      termDays,
-      minimumAmount: finiteNumber(selected.row.minStakeAmount),
-      subscriptionEndsAt: subscriptionEnd > 0 ? new Date(subscriptionEnd).toISOString() : undefined,
-      eligibilityRequired: selected.row.specialUserGroupRequired ?? false,
-      eligibilityLabel: selected.row.specialUserGroupInfo || undefined,
-      catalog: {
-        accountId: "bybit-global",
-        exchange: "bybit" as const,
-        region: "global" as const,
-        asset: target.coin,
-        holdingDataMode: "api" as const,
-        apiAccess: "authenticated" as const,
-      },
-    },
-    holding,
+    rates,
+    holdings,
   };
 }
 
-function highestApr(tiers: Array<{ apr: number }>) {
-  return Math.max(...tiers.map((tier) => tier.apr));
+function fixedProductRate(row: BybitFixedProductRow) {
+  const asset = row.coin as Product["asset"];
+  if (!row.productId || !supportedFixedAssets.has(asset)) return null;
+  const tiers = fixedProductTiers(row);
+  const subscriptionStart = timestampIso(row.subscribeStartAt);
+  const subscriptionEnd = timestampIso(row.subscribeEndAt);
+  const termDays = parseDurationDays(row.duration);
+  const canonicalProductId = `by-g-${asset.toLowerCase()}-fixed`;
+  const identity = buildProductIdentity(canonicalProductId, {
+    productType: "fixed",
+    termDays: termDays > 0 ? termDays : undefined,
+    subscriptionStartsAt: subscriptionStart,
+    subscriptionEndsAt: subscriptionEnd,
+  }, { externalProductId: row.productId, includeExternalProductId: true });
+  const adapterProductId = `${identity.identityKey}:${row.subscribeStartAt || row.subscribeEndAt || "open"}`;
+  const eligibilityRequired = Boolean(row.specialUserGroupRequired || row.isVip);
+  const eligibilityLabel = row.specialUserGroupInfo || (row.isVip ? "VIP 用户" : undefined);
+
+  return {
+    productId: adapterProductId,
+    canonicalProductId,
+    ...identity,
+    name: `Fixed Saving · ${formatDuration(row.duration)}`,
+    apr: tiers[0]?.apr ?? 0,
+    tiers,
+    fetchedAt: new Date().toISOString(),
+    sourceLabel: "Bybit 官方固定期限产品与账户持仓 API",
+    productType: "fixed" as const,
+    termDays: termDays > 0 ? termDays : undefined,
+    minimumAmount: finiteNumber(row.minStakeAmount),
+    subscriptionStartsAt: subscriptionStart,
+    subscriptionEndsAt: subscriptionEnd,
+    availability: row.status === "Available" ? "available" as const : "unavailable" as const,
+    eligibilityRequired,
+    eligibilityLabel,
+    eligibilityStatus: eligibilityRequired ? "unknown" as const : undefined,
+    rateCoverage: tiers.length > 0 ? "complete" as const : "unavailable" as const,
+    catalog: {
+      accountId: "bybit-global",
+      exchange: "bybit" as const,
+      region: "global" as const,
+      asset,
+      holdingDataMode: "api" as const,
+      apiAccess: "authenticated" as const,
+    },
+  };
 }
 
 function parseDurationDays(value: string | undefined) {
@@ -190,6 +185,11 @@ function formatCompact(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.0+$|(?<=\.[0-9])0+$/, "");
 }
 
+function timestampIso(value: string | undefined) {
+  const timestamp = finiteNumber(value);
+  return timestamp > 0 ? new Date(timestamp).toISOString() : undefined;
+}
+
 function fixedProductTiers(row: BybitFixedProductRow) {
   const tiered = (row.tieredApyList ?? []).flatMap((tier) => {
     const min = finiteNumber(tier.min);
@@ -205,7 +205,8 @@ function fixedProductTiers(row: BybitFixedProductRow) {
     return sum + (Number.isFinite(value) ? value : 0);
   }, 0);
   const max = finiteNumber(row.maxStakeAmount);
-  return apr > 0 && max > 0 ? [{ min: 0, max, apr }] : [];
+  if (apr <= 0) return [];
+  return [{ min: 0, max: row.maxStakeAmount === "-1" ? null : max > 0 ? max : null, apr }];
 }
 
 async function publicGet<Row>(path: string, query: URLSearchParams, baseUrls: readonly string[]) {

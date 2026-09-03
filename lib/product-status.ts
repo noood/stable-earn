@@ -18,30 +18,18 @@ export type ProductInformationIssue =
   | "活动期限待获取"
   | "锁定期限待填写"
   | "锁定期限待获取"
-  | "买入日待填写"
-  | "资格待确认"
-  | "账号不符合资格";
-
-export const productIncompleteNote = "产品信息不完整，不参与收益计算";
+  | "买入日待填写";
 
 export function productInformationNote(issues: ProductInformationIssue[]) {
-  return issues.length > 0
-    ? `${issues.join("、")}，不参与收益计算`
-    : productIncompleteNote;
+  return `${issues.join("、")}，不参与收益计算`;
 }
 
 export function productInformationIssues(
   product: Product,
-  holding: number,
   override?: ProductOverride,
 ): ProductInformationIssue[] {
   const issues: ProductInformationIssue[] = [];
   const apiManaged = product.productDataMode === "api";
-
-  if (product.eligibilityRequired) {
-    if (product.eligibilityStatus === "ineligible") issues.push("账号不符合资格");
-    else if (product.eligibilityStatus !== "eligible" && override?.eligibilityConfirmed !== true) issues.push("资格待确认");
-  }
 
   if (product.rateCoverage === "unavailable" && apiManaged) return ["产品数据待获取"];
   if (product.rateCoverage === "unavailable") issues.push("APR 待填写");
@@ -68,7 +56,7 @@ export function productParticipatesInInterest(
   holding: number,
   override?: ProductOverride,
 ) {
-  return productInformationIssues(product, holding, override).length === 0;
+  return holding > 0 && productInformationIssues(product, override).length === 0;
 }
 
 /**
@@ -82,28 +70,12 @@ export function holdingSyncNote(state?: HoldingSyncState) {
       return "未配置 API；配置后可同步持仓";
     case "partial":
     case "error":
-      return "API 同步失败，持仓未获取";
+      return "API 同步失败";
     case "synced":
       return "接口未返回该产品持仓";
     default:
       return undefined;
   }
-}
-
-/**
- * Whether a product can be removed from the current account's dashboard.
- *
- * Public, flexible API products are part of the shared catalogue and stay
- * visible. Products that depend on account-specific eligibility or a finite
- * campaign/lock period can be dismissed because they are not universally
- * available forever.
- */
-export function productCanBeRemoved(product: Product) {
-  return product.productDataMode === "manual"
-    || product.eligibilityRequired === true
-    || product.productType === "fixed"
-    || product.manualKind === "limited"
-    || Boolean(product.manualFields?.termDays);
 }
 
 export function resolveProductWithoutApiData(product: Product): Product {

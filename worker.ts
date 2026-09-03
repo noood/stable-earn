@@ -2,15 +2,32 @@ import handler from "vinext/server/fetch-handler";
 import { getDatabase } from "@/lib/db";
 import { listPrivateSyncUserIds, refreshPrivateProductsCache } from "@/app/private/api/products/route";
 
+const scheduledRetryDelays = [0, 60_000, 5 * 60_000] as const;
+
 async function scheduledRefresh() {
   const db = await getDatabase();
-  const userIds = await listPrivateSyncUserIds(db);
-  for (const userId of userIds) {
-    try {
-      await refreshPrivateProductsCache(db, userId);
-    } catch {
-      // One account failure must not prevent the remaining users from updating.
+  let pendingUserIds = await listPrivateSyncUserIds(db);
+
+  for (const [attemptIndex, delay] of scheduledRetryDelays.entries()) {
+    if (pendingUserIds.length === 0) return;
+    if (delay > 0) await scheduler.wait(delay);
+
+    const failedUserIds: string[] = [];
+    const finalAttempt = attemptIndex === scheduledRetryDelays.length - 1;
+    for (const userId of pendingUserIds) {
+      try {
+        await refreshPrivateProductsCache(db, userId, {
+          acceptPartial: finalAttempt,
+          persistFailure: finalAttempt,
+          recordAttempt: finalAttempt,
+        });
+      } catch (error) {
+        failedUserIds.push(userId);
+        const message = error instanceof Error ? error.message : "unknown error";
+        console.warn(`Scheduled refresh attempt ${attemptIndex + 1} failed: ${message}`);
+      }
     }
+    pendingUserIds = failedUserIds;
   }
 }
 

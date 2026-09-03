@@ -8,17 +8,16 @@ type StoredCredential = {
 };
 
 export const credentialAccounts = [
-  { id: "binance-global", label: "Binance.com", requiresPassphrase: false, connectorReady: true, keySync: "USDT、USDC 活期 APR、阶梯和持仓" },
-  { id: "binance-bahrain", label: "Binance Bahrain", requiresPassphrase: false, connectorReady: true, keySync: "USDT、USDC 活期 APR、阶梯和持仓" },
-  { id: "bybit-global", label: "Bybit.com", requiresPassphrase: false, connectorReady: true, keySync: "活期持仓；7 天内定期产品 APR 与持仓", publicSync: "活期基础 APR", manualSync: "活动奖励 APR 需人工确认" },
-  { id: "bitget-global", label: "Bitget", requiresPassphrase: true, connectorReady: true, keySync: "USDT、USDC 活期 APR、阶梯和持仓", manualSync: "USDGO 在 API 未返回时手动维护" },
-  { id: "okx-global", label: "OKX", requiresPassphrase: true, connectorReady: true, keySync: "USDT、USDC、BTC 活期持仓", publicSync: "实时基础 APR", manualSync: "奖励 APR 与剩余奖励期需人工确认" },
-  { id: "mexc-ph", label: "MEXC · PH 🇵🇭", requiresPassphrase: false, connectorReady: false, manualSync: "APR、阶梯和 Earn 持仓；官方 Spot API 尚未提供 Earn 端点" },
-  { id: "mexc-uk", label: "MEXC · UK 🇬🇧", requiresPassphrase: false, connectorReady: false, manualSync: "APR、阶梯和 Earn 持仓；官方 Spot API 尚未提供 Earn 端点" },
+  { id: "binance-global", label: "Binance.com", requiresPassphrase: false, syncDescription: "自动同步活期产品、APR 与持仓" },
+  { id: "binance-bahrain", label: "Binance Bahrain", requiresPassphrase: false, syncDescription: "自动同步活期产品、APR 与持仓" },
+  { id: "bybit-global", label: "Bybit.com", requiresPassphrase: false, syncDescription: "自动同步活期持仓，以及定期产品、APR 与持仓" },
+  { id: "bitget-global", label: "Bitget", requiresPassphrase: true, syncDescription: "自动同步活期产品、APR 与持仓" },
+  { id: "okx-global", label: "OKX", requiresPassphrase: true, syncDescription: "自动同步持仓" },
 ] as const;
 
-export const nonCredentialApiSources = [
-  { id: "bybit-eu", label: "Bybit EU", requiresPassphrase: false, connectorReady: false, publicSync: "活期基础 APR", manualSync: "奖励 APR 与持仓；个人 API 暂无 Earn 权限" },
+export const manualDataAccounts = [
+  { id: "mexc-ph", label: "MEXC · PH 🇵🇭", syncDescription: "产品信息与持仓需要手动维护" },
+  { id: "mexc-uk", label: "MEXC · UK 🇬🇧", syncDescription: "产品信息与持仓需要手动维护" },
 ] as const;
 
 export type CredentialAccountId = typeof credentialAccounts[number]["id"];

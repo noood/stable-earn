@@ -1,4 +1,4 @@
-import type { D1Database } from "@cloudflare/workers-types";
+import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 
 const DEFAULT_MANUAL_REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
 
@@ -102,17 +102,26 @@ export async function saveSyncCache<T>(
   payload: T,
   updatedAt = new Date().toISOString(),
 ) {
-  await db.prepare(`INSERT INTO sync_snapshots
+  await prepareSyncCacheSave(db, ownerId, cacheKey, payload, updatedAt).run();
+  return updatedAt;
+}
+
+export function prepareSyncCacheSave<T>(
+  db: D1Database,
+  ownerId: string,
+  cacheKey: string,
+  payload: T,
+  updatedAt = new Date().toISOString(),
+): D1PreparedStatement {
+  return db.prepare(`INSERT INTO sync_snapshots
       (owner_id, cache_key, payload, updated_at, last_attempt_at, last_manual_at, last_error)
       VALUES (?, ?, ?, ?, ?, NULL, NULL)
       ON CONFLICT(owner_id, cache_key) DO UPDATE SET
         payload = excluded.payload,
         updated_at = excluded.updated_at,
-        last_attempt_at = COALESCE(sync_snapshots.last_attempt_at, excluded.last_attempt_at),
+        last_attempt_at = excluded.last_attempt_at,
         last_error = NULL`)
-    .bind(ownerId, cacheKey, JSON.stringify(payload), updatedAt, updatedAt)
-    .run();
-  return updatedAt;
+    .bind(ownerId, cacheKey, JSON.stringify(payload), updatedAt, updatedAt);
 }
 
 export async function recordSyncFailure(

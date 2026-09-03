@@ -4,7 +4,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import type { Account } from "@/lib/domain";
 
 type ActionButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "secondary" | "text";
+  variant?: "primary" | "secondary" | "danger" | "text";
   size?: "default" | "small";
 };
 
@@ -18,6 +18,10 @@ export function AccountBadge({ account }: { account: Account }) {
 
 export function Metric({ label, value, note, highlight = false, valueTone = "default" }: { label: string; value: string; note: string; highlight?: boolean; valueTone?: "default" | "danger" }) {
   return <div className={`metric-item ${highlight ? "metric-item-highlight" : ""}`}><p className="text-muted type-caption">{label}</p><p className={`metric-value type-metric ${valueTone === "danger" ? "text-danger" : ""}`}>{value}</p><p className="metric-note text-muted type-micro">{note}</p></div>;
+}
+
+export function MetricSkeleton({ highlight = false }: { highlight?: boolean }) {
+  return <div className={`metric-item ${highlight ? "metric-item-highlight" : ""}`} aria-hidden="true"><span className="skeleton-block skeleton-label" /><span className="skeleton-block skeleton-value" /><span className="skeleton-block skeleton-note" /></div>;
 }
 
 export function TableCell({ children, className = "" }: { children: ReactNode; className?: string }) {
@@ -43,8 +47,8 @@ export function HoldingSummary({ label, value, note, cacheNote, progress, progre
   );
 }
 
-export function SectionIntro({ title, description }: { title: string; description: string }) {
-  return <div className="mb-3"><h3 className="type-label font-semibold">{title}</h3><p className="text-muted type-caption mt-1">{description}</p></div>;
+export function SectionIntro({ title, description }: { title: string; description?: string }) {
+  return <div className="mb-3"><h3 className="type-label font-semibold">{title}</h3>{description && <p className="text-muted type-caption mt-1">{description}</p>}</div>;
 }
 
 export function ModalFrame({ ariaLabel, title, description, onClose, busy = false, bodyClassName = "", children }: { ariaLabel: string; title: string; description?: string; onClose: () => void; busy?: boolean; bodyClassName?: string; children: ReactNode }) {

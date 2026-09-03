@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { credentialAccount, credentialAccounts, deleteCredential, listConfiguredCredentialIds, nonCredentialApiSources, saveCredential, type CredentialAccountId } from "@/lib/credentials";
+import { credentialAccount, credentialAccounts, deleteCredential, listConfiguredCredentialIds, manualDataAccounts, saveCredential, type CredentialAccountId } from "@/lib/credentials";
 import { getDatabase, getUserIdentity } from "@/lib/db";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
 import { deleteSyncCache } from "@/lib/sync-cache";
@@ -12,14 +12,12 @@ export async function GET(request: Request) {
   const db = await getDatabase();
   const configuredIds = new Set(await listConfiguredCredentialIds(db, identity.userId));
   return NextResponse.json({
-    sources: [
-      ...credentialAccounts.slice(0, 3),
-      ...nonCredentialApiSources,
-      ...credentialAccounts.slice(3),
-    ].map((account) => ({
+    sources: credentialAccounts.map((account) => ({
       ...account,
+      mode: "api" as const,
       configured: configuredIds.has(account.id),
     })),
+    manualSources: manualDataAccounts.map((account) => ({ ...account, mode: "manual" as const })),
   }, { headers: privateResponseHeaders });
 }
 

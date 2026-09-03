@@ -3,18 +3,17 @@ import { getDatabase, getUserId } from "@/lib/db";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
 import type { HoldingMap } from "@/lib/domain";
 import { productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, type ProductOverrideMap } from "@/lib/product-overrides";
-import { productCanBeRemoved } from "@/lib/product-status";
-import { loadUserProducts, productToUserProduct, sanitizeUserProducts, saveUserProducts, userProductInputToProduct } from "@/lib/user-products";
+import { loadUserProducts, prepareUserProductStatements, productToUserProduct, sanitizeUserProducts, userProductInputToProduct } from "@/lib/user-products";
 import { isLocalPreviewRequest, localPrivateHoldingsPreview } from "@/lib/local-preview";
 import { loadCatalogProducts } from "@/lib/product-catalog";
 
 export const dynamic = "force-dynamic";
 
 type HoldingRow = { product_id: string; amount: number };
-type OverrideRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null; eligibility_confirmed: number | null; updated_at: string };
+type OverrideRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null; updated_at: string };
 type LimitRow = { product_id: string; first_tier_limit: number | null };
 type TermRow = { product_id: string; term_days: number | null };
-type HiddenSeedProductRow = { product_id: string };
+type HiddenProductRow = { product_id: string };
 
 export async function GET(request: Request) {
   const userId = await getUserId(request);
@@ -28,16 +27,16 @@ export async function GET(request: Request) {
     loadCatalogProducts(db, userId),
     loadUserProducts(db, userId),
     db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
-    db.prepare(`SELECT product_id, confirmed_apr, purchase_date, eligibility_confirmed, updated_at
+    db.prepare(`SELECT product_id, confirmed_apr, purchase_date, updated_at
       FROM product_overrides WHERE user_id = ? ORDER BY product_id`).bind(userId).all<OverrideRow>(),
     db.prepare(`SELECT product_id, first_tier_limit
       FROM product_override_limits WHERE user_id = ? ORDER BY product_id`).bind(userId).all<LimitRow>(),
     db.prepare(`SELECT product_id, term_days
       FROM product_override_terms WHERE user_id = ? ORDER BY product_id`).bind(userId).all<TermRow>(),
-    db.prepare("SELECT product_id FROM hidden_seed_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenSeedProductRow>(),
-    db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenSeedProductRow>(),
+    db.prepare("SELECT product_id FROM hidden_seed_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
+    db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
   ]);
-  const removableProducts = new Set([...catalogProducts, ...manualProducts].filter(productCanBeRemoved).map((product) => product.id));
+  const removableProducts = new Set([...catalogProducts, ...manualProducts].map((product) => product.id));
   const hiddenProductIds = [...new Set([
     ...hiddenResult.results.map((row) => row.product_id),
     ...hiddenCatalogResult.results.map((row) => row.product_id),
@@ -56,10 +55,9 @@ export async function GET(request: Request) {
       firstTierLimit: limits.get(row.product_id) === null || limits.get(row.product_id) === undefined ? null : Number(limits.get(row.product_id)),
       termDays: terms.get(row.product_id) === null || terms.get(row.product_id) === undefined ? null : Number(terms.get(row.product_id)),
       purchaseDate: row.purchase_date,
-      eligibilityConfirmed: row.eligibility_confirmed === null ? null : row.eligibility_confirmed === 1,
       updatedAt: row.updated_at,
     }])) as ProductOverrideMap;
-  return NextResponse.json({ products: catalogProducts, holdings, overrides, manualProducts, hiddenProductIds, hiddenSeedProductIds: hiddenProductIds, found: holdingResult.results.length > 0 || overrideResult.results.length > 0 || manualProducts.length > 0 || hiddenProductIds.length > 0 }, { headers: privateResponseHeaders });
+  return NextResponse.json({ products: catalogProducts, holdings, overrides, manualProducts, hiddenProductIds, found: holdingResult.results.length > 0 || overrideResult.results.length > 0 || manualProducts.length > 0 || hiddenProductIds.length > 0 }, { headers: privateResponseHeaders });
 }
 
 export async function PUT(request: Request) {
@@ -72,92 +70,106 @@ export async function PUT(request: Request) {
 
   let body: unknown;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "持仓数据格式不正确。" }, { status: 400, headers: privateResponseHeaders }); }
-  const payload = typeof body === "object" && body !== null ? body as { holdings?: unknown; overrides?: unknown; changedProductIds?: unknown; manualProducts?: unknown; deletedManualProductIds?: unknown; hiddenProductIds?: unknown; hiddenSeedProductIds?: unknown } : null;
+  const payload = typeof body === "object" && body !== null ? body as { holdings?: unknown; overrides?: unknown; changedHoldingProductIds?: unknown; changedOverrideProductIds?: unknown; manualProducts?: unknown; deletedManualProductIds?: unknown; hiddenProductIds?: unknown } : null;
   const candidate = payload?.holdings ?? null;
   if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
     return NextResponse.json({ error: "缺少持仓数据。" }, { status: 400, headers: privateResponseHeaders });
   }
 
   const db = await getDatabase();
-  const existingManualProducts = await loadUserProducts(db, userId);
-  const manualProductInputs = payload?.manualProducts === undefined
-    ? existingManualProducts.map(productToUserProduct)
-    : sanitizeUserProducts(payload.manualProducts);
-  if (!manualProductInputs) return NextResponse.json({ error: "手动产品格式不正确。" }, { status: 400, headers: privateResponseHeaders });
+  const [existingManualProducts, catalogProducts, hiddenCatalogResult, legacyHiddenResult] = await Promise.all([
+    loadUserProducts(db, userId),
+    loadCatalogProducts(db, userId),
+    db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
+    db.prepare("SELECT product_id FROM hidden_seed_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
+  ]);
+  const manualProductUpdates = payload?.manualProducts === undefined ? [] : sanitizeUserProducts(payload.manualProducts);
+  if (!manualProductUpdates) return NextResponse.json({ error: "手动产品格式不正确。" }, { status: 400, headers: privateResponseHeaders });
   const deletedManualProductIds = Array.isArray(payload?.deletedManualProductIds)
     ? [...new Set(payload.deletedManualProductIds.filter((value): value is string => typeof value === "string" && /^manual-[a-z0-9-]{8,80}$/i.test(value)))]
     : [];
-  const catalogProducts = await loadCatalogProducts(db, userId);
   const allCatalogProducts = [...catalogProducts, ...existingManualProducts];
-  const removableProductIds = new Set(allCatalogProducts.filter(productCanBeRemoved).map((product) => product.id));
-  const hiddenProductIds = payload?.hiddenProductIds !== undefined || payload?.hiddenSeedProductIds !== undefined
-    ? sanitizeHiddenProductIds(payload.hiddenProductIds ?? payload.hiddenSeedProductIds, removableProductIds)
-    : (await db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenSeedProductRow>()).results.map((row) => row.product_id).filter((productId) => removableProductIds.has(productId));
+  const removableProductIds = new Set(allCatalogProducts.map((product) => product.id));
+  const hiddenProductsProvided = payload?.hiddenProductIds !== undefined;
+  const hiddenProductIds = hiddenProductsProvided
+    ? sanitizeHiddenProductIds(payload.hiddenProductIds, removableProductIds)
+    : [...new Set([...hiddenCatalogResult.results, ...legacyHiddenResult.results].map((row) => row.product_id))].filter((productId) => removableProductIds.has(productId));
   if (!hiddenProductIds) return NextResponse.json({ error: "隐藏的产品格式不正确。" }, { status: 400, headers: privateResponseHeaders });
   const hiddenProductIdSet = new Set(hiddenProductIds);
+  const deletedManualProductIdSet = new Set(deletedManualProductIds);
+  const manualProductUpdateIds = new Set(manualProductUpdates.map((product) => product.id));
+  const manualProductInputs = [
+    ...existingManualProducts
+      .filter((product) => !deletedManualProductIdSet.has(product.id) && !manualProductUpdateIds.has(product.id))
+      .map(productToUserProduct),
+    ...manualProductUpdates,
+  ];
   const manualProducts = manualProductInputs.map(userProductInputToProduct);
   const allProducts = [...catalogProducts.filter((product) => !hiddenProductIdSet.has(product.id)), ...manualProducts];
   const productIds = new Set(allProducts.map((product) => product.id));
 
-  const entries = Object.entries(candidate).flatMap(([productId, rawAmount]) => {
+  const changedHoldingProductIds = sanitizeChangedProductIds(payload?.changedHoldingProductIds ?? Object.keys(candidate), productIds);
+  const changedOverrideProductIds = sanitizeChangedProductIds(payload?.changedOverrideProductIds ?? [], productIds);
+  if (!changedHoldingProductIds || !changedOverrideProductIds) {
+    return NextResponse.json({ error: "变更的产品格式不正确。" }, { status: 400, headers: privateResponseHeaders });
+  }
+  const entries = changedHoldingProductIds.flatMap((productId) => {
+    const rawAmount = (candidate as Record<string, unknown>)[productId];
     const amount = typeof rawAmount === "number" ? rawAmount : Number(rawAmount);
     return productIds.has(productId) && Number.isFinite(amount) && amount >= 0 && amount <= 1e15 ? [[productId, amount] as const] : [];
   });
-  if (entries.length === 0 && manualProductInputs.length === 0 && deletedManualProductIds.length === 0 && hiddenProductIds.length === 0) return NextResponse.json({ error: "没有可保存的有效持仓。" }, { status: 400, headers: privateResponseHeaders });
-
-  const changedProductIds = Array.isArray(payload?.changedProductIds)
-    ? [...new Set(payload.changedProductIds.filter((value): value is string => typeof value === "string" && productIds.has(value)))]
-    : [];
+  if (entries.length !== changedHoldingProductIds.length) return NextResponse.json({ error: "持仓数据格式不正确。" }, { status: 400, headers: privateResponseHeaders });
   const overrideCandidate = typeof payload?.overrides === "object" && payload.overrides !== null && !Array.isArray(payload.overrides)
     ? payload.overrides as Record<string, unknown>
     : {};
-  const overrideEntries = changedProductIds.map((productId) => {
+  const overrideEntries = changedOverrideProductIds.map((productId) => {
     const product = allProducts.find((item) => item.id === productId)!;
     const raw = typeof overrideCandidate[productId] === "object" && overrideCandidate[productId] !== null
-      ? overrideCandidate[productId] as { apr?: unknown; firstTierLimit?: unknown; termDays?: unknown; purchaseDate?: unknown; eligibilityConfirmed?: unknown }
+      ? overrideCandidate[productId] as { apr?: unknown; firstTierLimit?: unknown; termDays?: unknown; purchaseDate?: unknown }
       : {};
     const apr = productNeedsManualApr(product) ? optionalApr(raw.apr) : null;
     const firstTierLimit = productNeedsManualLimit(product) ? optionalLimit(raw.firstTierLimit) : null;
     const termDays = productNeedsManualTerm(product) ? optionalTerm(raw.termDays) : null;
     const purchaseDate = productNeedsPurchaseDate(product) ? optionalDate(raw.purchaseDate) : null;
-    const eligibilityConfirmed = product.eligibilityRequired && product.eligibilityStatus !== "eligible" && product.eligibilityStatus !== "ineligible"
-      ? optionalEligibilityConfirmed(raw.eligibilityConfirmed)
-      : null;
-    if (apr === undefined || firstTierLimit === undefined || termDays === undefined || purchaseDate === undefined || eligibilityConfirmed === undefined) return null;
-    return { productId, apr, firstTierLimit, termDays, purchaseDate, eligibilityConfirmed };
+    if (apr === undefined || firstTierLimit === undefined || termDays === undefined || purchaseDate === undefined) return null;
+    return { productId, apr, firstTierLimit, termDays, purchaseDate };
   });
   if (overrideEntries.some((entry) => entry === null)) {
-    return NextResponse.json({ error: "人工额度、APR、期限、买入日或资格确认格式不正确。" }, { status: 400, headers: privateResponseHeaders });
+    return NextResponse.json({ error: "人工额度、APR、期限或买入日格式不正确。" }, { status: 400, headers: privateResponseHeaders });
+  }
+  if (entries.length === 0 && overrideEntries.length === 0 && manualProductUpdates.length === 0 && deletedManualProductIds.length === 0 && !hiddenProductsProvided) {
+    return NextResponse.json({ error: "没有需要保存的变更。" }, { status: 400, headers: privateResponseHeaders });
   }
 
   const updatedAt = new Date().toISOString();
-  await saveUserProducts(db, userId, manualProductInputs, deletedManualProductIds);
-  await db.batch([
-    db.prepare("DELETE FROM hidden_products WHERE user_id = ?").bind(userId),
-    db.prepare("DELETE FROM hidden_seed_products WHERE user_id = ?").bind(userId),
-    ...hiddenProductIds.map((productId) => db.prepare(`INSERT INTO hidden_products (user_id, product_id, hidden_at)
-      VALUES (?, ?, ?)`)
-      .bind(userId, productId, updatedAt)),
-    ...hiddenProductIds.flatMap((productId) => [
+  const statements = [
+    ...prepareUserProductStatements(db, userId, manualProductUpdates, deletedManualProductIds, updatedAt),
+    ...(hiddenProductsProvided ? [
+      db.prepare("DELETE FROM hidden_products WHERE user_id = ?").bind(userId),
+      db.prepare("DELETE FROM hidden_seed_products WHERE user_id = ?").bind(userId),
+      ...hiddenProductIds.map((productId) => db.prepare(`INSERT INTO hidden_products (user_id, product_id, hidden_at)
+        VALUES (?, ?, ?)`)
+        .bind(userId, productId, updatedAt)),
+    ] : []),
+    ...(hiddenProductsProvided ? hiddenProductIds.flatMap((productId) => [
       db.prepare("DELETE FROM holdings WHERE user_id = ? AND product_id = ?").bind(userId, productId),
       db.prepare("DELETE FROM product_overrides WHERE user_id = ? AND product_id = ?").bind(userId, productId),
       db.prepare("DELETE FROM product_override_limits WHERE user_id = ? AND product_id = ?").bind(userId, productId),
       db.prepare("DELETE FROM product_override_terms WHERE user_id = ? AND product_id = ?").bind(userId, productId),
-    ]),
+    ]) : []),
     ...entries.map(([productId, amount]) => db.prepare(`INSERT INTO holdings (user_id, product_id, amount, updated_at)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(user_id, product_id)
       DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`)
       .bind(userId, productId, amount, updatedAt)),
     ...overrideEntries.flatMap((entry) => entry ? [db.prepare(`INSERT INTO product_overrides
-        (user_id, product_id, confirmed_apr, purchase_date, eligibility_confirmed, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        (user_id, product_id, confirmed_apr, purchase_date, updated_at)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(user_id, product_id)
         DO UPDATE SET confirmed_apr = excluded.confirmed_apr,
           purchase_date = excluded.purchase_date,
-          eligibility_confirmed = excluded.eligibility_confirmed,
           updated_at = excluded.updated_at`)
-      .bind(userId, entry.productId, entry.apr, entry.purchaseDate, entry.eligibilityConfirmed === null ? null : entry.eligibilityConfirmed ? 1 : 0, updatedAt)] : []),
+      .bind(userId, entry.productId, entry.apr, entry.purchaseDate, updatedAt)] : []),
     ...overrideEntries.flatMap((entry) => entry ? [db.prepare(`INSERT INTO product_override_limits
         (user_id, product_id, first_tier_limit, updated_at)
         VALUES (?, ?, ?, ?)
@@ -172,8 +184,15 @@ export async function PUT(request: Request) {
         DO UPDATE SET term_days = excluded.term_days,
           updated_at = excluded.updated_at`)
       .bind(userId, entry.productId, entry.termDays, updatedAt)] : []),
-  ]);
-  return NextResponse.json({ saved: entries.length, manualUpdated: overrideEntries.length, productUpdated: manualProductInputs.length, productDeleted: deletedManualProductIds.length + hiddenProductIds.length, updatedAt }, { headers: privateResponseHeaders });
+  ];
+  if (statements.length > 0) await db.batch(statements);
+  return NextResponse.json({ saved: entries.length, manualUpdated: overrideEntries.length, productUpdated: manualProductUpdates.length, productDeleted: deletedManualProductIds.length + (hiddenProductsProvided ? hiddenProductIds.length : 0), updatedAt }, { headers: privateResponseHeaders });
+}
+
+function sanitizeChangedProductIds(value: unknown, productIds: Set<string>) {
+  if (!Array.isArray(value)) return null;
+  const ids = [...new Set(value.filter((productId): productId is string => typeof productId === "string"))];
+  return ids.length === value.length && ids.every((productId) => productIds.has(productId)) ? ids : null;
 }
 
 function sanitizeHiddenProductIds(value: unknown, removableProductIds: Set<string>) {
@@ -206,9 +225,4 @@ function optionalDate(value: unknown) {
   const [year, month, day] = value.split("-").map(Number);
   const parsed = new Date(Date.UTC(year, month - 1, day));
   return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day ? value : undefined;
-}
-
-function optionalEligibilityConfirmed(value: unknown) {
-  if (value === null || value === undefined) return null;
-  return typeof value === "boolean" ? value : undefined;
 }

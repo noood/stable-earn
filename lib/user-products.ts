@@ -1,4 +1,4 @@
-import type { D1Database } from "@cloudflare/workers-types";
+import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import type { Asset, Product } from "./domain";
 import { accounts } from "./seed-data";
 
@@ -61,9 +61,14 @@ export function sanitizeUserProducts(value: unknown): UserProductInput[] | null 
   return products;
 }
 
-export async function saveUserProducts(db: D1Database, userId: string, products: UserProductInput[], deletedIds: string[]) {
-  const updatedAt = new Date().toISOString();
-  const statements = [
+export function prepareUserProductStatements(
+  db: D1Database,
+  userId: string,
+  products: UserProductInput[],
+  deletedIds: string[],
+  updatedAt = new Date().toISOString(),
+): D1PreparedStatement[] {
+  return [
     ...products.map((product) => db.prepare(`INSERT INTO user_products
         (user_id, product_id, account_id, asset, product_kind, term_days, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -82,7 +87,6 @@ export async function saveUserProducts(db: D1Database, userId: string, products:
       db.prepare("DELETE FROM product_override_terms WHERE user_id = ? AND product_id = ?").bind(userId, productId),
     ]),
   ];
-  if (statements.length > 0) await db.batch(statements);
 }
 
 export function productToUserProduct(product: Product): UserProductInput {

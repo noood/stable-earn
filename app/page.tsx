@@ -5,12 +5,13 @@ import { createPortal } from "react-dom";
 import Image from "next/image";
 import { ApiSettings } from "@/app/components/api-settings";
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
-import { AccountBadge, ActionButton, HoldingSummary, Metric, ModalFrame, TableCell } from "@/app/components/ui";
+import { AccountBadge, ActionButton, HoldingSummary, Metric, MetricSkeleton, ModalFrame, TableCell } from "@/app/components/ui";
 import { effectiveApr, formatAmount, remainingHighYield, type Account, type Asset, type HoldingMap, type HoldingSyncState, type Product } from "@/lib/domain";
 import { applyProductOverride, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
-import { holdingSyncNote, productCanBeRemoved, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
+import { holdingSyncNote, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
 import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
 import { accounts, seedProducts } from "@/lib/seed-data";
+import { highestProductApr, maximumShortTermDays, meetsOpportunityApr, minimumOpportunityApr, productHasComparableApr, productHasKnownCapacity } from "@/lib/opportunity-policy";
 
 type ApiResult = {
   products?: Product[];
@@ -25,7 +26,9 @@ type ApiResult = {
     productType?: "flexible" | "fixed";
     termDays?: number;
     minimumAmount?: number;
+    subscriptionStartsAt?: string;
     subscriptionEndsAt?: string;
+    availability?: Product["availability"];
     eligibilityRequired?: boolean;
     eligibilityLabel?: string;
     eligibilityStatus?: Product["eligibilityStatus"];
@@ -54,10 +57,16 @@ type ApiResult = {
     lastError: string | null;
   };
 };
-type HoldingsApiResult = { products?: Product[]; holdings: HoldingMap; overrides: ProductOverrideMap; manualProducts: Product[]; hiddenProductIds?: string[]; hiddenSeedProductIds?: string[]; found: boolean };
+type HoldingsApiResult = { products?: Product[]; holdings: HoldingMap; overrides: ProductOverrideMap; manualProducts: Product[]; hiddenProductIds?: string[]; found: boolean };
 type ManualProductPatch = { accountId?: string; manualKind?: Product["manualKind"]; termDays?: number };
+type PortfolioChanges = {
+  holdingProductIds: string[];
+  overrideProductIds: string[];
+  manualProductIds: string[];
+  deletedManualProductIds: string[];
+  hiddenProductIds?: string[];
+};
 const emptyHoldings = Object.fromEntries(seedProducts.map((product) => [product.id, 0])) as HoldingMap;
-const minimumVisibleApr = 4;
 
 export default function Home() { return <Dashboard mode="demo" />; }
 
@@ -77,9 +86,10 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const [draftOverrides, setDraftOverrides] = useState<ProductOverrideMap>({});
   const [draftManualProducts, setDraftManualProducts] = useState<Product[]>([]);
   const [deletedManualProductIds, setDeletedManualProductIds] = useState<string[]>([]);
-  const [hiddenSeedProductIds, setHiddenSeedProductIds] = useState<string[]>([]);
-  const [draftHiddenSeedProductIds, setDraftHiddenSeedProductIds] = useState<string[]>([]);
+  const [hiddenProductIds, setHiddenProductIds] = useState<string[]>([]);
+  const [draftHiddenProductIds, setDraftHiddenProductIds] = useState<string[]>([]);
   const [showAssetSwitchWarning, setShowAssetSwitchWarning] = useState(false);
+  const [pendingDeleteProductId, setPendingDeleteProductId] = useState<string | null>(null);
   const [savingHoldings, setSavingHoldings] = useState(false);
   const [holdingSaveError, setHoldingSaveError] = useState(false);
   const [rateFallbacks, setRateFallbacks] = useState<Record<string, string>>({});
@@ -96,7 +106,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const productOverridesRef = useRef<ProductOverrideMap>({});
   const manualProductsRef = useRef<Product[]>([]);
-  const hiddenSeedProductIdsRef = useRef<string[]>([]);
+  const hiddenProductIdsRef = useRef<string[]>([]);
   const previewQuery = localPreview ? "?preview=1" : "";
   const holdingsEndpoint = `/private/api/holdings${previewQuery}`;
   const productsEndpoint = `/private/api/products${previewQuery}`;
@@ -105,9 +115,23 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     window.location.assign("/private/home");
   }
 
+  function openPrivateApiSettings() {
+    window.location.assign("/private/home?settings=api");
+  }
+
+  useEffect(() => {
+    if (isDemo) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("settings") !== "api") return;
+    url.searchParams.delete("settings");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    const openTimer = window.setTimeout(() => setShowApiSettings(true), 0);
+    return () => window.clearTimeout(openTimer);
+  }, [isDemo]);
+
   useEffect(() => { productOverridesRef.current = productOverrides; }, [productOverrides]);
   useEffect(() => { manualProductsRef.current = manualProducts; }, [manualProducts]);
-  useEffect(() => { hiddenSeedProductIdsRef.current = hiddenSeedProductIds; }, [hiddenSeedProductIds]);
+  useEffect(() => { hiddenProductIdsRef.current = hiddenProductIds; }, [hiddenProductIds]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 30_000);
@@ -123,11 +147,11 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         if (data.products?.length) setProducts(data.products);
         setProductOverrides(data.overrides ?? {});
         setManualProducts(data.manualProducts ?? []);
-        const hiddenIds = data.hiddenProductIds ?? data.hiddenSeedProductIds ?? [];
-        setHiddenSeedProductIds(hiddenIds);
+        const hiddenIds = data.hiddenProductIds ?? [];
+        setHiddenProductIds(hiddenIds);
         productOverridesRef.current = data.overrides ?? {};
         manualProductsRef.current = data.manualProducts ?? [];
-        hiddenSeedProductIdsRef.current = hiddenIds;
+        hiddenProductIdsRef.current = hiddenIds;
         if (data.found) {
           const next = { ...emptyHoldings, ...data.holdings };
           setHoldings(next);
@@ -153,9 +177,12 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         .then((response) => response.ok ? response.json() as Promise<{ email: string }> : Promise.reject())
         .then((session) => setUserEmail(session.email))
         .catch(() => setUserEmail(null));
+      setLoading(true);
+      const productsResponse = fetch(productsEndpoint, { cache: "no-store" });
+      void productsResponse.catch(() => undefined);
       const loaded = await loadHoldings();
       setHoldingsReady(true);
-      await refreshRates(loaded);
+      await refreshRates(loaded, { response: productsResponse });
     }
 
     const frame = window.requestAnimationFrame(() => void initialize());
@@ -166,11 +193,11 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function refreshRates(baseHoldings: HoldingMap = holdings, options?: { manual?: boolean }) {
+  async function refreshRates(baseHoldings: HoldingMap = holdings, options?: { manual?: boolean; response?: Promise<Response> }) {
     setLoading(true);
     try {
       const endpoint = options?.manual ? `${productsEndpoint}${productsEndpoint.includes("?") ? "&" : "?"}refresh=1` : productsEndpoint;
-      const response = await fetch(endpoint, { cache: "no-store" });
+      const response = await (options?.response ?? fetch(endpoint, { cache: "no-store" }));
       if (!response.ok) throw new Error("rate refresh failed");
       const data = await response.json() as ApiResult;
       const hardFailure = data.cache?.state === "stale" || data.cache?.state === "error";
@@ -188,15 +215,19 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       setProducts(nextProducts);
       const acceptedHoldingUpdates = Object.fromEntries(Object.entries(data.holdingUpdates ?? {}).filter(([productId]) => (
         nextProducts.find((product) => product.id === productId)?.holdingDataMode === "api"
+        && !hiddenProductIdsRef.current.includes(productId)
       )));
       if (!isDemo && Object.keys(acceptedHoldingUpdates).length > 0) {
         const next = { ...baseHoldings, ...acceptedHoldingUpdates };
         setHoldings(next);
-        try {
-          await persistPortfolio(next, productOverridesRef.current, Object.keys(acceptedHoldingUpdates), manualProductsRef.current, [], hiddenSeedProductIdsRef.current);
-        } catch {
+        void persistPortfolio(next, productOverridesRef.current, manualProductsRef.current, {
+          holdingProductIds: Object.keys(acceptedHoldingUpdates),
+          overrideProductIds: [],
+          manualProductIds: [],
+          deletedManualProductIds: [],
+        }).catch(() => {
           // The freshly read values stay visible even if the background cloud save fails.
-        }
+        });
       }
       const updatedAt = data.cache?.updatedAt
         ?? data.fetchedAt
@@ -212,43 +243,44 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     }
   }
 
-  async function persistPortfolio(next: HoldingMap, overrides: ProductOverrideMap, changedProductIds: string[], nextManualProducts: Product[], deletedIds: string[], hiddenSeedIds: string[]) {
+  async function persistPortfolio(next: HoldingMap, overrides: ProductOverrideMap, nextManualProducts: Product[], changes: PortfolioChanges) {
+    const manualProductIds = new Set(changes.manualProductIds);
     const response = await fetch(holdingsEndpoint, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        holdings: next,
-        overrides,
-        changedProductIds,
-        manualProducts: nextManualProducts.map(manualProductPayload),
-        deletedManualProductIds: deletedIds,
-        hiddenSeedProductIds: hiddenSeedIds,
+        holdings: Object.fromEntries(changes.holdingProductIds.map((productId) => [productId, next[productId] ?? 0])),
+        overrides: Object.fromEntries(changes.overrideProductIds.map((productId) => [productId, overrides[productId]])),
+        changedHoldingProductIds: changes.holdingProductIds,
+        changedOverrideProductIds: changes.overrideProductIds,
+        manualProducts: nextManualProducts.filter((product) => manualProductIds.has(product.id)).map(manualProductPayload),
+        deletedManualProductIds: changes.deletedManualProductIds,
+        ...(changes.hiddenProductIds ? { hiddenProductIds: changes.hiddenProductIds } : {}),
       }),
     });
     if (!response.ok) throw new Error("cloud save failed");
     return response.json() as Promise<{ updatedAt: string }>;
   }
 
-  async function savePortfolio(nextHoldings: HoldingMap, nextOverrides: ProductOverrideMap, changedProductIds: string[], nextManualProducts: Product[], deletedIds: string[], hiddenSeedIds: string[]) {
+  async function savePortfolio(nextHoldings: HoldingMap, nextOverrides: ProductOverrideMap, nextManualProducts: Product[], nextHiddenProductIds: string[], changes: PortfolioChanges) {
     const previousHoldings = holdings;
     const previousOverrides = productOverrides;
     const previousManualProducts = manualProducts;
-    const previousHiddenSeedProductIds = hiddenSeedProductIds;
+    const previousHiddenProductIds = hiddenProductIds;
     setHoldings(nextHoldings);
     setProductOverrides(nextOverrides);
     setManualProducts(nextManualProducts);
-    setHiddenSeedProductIds(hiddenSeedIds);
-    hiddenSeedProductIdsRef.current = hiddenSeedIds;
+    setHiddenProductIds(nextHiddenProductIds);
+    hiddenProductIdsRef.current = nextHiddenProductIds;
     try {
-      const result = await persistPortfolio(nextHoldings, nextOverrides, changedProductIds, nextManualProducts, deletedIds, hiddenSeedIds);
+      const result = await persistPortfolio(nextHoldings, nextOverrides, nextManualProducts, changes);
       setProductOverrides((current) => ({
         ...current,
-        ...Object.fromEntries(changedProductIds.map((productId) => [productId, {
+        ...Object.fromEntries(changes.overrideProductIds.map((productId) => [productId, {
           apr: current[productId]?.apr ?? null,
           firstTierLimit: current[productId]?.firstTierLimit ?? null,
           termDays: current[productId]?.termDays ?? null,
           purchaseDate: current[productId]?.purchaseDate ?? null,
-          eligibilityConfirmed: current[productId]?.eligibilityConfirmed ?? null,
           updatedAt: result.updatedAt,
         }])),
       }));
@@ -257,8 +289,8 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       setHoldings(previousHoldings);
       setProductOverrides(previousOverrides);
       setManualProducts(previousManualProducts);
-      setHiddenSeedProductIds(previousHiddenSeedProductIds);
-      hiddenSeedProductIdsRef.current = previousHiddenSeedProductIds;
+      setHiddenProductIds(previousHiddenProductIds);
+      hiddenProductIdsRef.current = previousHiddenProductIds;
       return false;
     }
   }
@@ -267,8 +299,9 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     setDraftHoldings({ ...holdings });
     setDraftOverrides(structuredClone(productOverrides));
     setDraftManualProducts(structuredClone(manualProducts));
-    setDraftHiddenSeedProductIds([...hiddenSeedProductIds]);
+    setDraftHiddenProductIds([...hiddenProductIds]);
     setDeletedManualProductIds([]);
+    setPendingDeleteProductId(null);
     setHoldingSaveError(false);
     setEditing(true);
   }
@@ -278,8 +311,9 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     setDraftHoldings({ ...holdings });
     setDraftOverrides(structuredClone(productOverrides));
     setDraftManualProducts(structuredClone(manualProducts));
-    setDraftHiddenSeedProductIds([...hiddenSeedProductIds]);
+    setDraftHiddenProductIds([...hiddenProductIds]);
     setDeletedManualProductIds([]);
+    setPendingDeleteProductId(null);
     setHoldingSaveError(false);
     setEditing(false);
   }
@@ -292,7 +326,6 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         firstTierLimit: current[productId]?.firstTierLimit ?? productOverrides[productId]?.firstTierLimit ?? null,
         termDays: current[productId]?.termDays ?? productOverrides[productId]?.termDays ?? null,
         purchaseDate: current[productId]?.purchaseDate ?? productOverrides[productId]?.purchaseDate ?? null,
-        eligibilityConfirmed: current[productId]?.eligibilityConfirmed ?? productOverrides[productId]?.eligibilityConfirmed ?? null,
         updatedAt: current[productId]?.updatedAt ?? productOverrides[productId]?.updatedAt ?? null,
         ...patch,
       },
@@ -347,28 +380,31 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     if (userProduct) setDraftManualProducts((current) => current.filter((product) => product.id !== productId));
     else {
       const seedProduct = products.find((product) => product.id === productId);
-      if (!seedProduct || !productCanBeRemoved(seedProduct)) return;
-      setDraftHiddenSeedProductIds((current) => [...new Set([...current, productId])]);
+      if (!seedProduct) return;
+      setDraftHiddenProductIds((current) => [...new Set([...current, productId])]);
     }
     setDraftHoldings((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== productId)) as HoldingMap);
     setDraftOverrides((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== productId)) as ProductOverrideMap);
     if (manualProducts.some((product) => product.id === productId)) {
       setDeletedManualProductIds((current) => [...new Set([...current, productId])]);
     }
+    setPendingDeleteProductId(null);
   }
 
   async function finishEditing() {
-    const hiddenSeedProductIdSet = new Set(draftHiddenSeedProductIds);
-    const workingProducts = [...products.filter((product) => !hiddenSeedProductIdSet.has(product.id)), ...draftManualProducts];
-    const changedProductIds = workingProducts.flatMap((product) => (
-      (draftHoldings[product.id] ?? 0) !== (holdings[product.id] ?? 0)
-      || !sameOverride(draftOverrides[product.id], productOverrides[product.id])
-      || (product.id.startsWith("manual-") && !sameManualProduct(product, manualProducts.find((item) => item.id === product.id)))
-        ? [product.id]
-        : []
+    const hiddenProductIdSet = new Set(draftHiddenProductIds);
+    const workingProducts = [...products.filter((product) => !hiddenProductIdSet.has(product.id)), ...draftManualProducts];
+    const holdingProductIds = workingProducts.flatMap((product) => (
+      (draftHoldings[product.id] ?? 0) !== (holdings[product.id] ?? 0) ? [product.id] : []
     ));
-    const hiddenProductsChanged = !sameIdSet(draftHiddenSeedProductIds, hiddenSeedProductIds);
-    if (changedProductIds.length === 0 && deletedManualProductIds.length === 0 && !hiddenProductsChanged) {
+    const overrideProductIds = workingProducts.flatMap((product) => (
+      !sameOverride(draftOverrides[product.id], productOverrides[product.id]) ? [product.id] : []
+    ));
+    const manualProductIds = workingProducts.flatMap((product) => (
+      product.id.startsWith("manual-") && !sameManualProduct(product, manualProducts.find((item) => item.id === product.id)) ? [product.id] : []
+    ));
+    const hiddenProductsChanged = !sameIdSet(draftHiddenProductIds, hiddenProductIds);
+    if (holdingProductIds.length === 0 && overrideProductIds.length === 0 && manualProductIds.length === 0 && deletedManualProductIds.length === 0 && !hiddenProductsChanged) {
       setEditing(false);
       return;
     }
@@ -376,15 +412,21 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       setHoldings(draftHoldings);
       setProductOverrides(draftOverrides);
       setManualProducts(draftManualProducts);
-      setHiddenSeedProductIds(draftHiddenSeedProductIds);
-      hiddenSeedProductIdsRef.current = draftHiddenSeedProductIds;
+      setHiddenProductIds(draftHiddenProductIds);
+      hiddenProductIdsRef.current = draftHiddenProductIds;
       setDeletedManualProductIds([]);
       setEditing(false);
       return;
     }
     setSavingHoldings(true);
     setHoldingSaveError(false);
-    const saved = await savePortfolio(draftHoldings, draftOverrides, changedProductIds, draftManualProducts, deletedManualProductIds, draftHiddenSeedProductIds);
+    const saved = await savePortfolio(draftHoldings, draftOverrides, draftManualProducts, draftHiddenProductIds, {
+      holdingProductIds,
+      overrideProductIds,
+      manualProductIds,
+      deletedManualProductIds,
+      ...(hiddenProductsChanged ? { hiddenProductIds: draftHiddenProductIds } : {}),
+    });
     setSavingHoldings(false);
     if (saved) setEditing(false);
     else setHoldingSaveError(true);
@@ -392,15 +434,15 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
 
   const activeHoldings = editing ? draftHoldings : holdings;
   const activeOverrides = editing ? draftOverrides : productOverrides;
-  const activeHiddenSeedProductIds = editing ? draftHiddenSeedProductIds : hiddenSeedProductIds;
+  const activeHiddenProductIds = editing ? draftHiddenProductIds : hiddenProductIds;
   const activeBaseProducts = useMemo(() => {
-    const hiddenIds = new Set(activeHiddenSeedProductIds);
+    const hiddenIds = new Set(activeHiddenProductIds);
     return [...products.filter((product) => !hiddenIds.has(product.id)), ...(editing ? draftManualProducts : manualProducts)];
-  }, [activeHiddenSeedProductIds, draftManualProducts, editing, manualProducts, products]);
+  }, [activeHiddenProductIds, draftManualProducts, editing, manualProducts, products]);
   const resolvedProducts = useMemo(() => activeBaseProducts.map((product) => applyProductOverride(product, activeOverrides[product.id])), [activeBaseProducts, activeOverrides]);
   const holdingIsKnown = (product: Product) => isDemo || product.holdingDataMode === "manual" || apiHoldingProductIds.has(product.id);
   const assetProducts = useMemo(() => resolvedProducts
-    .filter((product) => product.asset === asset && (editing || !product.requiresLiveRate || product.source.kind === "live" || (activeHoldings[product.id] ?? 0) > 0 || activeOverrides[product.id]?.apr != null))
+    .filter((product) => product.asset === asset)
     .sort((left, right) => {
       const leftIsNew = editing && left.id.startsWith("manual-") && !manualProducts.some((product) => product.id === left.id);
       const rightIsNew = editing && right.id.startsWith("manual-") && !manualProducts.some((product) => product.id === right.id);
@@ -408,22 +450,23 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       return left.exchange.localeCompare(right.exchange, "en", { sensitivity: "base" })
       || left.region.localeCompare(right.region, "en", { sensitivity: "base" })
       || left.name.localeCompare(right.name, "en", { sensitivity: "base" });
-    }), [activeHoldings, activeOverrides, asset, editing, manualProducts, resolvedProducts]);
-  const visibleProducts = assetProducts.filter((product) => isDemo
-    || isPrivatePortfolioProduct(product, activeHoldings[product.id] ?? 0));
-  const tableProducts = editing ? assetProducts : visibleProducts;
-  const opportunityProducts = visibleProducts.filter((product) => product.rateCoverage !== "unavailable" && (!product.eligibilityRequired || (activeHoldings[product.id] ?? 0) > 0));
-  const totalHolding = visibleProducts.reduce((sum, product) => holdingIsKnown(product) ? sum + (activeHoldings[product.id] ?? 0) : sum, 0);
-  const calculableProducts = visibleProducts.filter((product) => holdingIsKnown(product) && productParticipatesInInterest(product, activeHoldings[product.id] ?? 0, activeOverrides[product.id]));
-  const calculableOpportunityProducts = opportunityProducts.filter((product) => productParticipatesInInterest(product, activeHoldings[product.id] ?? 0, activeOverrides[product.id]));
-  const comparableOpportunityProducts = opportunityProducts.filter((product) => product.rateCoverage === "max_only" || productParticipatesInInterest(product, activeHoldings[product.id] ?? 0, activeOverrides[product.id]));
+    }), [asset, editing, manualProducts, resolvedProducts]);
+  const tableProducts = assetProducts;
+  const totalHolding = assetProducts.reduce((sum, product) => holdingIsKnown(product) ? sum + (activeHoldings[product.id] ?? 0) : sum, 0);
+  const calculableProducts = assetProducts.filter((product) => holdingIsKnown(product) && productParticipatesInInterest(product, activeHoldings[product.id] ?? 0, activeOverrides[product.id]));
+  const comparableOpportunityProducts = assetProducts.filter(productHasComparableApr);
+  const highYieldCapacityProducts = assetProducts.filter((product) => holdingIsKnown(product)
+    && productHasKnownCapacity(product)
+    && meetsOpportunityApr(highestProductApr(product)));
   const calculableHolding = calculableProducts.reduce((sum, product) => sum + (activeHoldings[product.id] ?? 0), 0);
   const annualEarn = calculableProducts.reduce((sum, product) => sum + (activeHoldings[product.id] ?? 0) * effectiveApr(product, activeHoldings[product.id] ?? 0) / 100, 0);
   const portfolioApr = calculableHolding ? annualEarn / calculableHolding * 100 : 0;
-  const bestProduct = comparableOpportunityProducts.reduce<Product | null>((best, product) => !best || (product.tiers[0]?.apr ?? 0) > (best.tiers[0]?.apr ?? 0) ? product : best, null);
-  const highYieldLeft = calculableOpportunityProducts.reduce((sum, product) => isDemo || holdingIsKnown(product) ? sum + remainingHighYield(product, activeHoldings[product.id] ?? 0) : sum, 0);
-  const tierOneOverflow = calculableProducts.reduce((sum, product) => sum + overflowFromFirstTier(product, activeHoldings[product.id] ?? 0), 0);
-  const holdingProductCount = visibleProducts.filter((product) => holdingIsKnown(product) && (activeHoldings[product.id] ?? 0) > 0).length;
+  const bestProduct = comparableOpportunityProducts.reduce<Product | null>((best, product) => !best || highestProductApr(product) > highestProductApr(best) ? product : best, null);
+  const highYieldLeft = highYieldCapacityProducts.reduce((sum, product) => sum + remainingHighYield(product, activeHoldings[product.id] ?? 0), 0);
+  const tierOneOverflow = assetProducts.reduce((sum, product) => holdingIsKnown(product) && productHasKnownCapacity(product)
+    ? sum + overflowFromFirstTier(product, activeHoldings[product.id] ?? 0)
+    : sum, 0);
+  const holdingProductCount = assetProducts.filter((product) => holdingIsKnown(product) && (activeHoldings[product.id] ?? 0) > 0).length;
   const manualRefreshCooling = Boolean(manualRefreshAvailableAt && Date.parse(manualRefreshAvailableAt) > clock);
   const automaticRefreshSummary = formatSyncDateTime(nextScheduledRefreshAt(clock));
   const currentDataSummary = loading
@@ -442,6 +485,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const failureSummary = wholeUpdateFailed
     ? "本次产品和持仓数据更新失败；下次更新将重试。"
     : `${failedPlatforms.length ? failedPlatforms.join("、") : "交易所"} API 暂不可用；下次更新将重试。`;
+  const initialLoading = !isDemo && (!holdingsReady || (loading && !lastUpdated));
 
   return (
     <main className="min-h-screen">
@@ -456,6 +500,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
             manualRefreshCooling={manualRefreshCooling}
             cooldownUntil={manualRefreshAvailableAt}
             onManualRefresh={() => void refreshRates(activeHoldings, { manual: true })}
+            onApiSettings={isDemo ? openPrivateApiSettings : () => setShowApiSettings(true)}
           />
         </div>
       </nav>
@@ -464,46 +509,60 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         <div className="card type-caption mb-5 flex items-center justify-between gap-4 px-5 py-3.5" aria-live="polite">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
-            <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{!loading && !isDemo && hasSyncFailure && <span className="text-warning font-semibold"> {failureSummary}</span>}</p>
+            {initialLoading
+              ? <span className="skeleton-block skeleton-notice" aria-hidden="true" />
+              : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{!loading && !isDemo && hasSyncFailure && <span className="text-warning font-semibold"> {failureSummary}</span>}</p>}
           </div>
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
         </div>
-        <section className="metrics-panel card mb-7 grid overflow-hidden sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
-          <Metric highlight label={`总持仓 · ${asset}`} value={holdingsReady ? formatAmount(totalHolding) : "—"} note={holdingsReady ? `${holdingProductCount} 个持仓产品` : "正在同步持仓…"} />
-          <Metric label="组合有效 APR" value={holdingsReady ? `${portfolioApr.toFixed(2)}%` : "—"} note={holdingsReady ? "按各阶梯实际占用加权" : "正在同步持仓…"} />
-          <Metric label={`预计每日收益 · ${asset}`} value={holdingsReady ? formatAmount(annualEarn / 365) : "—"} note={holdingsReady ? "含活期、定期" : "正在同步持仓…"} />
-          <Metric label={bestProduct?.rateCoverage === "max_only" ? "最高公开 APR" : "最佳首档 APR"} value={holdingsReady ? (bestProduct ? `${(bestProduct.tiers[0]?.apr ?? 0).toFixed(2)}%` : "—") : "—"} note={holdingsReady ? (bestProduct ? `${accountName(bestProduct.accountId)}${bestProduct.rateCoverage === "max_only" ? " · 阶梯待确认" : ""}` : "暂无产品") : "正在同步持仓…"} />
-          <Metric label="可用高息额度" value={holdingsReady ? formatAmount(highYieldLeft) : "—"} note={holdingsReady ? "首档与定期额度" : "正在同步持仓…"} />
-          <Metric label="超出首档" value={holdingsReady ? formatAmount(tierOneOverflow) : "—"} valueTone={holdingsReady && tierOneOverflow > 0 ? "danger" : "default"} note={holdingsReady ? (tierOneOverflow > 0 ? "已进入次档" : "未超出首档") : "正在同步持仓…"} />
+        <section className="metrics-panel card mb-7 grid overflow-hidden sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6" aria-busy={initialLoading}>
+          {initialLoading ? <>{Array.from({ length: 6 }, (_, index) => <MetricSkeleton key={index} highlight={index === 0} />)}</> : <>
+            <Metric highlight label={`总持仓 · ${asset}`} value={formatAmount(totalHolding)} note={`${holdingProductCount} 个持仓产品`} />
+            <Metric label="组合有效 APR" value={`${portfolioApr.toFixed(2)}%`} note="按各阶梯实际占用加权" />
+            <Metric label={`预计每日收益 · ${asset}`} value={formatAmount(annualEarn / 365)} note="含活期、定期" />
+            <Metric label={bestProduct?.rateCoverage === "max_only" ? "最高公开 APR" : "最佳首档 APR"} value={bestProduct ? `${highestProductApr(bestProduct).toFixed(2)}%` : "—"} note={bestProduct ? `${accountName(bestProduct.accountId)}${bestProduct.rateCoverage === "max_only" ? " · 阶梯待确认" : ""}` : "暂无产品"} />
+            <Metric label="高息剩余额度" value={formatAmount(highYieldLeft)} note="APR ≥ 6% 的已知额度" />
+            <Metric label="超出首档" value={formatAmount(tierOneOverflow)} valueTone={tierOneOverflow > 0 ? "danger" : "default"} note={tierOneOverflow > 0 ? "已进入次档" : "未超出首档"} />
+          </>}
         </section>
 
         <section className="card overflow-hidden">
           <div className="table-toolbar">
-            <div><h2 className="type-title font-semibold tracking-[-0.02em]">{asset} 持仓</h2><div className="mt-1"><p className="text-muted type-caption">{editing ? <>展示手动添加和 API 同步的产品{!isDemo && <>，<ActionButton variant="text" size="small" className="inline-action px-1 py-0.5" onClick={() => setShowApiSettings(true)}>配置 API</ActionButton></>}</> : "仅展示已有持仓，或 APR > 4% 的活期及 7 天内定期产品"}</p></div></div>
-            {editing ? <div className="flex items-center gap-2"><ActionButton variant="secondary" onClick={cancelEditing} disabled={savingHoldings}>取消</ActionButton><ActionButton variant="secondary" onClick={addManualProduct} disabled={savingHoldings}>添加产品</ActionButton><ActionButton onClick={() => void finishEditing()} disabled={savingHoldings}>{savingHoldings ? "保存中…" : "保存持仓"}</ActionButton></div> : <div className="flex items-center gap-2"><ActionButton variant={isDemo ? "secondary" : "primary"} onClick={beginEditing} disabled={!holdingsReady}>编辑持仓</ActionButton></div>}
+            <div className="table-toolbar-copy">
+              <h2 className="type-title font-semibold tracking-[-0.02em]">{asset} 持仓</h2>
+              <p className="table-toolbar-subtitle text-muted type-caption">
+                {editing
+                  ? <>展示手动添加和 API 同步的产品{!isDemo && <>，<ActionButton variant="text" className="table-toolbar-inline-action" onClick={() => setShowApiSettings(true)}>配置 API</ActionButton></>}</>
+                  : `展示当前目录中 APR ≥ ${minimumOpportunityApr}% 的活期、${maximumShortTermDays} 天内定期及已有持仓产品`}
+              </p>
+            </div>
+            {editing
+              ? <div key="editing-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant="secondary" onClick={cancelEditing} disabled={savingHoldings}>取消</ActionButton><ActionButton variant="secondary" onClick={addManualProduct} disabled={savingHoldings}>添加产品</ActionButton><ActionButton onClick={() => void finishEditing()} disabled={savingHoldings}>{savingHoldings ? "保存中…" : "保存持仓"}</ActionButton></div>
+              : <div key="view-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant={isDemo ? "secondary" : "primary"} onClick={beginEditing} disabled={!holdingsReady}>编辑持仓</ActionButton></div>}
           </div>
-          {holdingSaveError && <div className="error-panel type-caption mx-5 mt-4 px-3 py-2 font-medium">保存失败，请检查网络后重试；表格中的修改仍然保留。</div>}
-          <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={!holdingsReady}><colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /></colgroup><thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th></tr></thead><tbody>{holdingsReady ? tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
+          {holdingSaveError && <div className="table-error-panel error-panel type-caption font-medium">保存失败，请检查网络后重试；表格中的修改仍然保留。</div>}
+          <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={initialLoading}><colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /></colgroup><thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th></tr></thead><tbody>{initialLoading ? <ProductTableSkeleton /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
             const baseProduct = activeBaseProducts.find((product) => product.id === listedProduct.id) ?? listedProduct;
             const manualSettings = activeOverrides[listedProduct.id];
             const displayProduct = applyProductOverride(baseProduct, manualSettings);
             const isManualProduct = listedProduct.id.startsWith("manual-");
-            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || baseProduct.holdingDataMode === "manual"} saving={savingHoldings} manualProduct={isManualProduct} removable={isManualProduct || productCanBeRemoved(baseProduct)} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && baseProduct.holdingDataMode === "api" ? holdingFallbacks[listedProduct.id] : undefined} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => deleteDraftProduct(listedProduct.id)} />;
-          }) : <tr><td colSpan={4}><EmptyProductState /></td></tr> : <tr><td colSpan={4} className="text-muted type-body px-5 py-12 text-center">正在同步持仓…</td></tr>}</tbody></table></div>
+            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || baseProduct.holdingDataMode === "manual"} saving={savingHoldings} manualProduct={isManualProduct} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && baseProduct.holdingDataMode === "api" ? holdingFallbacks[listedProduct.id] : undefined} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
+          }) : <tr><td colSpan={4}><EmptyProductState /></td></tr>}</tbody></table></div>
         </section>
 
-        <footer className="site-footer text-muted type-caption py-6"><p>数据仅用于监控与比较，不构成投资建议。实际到账以平台账户为准。</p><a className="github-footer-link" href="https://github.com/noood/stable-earn" target="_blank" rel="noreferrer" aria-label="GitHub 源码仓库" title="GitHub 源码仓库"><Image src="/GitHub_Lockup_Black_Clearspace.svg" width={448} height={127} alt="" aria-hidden="true" /></a></footer>
+        <footer className="site-footer text-muted type-caption"><p>数据仅用于监控与比较，不构成投资建议。实际到账以平台账户为准。</p><a className="github-footer-link" href="https://github.com/noood/stable-earn" target="_blank" rel="noreferrer" aria-label="GitHub 源码仓库" title="GitHub 源码仓库"><Image src="/GitHub_Lockup_Black_Clearspace.svg" width={448} height={127} alt="" aria-hidden="true" /></a></footer>
       </div>
 
       {!isDemo && showApiSettings && <ApiSettings onClose={() => setShowApiSettings(false)} onCooldownChange={() => setManualRefreshAvailableAt(null)} />}
       {showAssetSwitchWarning && <ModalFrame ariaLabel="请先完成编辑" title="请先完成编辑" onClose={() => setShowAssetSwitchWarning(false)}><p className="text-secondary type-body">请先保存或取消当前修改，再切换币种。</p><div className="mt-5 flex justify-end"><ActionButton onClick={() => setShowAssetSwitchWarning(false)}>知道了</ActionButton></div></ModalFrame>}
+      {pendingDeleteProductId && <ModalFrame ariaLabel="删除产品" title="删除产品" onClose={() => setPendingDeleteProductId(null)}><p className="text-secondary type-body">删除后将不再记录该产品的持仓和收益，是否删除？</p><div className="mt-5 flex justify-end gap-2"><ActionButton variant="secondary" onClick={() => setPendingDeleteProductId(null)}>取消</ActionButton><ActionButton variant="danger" onClick={() => deleteDraftProduct(pendingDeleteProductId)}>删除产品</ActionButton></div></ModalFrame>}
     </main>
   );
 }
 
 function AssetSwitch({ asset, onChange }: { asset: Asset; onChange: (asset: Asset) => void }) {
   const assets: Asset[] = ["USDT", "USDC", "USDGO", "BTC"];
-  return <div className="asset-switch inline-flex h-full w-fit max-w-full flex-nowrap items-stretch gap-1">{assets.map((item) => <button key={item} onClick={() => onChange(item)} aria-current={asset === item ? "page" : undefined} className={`type-label -mb-px flex shrink-0 items-center gap-2 border-b-[3px] px-3.5 font-semibold transition-colors ${asset === item ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"}`}><AssetIcon asset={item} /><span>{item}</span></button>)}</div>;
+  return <div className="asset-switch inline-flex h-full w-fit max-w-full flex-nowrap items-stretch gap-1">{assets.map((item) => <button key={item} onClick={() => onChange(item)} aria-current={asset === item ? "page" : undefined} className={`type-label flex shrink-0 items-center gap-2 border-b-[3px] px-3.5 font-semibold transition-colors ${asset === item ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"}`}><AssetIcon asset={item} /><span>{item}</span></button>)}</div>;
 }
 
 function AssetIcon({ asset }: { asset: Asset }) {
@@ -538,7 +597,7 @@ function useDismissiblePopover<TTrigger extends HTMLElement, TPopover extends HT
   }, [open, popoverRef, setOpen, triggerRef]);
 }
 
-function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUntil, onManualRefresh }: { userEmail: string | null; demo: boolean; loading: boolean; manualRefreshCooling: boolean; cooldownUntil: string | null; onManualRefresh: () => void }) {
+function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUntil, onManualRefresh, onApiSettings }: { userEmail: string | null; demo: boolean; loading: boolean; manualRefreshCooling: boolean; cooldownUntil: string | null; onManualRefresh: () => void; onApiSettings: () => void }) {
   const menuRef = useDismissibleDetails();
   const cooldownTime = cooldownUntil ? new Date(cooldownUntil).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : null;
   const refreshLabel = loading
@@ -550,18 +609,18 @@ function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUn
     action();
   }
 
-  return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><span aria-hidden="true">⋯</span></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}{!demo && <button type="button" disabled={loading || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-leading menu-item-refresh">{refreshLabel}</button>}{!demo && <a href="/logout" className="menu-item menu-item-danger">退出登录</a>}</div></details></div>;
+  return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><span aria-hidden="true">⋯</span></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}<button type="button" onClick={(event) => closeMenu(event, onApiSettings)} className="menu-item menu-item-leading">API 设置</button>{!demo && <button type="button" disabled={loading || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-refresh">{refreshLabel}</button>}{!demo && <a href="/logout" className="menu-item menu-item-danger">退出登录</a>}</div></details></div>;
 }
 
-function ProductRow({ product, baseProduct, manualSettings, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, removable, rateFallbackAt, holdingFallbackAt, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; removable: boolean; rateFallbackAt?: string; holdingFallbackAt?: string; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
+function ProductRow({ product, baseProduct, manualSettings, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, rateFallbackAt, holdingFallbackAt, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; rateFallbackAt?: string; holdingFallbackAt?: string; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
   const account = accounts.find((item) => item.id === product.accountId)!;
-  const productInfoIssues = productInformationIssues(product, holdingAvailable ? holding : 0, manualSettings);
+  const productInfoIssues = productInformationIssues(product, manualSettings);
   return (
     <tr className={`product-row ${!editing && holdingAvailable && holding <= 0 ? "product-row-empty" : ""}`}>
       <TableCell>
         {editing && manualProduct
           ? <ManualProductIdentityEditor product={baseProduct} account={account} disabled={saving} onChange={onManualProductChange} onDelete={onDelete} />
-          : <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div><div className="text-muted type-caption mt-0.5 max-w-[220px] whitespace-normal break-words">{standardProductName(product)}</div>{editing && removable && <button type="button" className="manual-product-delete text-danger type-caption" disabled={saving} onClick={onDelete}>删除产品</button>}</div></div>}
+          : <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div><div className="text-muted type-caption mt-0.5 max-w-[220px] whitespace-normal break-words">{standardProductName(product)}</div>{editing && <button type="button" className="manual-product-delete text-danger type-caption" disabled={saving} onClick={onDelete}>删除产品</button>}</div></div>}
       </TableCell>
       <TableCell><ProductTierSummary product={product} baseProduct={baseProduct} manualSettings={manualSettings} holding={holding} editing={editing} saving={saving} manualProduct={manualProduct} rateFallbackAt={rateFallbackAt} onOverrideChange={onOverrideChange} onManualProductChange={onManualProductChange} /></TableCell>
       <TableCell><ProductHolding product={product} account={account} holding={holding} holdingAvailable={holdingAvailable} holdingSyncState={holdingSyncState} editing={editing} editable={editable} saving={saving} holdingFallbackAt={holdingFallbackAt} productInfoIssues={productInfoIssues} onHoldingChange={onHoldingChange} /></TableCell>
@@ -600,16 +659,9 @@ function EmptyProductState() {
   return <div className="empty-product-state"><p className="text-muted type-label font-semibold">吸引人的稳定理财尚未出现！</p></div>;
 }
 
-function isPrivatePortfolioProduct(product: Product, holding: number) {
-  return product.id.startsWith("manual-")
-    || holding > 0
-    || isHighYieldShortTermOpportunity(product);
-}
-
-function isHighYieldShortTermOpportunity(product: Product) {
-  if (product.rateCoverage === "unavailable" || highestProductApr(product) <= minimumVisibleApr) return false;
-  const termDays = productTermDays(product);
-  return product.productType !== "fixed" || (termDays !== null && termDays <= 7);
+function ProductTableSkeleton() {
+  const widths = ["72%", "84%", "90%", "48%"];
+  return <>{Array.from({ length: 3 }, (_, row) => <tr key={row} className="product-row" aria-hidden="true">{widths.map((width, column) => <TableCell key={column}><span className="skeleton-block skeleton-table-line" style={{ width }} /></TableCell>)}</tr>)}</>;
 }
 
 function ProductTierSummary({ product, baseProduct, manualSettings, holding, editing, saving, manualProduct, rateFallbackAt, onOverrideChange, onManualProductChange }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holding: number; editing: boolean; saving: boolean; manualProduct: boolean; rateFallbackAt?: string; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void }) {
@@ -619,7 +671,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holding, edi
   const fixedFacts = product.productType === "fixed" || product.manualKind === "limited" ? fixedProductFacts(product) : [];
   const durationDays = productTermDays(product);
   const termStatus = productTermStatus(product, manualSettings?.purchaseDate);
-  const productInfoIssues = productInformationIssues(product, holding, manualSettings);
+  const productInfoIssues = productInformationIssues(product, manualSettings);
   const apiManaged = baseProduct.productDataMode === "api";
   const rateHeadline = rateHeadlineFor(product, apiManaged);
   const sourceText = rateFallbackAt && product.rateCoverage !== "unavailable"
@@ -634,7 +686,6 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holding, edi
 
   return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
     {fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
-    {product.eligibilityRequired && product.eligibilityStatus !== "eligible" && product.eligibilityStatus !== "ineligible" && editing && <label className="eligibility-confirmation"><input type="checkbox" checked={manualSettings?.eligibilityConfirmed === true} disabled={saving} onChange={(event) => onOverrideChange({ eligibilityConfirmed: event.currentTarget.checked })} /><span>我确认账号符合该资格</span></label>}
     {!editing && manualTerm && <ProductFact label="活动期限" value={durationDays ? formatTerm(durationDays) : "待填写"} />}
     {sourceText && <ProductMeta text={sourceText} warning={Boolean(rateFallbackAt)} />}
     {incompleteText && <ProductMeta text={incompleteText} warning={holding > 0} />}
@@ -702,19 +753,16 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
   if (!holdingAvailable) {
     summary = <HoldingSummary muted compact label={editing ? undefined : <span className={holdingAmountClassName}>持仓未获取</span>} note={holdingSyncNote(holdingSyncState)} />;
   } else if (productInfoIssues.length > 0) {
-    // Product completeness is described in the APR column. Keep this column
-    // focused on the holding amount and its cache state. In edit mode the
-    // input already contains the amount, but a stale-cache note still matters.
-    summary = editing
-      ? holdingCacheNote ? <HoldingSummary muted compact cacheNote={holdingCacheNote} /> : null
-      : <HoldingSummary muted compact label={holdingLabel()} cacheNote={holdingCacheNote} />;
+    // The APR column owns completeness. Suppress the entire quota summary so
+    // a lone holding amount never appears below the edit control.
+    summary = holdingCacheNote ? <HoldingSummary muted compact cacheNote={holdingCacheNote} /> : null;
   } else if (firstTierCapacity === null) {
     summary = <HoldingSummary compact label={holdingLabel(`${capacityLabel}不限额`)} cacheNote={holdingCacheNote} />;
   } else {
     const note = overflow > 0
       ? `超出${capacityLabel} +${formatAmount(overflow)} ${product.asset}${nextApr !== undefined ? ` · 按 ${nextApr.toFixed(2)}%` : " · 不再计入本产品"}`
       : `${product.productType === "fixed" ? "还可申购" : "还可放"} ${formatAmount(Math.max(0, firstTierCapacity - usedInFirstTier))} ${product.asset}`;
-    summary = <HoldingSummary label={holdingLabel(`${capacityLabel} ${formatAmount(firstTierCapacity)}`)} cacheNote={holdingCacheNote} note={note} progress={firstTierProgress} progressLabel={`${account.name} ${capacityLabel}使用进度`} noteTone={overflow > 0 ? "warning" : "default"} muted={product.eligibilityRequired && holding <= 0} compact={editing} />;
+    summary = <HoldingSummary label={holdingLabel(`${capacityLabel} ${formatAmount(firstTierCapacity)}`)} cacheNote={holdingCacheNote} note={note} progress={firstTierProgress} progressLabel={`${account.name} ${capacityLabel}使用进度`} noteTone={overflow > 0 ? "warning" : "default"} compact={editing} />;
   }
 
   return <div className="holding-column">{editing && (editable
@@ -828,11 +876,15 @@ function accountName(accountId: string) {
   return account.name;
 }
 function overflowFromFirstTier(product: Product, holding: number) { const firstTierMax = product.tiers[0]?.max; return firstTierMax === null || firstTierMax === undefined ? 0 : Math.max(0, holding - firstTierMax); }
-function highestProductApr(product: Product) { return Math.max(0, ...product.tiers.map((tier) => tier.apr)); }
 function standardProductName(product: Product) {
   if (product.manualKind === "limited") return "限时活期";
   if (product.productType === "fixed") return "定期理财";
   return "活期理财";
+}
+function qualificationLabel(product: Product) {
+  if (product.eligibilityStatus === "ineligible") return "账号不符合资格";
+  if (product.eligibilityStatus === "eligible") return product.eligibilityLabel || "账号符合资格";
+  return product.eligibilityLabel ? `${product.eligibilityLabel} · 待确认` : "待确认";
 }
 function fixedProductFacts(product: Product): Array<[string, string]> {
   const facts: Array<[string, string]> = [];
@@ -844,7 +896,9 @@ function fixedProductFacts(product: Product): Array<[string, string]> {
     Date.now() < Date.parse(product.subscriptionEndsAt) ? "认购截止" : "认购已截止",
     new Date(product.subscriptionEndsAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }),
   ]);
-  if (product.eligibilityRequired) facts.push(["申购资格", product.eligibilityStatus === "ineligible" ? "账号不符合资格" : product.eligibilityLabel || "待确认"]);
+  if (product.eligibilityRequired) {
+    facts.push(["申购资格", qualificationLabel(product)]);
+  }
   return facts;
 }
 function formatTerm(termDays: number) {
@@ -904,8 +958,7 @@ function sameOverride(left?: ProductOverride, right?: ProductOverride) {
   return (left?.apr ?? null) === (right?.apr ?? null)
     && (left?.firstTierLimit ?? null) === (right?.firstTierLimit ?? null)
     && (left?.termDays ?? null) === (right?.termDays ?? null)
-    && (left?.purchaseDate ?? null) === (right?.purchaseDate ?? null)
-    && (left?.eligibilityConfirmed ?? null) === (right?.eligibilityConfirmed ?? null);
+    && (left?.purchaseDate ?? null) === (right?.purchaseDate ?? null);
 }
 
 function sameManualProduct(left: Product, right?: Product) {

@@ -13,15 +13,15 @@ import { loadManualRefreshCooldown, manualRefreshCooldownMs } from "@/lib/user-s
 import { isLocalPreviewRequest, localPrivateProductsPreview } from "@/lib/local-preview";
 import { filterFallbacksByFailures } from "@/lib/sync-fallback";
 import { compareProductIdentity, type ProductIdentityChange } from "@/lib/product-identity";
-import { resolveCatalogProductIds, syncProductCatalog } from "@/lib/product-catalog";
+import { prepareProductCatalogSync, resolveCatalogProductIds, type ProductCatalogSync } from "@/lib/product-catalog";
 import type { HoldingSyncState, Product } from "@/lib/domain";
 import {
   formatCacheTime,
   loadSyncCache,
   manualCooldownUntil,
+  prepareSyncCacheSave,
   recordSyncAttempt,
   recordSyncFailure,
-  saveSyncCache,
   syncCacheMetadata,
   type SyncCacheRecord,
   type SyncCacheState,
@@ -52,6 +52,17 @@ type PrivateProductsPayload = {
   fallbackUpdatedAt?: string | null;
   identityChanges?: Record<string, ProductIdentityChange>;
 };
+type PrivatePayloadBuild = {
+  payload: PrivateProductsPayload;
+  catalog: ProductCatalogSync;
+  retryable: boolean;
+};
+type RefreshOptions = {
+  manual?: boolean;
+  acceptPartial?: boolean;
+  persistFailure?: boolean;
+  recordAttempt?: boolean;
+};
 
 const privateCacheKey = "private-products";
 
@@ -73,18 +84,16 @@ export async function GET(request: Request) {
 
   if (!manual) {
     if (cached?.payload) return cachedResponse(cached, cached.lastError ? "error" : "fresh", "按每日 08:00、20:00 的计划缓存读取，未请求交易所。", now, manualCooldownDuration);
-    return NextResponse.json({
-      products: [],
-      rates: [],
-      rateFallbacks: {},
-      holdingUpdates: {},
-      holdingSourceIds: [],
-      holdingFallbacks: {},
-      partial: false,
-      note: "等待下一次计划更新；可使用右上角手动刷新。",
-      failures: [],
-      cache: syncCacheMetadata(cached, "stale", now, manualCooldownDuration),
-    }, { headers: privateResponseHeaders });
+    try {
+      const saved = await refreshPrivateProductsCache(db, identity.userId);
+      return cachedResponse(saved, "updated", "已完成首次产品同步。", now, manualCooldownDuration);
+    } catch {
+      const failedCache = await loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey);
+      return NextResponse.json({ error: "交易所数据暂时无法获取，且当前账户尚无成功缓存。", cache: syncCacheMetadata(failedCache, "error", now, manualCooldownDuration) }, {
+        status: 502,
+        headers: privateResponseHeaders,
+      });
+    }
   }
 
   const cooldownUntil = manualCooldownUntil(cached, now, manualCooldownDuration);
@@ -94,7 +103,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const saved = await refreshPrivateProductsCache(db, identity.userId, true);
+    const saved = await refreshPrivateProductsCache(db, identity.userId, { manual: true });
     return cachedResponse(saved, "updated", "已完成手动刷新。", now, manualCooldownDuration);
   } catch {
     const failedCache = await loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey);
@@ -108,15 +117,25 @@ export async function GET(request: Request) {
   }
 }
 
-export async function refreshPrivateProductsCache(db: D1Database, userId: string, manual = false) {
+export async function refreshPrivateProductsCache(db: D1Database, userId: string, options: RefreshOptions = {}) {
+  const {
+    manual = false,
+    acceptPartial = true,
+    persistFailure = true,
+    recordAttempt = true,
+  } = options;
   const cached = await loadSyncCache<PrivateProductsPayload>(db, userId, privateCacheKey);
-  await recordSyncAttempt(db, userId, privateCacheKey, manual);
+  if (recordAttempt) await recordSyncAttempt(db, userId, privateCacheKey, manual);
   try {
-    const payload = await buildPrivatePayload(db, userId, cached);
-    await saveSyncCache(db, userId, privateCacheKey, payload, payload.fetchedAt);
+    const { payload, catalog, retryable } = await buildPrivatePayload(db, userId, cached);
+    if (retryable && !acceptPartial) throw new Error("已配置平台未完整同步");
+    await db.batch([
+      ...catalog.statements,
+      prepareSyncCacheSave(db, userId, privateCacheKey, payload, payload.fetchedAt),
+    ]);
     return (await loadSyncCache<PrivateProductsPayload>(db, userId, privateCacheKey))!;
   } catch (error) {
-    await recordSyncFailure(db, userId, privateCacheKey, safeCacheError(error));
+    if (persistFailure) await recordSyncFailure(db, userId, privateCacheKey, safeCacheError(error));
     throw error;
   }
 }
@@ -125,6 +144,8 @@ export async function listPrivateSyncUserIds(db: D1Database) {
   const result = await db.prepare(`SELECT user_id FROM exchange_credentials
       UNION SELECT user_id FROM holdings
       UNION SELECT user_id FROM user_products
+      UNION SELECT owner_id AS user_id FROM sync_snapshots
+      UNION SELECT owner_id AS user_id FROM product_catalog
       ORDER BY user_id`).all<{ user_id: string }>();
   return result.results.map((row) => row.user_id);
 }
@@ -133,7 +154,7 @@ async function buildPrivatePayload(
   db: D1Database,
   userId: string,
   cached: SyncCacheRecord<PrivateProductsPayload> | null,
-): Promise<PrivateProductsPayload> {
+): Promise<PrivatePayloadBuild> {
   const credentials = await loadCredentials(db, userId);
   const publicSnapshotPromise = fetchPublicRateSnapshot();
   const binanceGlobalCredential = credentials["binance-global"];
@@ -227,8 +248,16 @@ async function buildPrivatePayload(
     ...(okxResult.snapshot?.holdings ?? {}),
   };
   const fallbackRates = cached?.payload?.rates ?? [];
-  const catalog = await syncProductCatalog(db, userId, freshRates, Object.keys(freshHoldingUpdates));
-  const rates = mergeRates(catalog.rates, fallbackRates);
+  const completeAccountIds = [
+    binanceGlobalResult.status === "synced" ? "binance-global" : null,
+    binanceBahrainResult.status === "synced" ? "binance-bahrain" : null,
+    bybitGlobalResult.status === "synced" ? "bybit-global" : null,
+    bitgetStatus === "synced" ? "bitget-global" : null,
+    okxResult.status === "synced" ? "okx-global" : null,
+  ].filter((accountId): accountId is string => Boolean(accountId));
+  const catalog = await prepareProductCatalogSync(db, userId, freshRates, freshHoldingUpdates, completeAccountIds);
+  const activeProductIds = new Set(catalog.products.map((product) => product.id));
+  const rates = mergeRates(catalog.rates, fallbackRates).filter((rate) => activeProductIds.has(rate.productId));
   const previousRates = new Map((cached?.payload?.rates ?? []).map((rate) => [rate.productId, rate]));
   const identityChanges = Object.fromEntries(catalog.rates.map((rate) => [
     rate.productId,
@@ -239,11 +268,21 @@ async function buildPrivatePayload(
     .filter((rate) => !freshRateProductIds.has(rate.productId))
     .map((rate) => [rate.productId, rate.fetchedAt]));
   const catalogProductIds = { ...await resolveCatalogProductIds(db, userId), ...catalog.productIds };
+  const normalizedFreshHoldings: Record<string, number> = Object.fromEntries(Object.entries(freshHoldingUpdates)
+    .map(([productId, amount]) => [catalogProductIds[productId] ?? productId, amount]));
+  for (const product of catalog.products) {
+    if (product.holdingDataMode === "api"
+      && completeAccountIds.includes(product.accountId)
+      && !Object.prototype.hasOwnProperty.call(normalizedFreshHoldings, product.id)) {
+      normalizedFreshHoldings[product.id] = 0;
+    }
+  }
   const holdingUpdates = Object.fromEntries(Object.entries({
     ...(cached?.payload?.holdingUpdates ?? {}),
-    ...freshHoldingUpdates,
-  }).map(([productId, amount]) => [catalogProductIds[productId] ?? productId, amount]));
-  const freshHoldingProductIds = new Set(Object.keys(freshHoldingUpdates).map((productId) => catalogProductIds[productId] ?? productId));
+    ...normalizedFreshHoldings,
+  }).map(([productId, amount]) => [catalogProductIds[productId] ?? productId, amount] as const)
+    .filter(([productId]) => activeProductIds.has(productId)));
+  const freshHoldingProductIds = new Set(Object.keys(normalizedFreshHoldings));
   const privateStatus: PrivateStatuses = {
     binanceGlobal: binanceGlobalResult.status,
     binanceBahrain: binanceBahrainResult.status,
@@ -265,7 +304,7 @@ async function buildPrivatePayload(
   const configuredError = Object.values(privateStatus).some((status) => status === "error" || status === "partial");
   const holdingFallbacks = Object.fromEntries(Object.keys(cached?.payload?.holdingUpdates ?? {})
     .map((productId) => catalogProductIds[productId] ?? productId)
-    .filter((productId) => !freshHoldingProductIds.has(productId))
+    .filter((productId) => activeProductIds.has(productId) && !freshHoldingProductIds.has(productId))
     .map((productId) => [productId, cached?.updatedAt ?? updatedFallbackTime(cached?.payload?.fetchedAt)]));
   const successfulPrivateJobs = Object.values(privateStatus).filter((status) => status === "synced" || status === "partial").length;
   if (publicRates.length === 0 && successfulPrivateJobs === 0) {
@@ -279,22 +318,26 @@ async function buildPrivatePayload(
     ? `未成功更新的项目沿用 ${formatCacheTime(cached.updatedAt)} 的最近一次成功数据。`
     : "";
   return {
-    products: catalog.products,
-    rates,
-    rateFallbacks,
-    holdingUpdates,
-    holdingSourceIds: [...new Set([
-      ...(cached?.payload?.holdingSourceIds ?? []),
-      ...Object.keys(freshHoldingUpdates).map((productId) => catalogProductIds[productId] ?? productId),
-    ])],
-    holdingFallbacks,
-    holdingSyncStates,
-    fetchedAt: updatedAt,
-    partial,
-    note: `${buildNote(failures)} ${fallbackNote}`.trim(),
-    failures,
-    fallbackUpdatedAt: failures.length > 0 ? cached?.updatedAt ?? null : null,
-    identityChanges,
+    catalog,
+    retryable: configuredError,
+    payload: {
+      products: catalog.products,
+      rates,
+      rateFallbacks,
+      holdingUpdates,
+      holdingSourceIds: [...new Set([
+        ...(cached?.payload?.holdingSourceIds ?? []),
+        ...Object.keys(normalizedFreshHoldings),
+      ])].filter((productId) => activeProductIds.has(productId)),
+      holdingFallbacks,
+      holdingSyncStates,
+      fetchedAt: updatedAt,
+      partial,
+      note: `${buildNote(failures)} ${fallbackNote}`.trim(),
+      failures,
+      fallbackUpdatedAt: failures.length > 0 ? cached?.updatedAt ?? null : null,
+      identityChanges,
+    },
   };
 }
 
@@ -323,7 +366,6 @@ function cachedResponse(
     note: `${statusText} ${normalizeLegacyNote(payload.note)}`.trim(),
     failures: responseFailures,
     fallbackUpdatedAt: payload.fallbackUpdatedAt
-      ?? legacyFallbackTime(payload.note)
       ?? (state === "error" ? record.updatedAt : null),
   }, { headers: privateResponseHeaders });
 }
@@ -408,10 +450,6 @@ function legacyFailures(note: string) {
     messages.push(...extractPlatforms(publicFailure).filter((platform) => !existing.includes(platform)));
   }
   return messages.length ? messages : extractPlatforms(note.match(/([^。]*失败[^。]*)/)?.[1] ?? "");
-}
-
-function legacyFallbackTime(note: string) {
-  return note.match(/未成功更新的项目沿用 ([^。]+?) 的最近一次成功数据/)?.[1] ?? null;
 }
 
 function extractPlatforms(text: string) {

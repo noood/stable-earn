@@ -23,10 +23,64 @@ export function localPrivateProductsPreview(now = new Date()) {
   // editable by the user.
   const bybitEligibilityApi = previewBybitEligibilityProduct("preview-bybit-fixed-api", "api", freshAt, now);
   const bybitEligibilityManual = previewBybitEligibilityProduct("preview-bybit-fixed-manual", "manual", freshAt, now);
+  const boundaryOpportunity = previewBybitFixedProduct("preview-apr-six", "api", freshAt, {
+    name: "Fixed Saving · 7 天 · APR 边界",
+    termDays: 7,
+    tiers: [{ id: "preview-apr-six-tier-0", min: 0, max: 200, apr: 6 }],
+  });
+  const heldBelowThreshold = previewBybitFixedProduct("preview-below-threshold-held", "api", freshAt, {
+    name: "Fixed Saving · 7 天 · 低于门槛但有持仓",
+    termDays: 7,
+    tiers: [{ id: "preview-below-threshold-held-tier-0", min: 0, max: 200, apr: 5.9 }],
+  });
+  const heldLongTerm = previewBybitFixedProduct("preview-long-term-held", "api", freshAt, {
+    name: "Fixed Saving · 30 天 · 有持仓",
+    termDays: 30,
+    tiers: [{ id: "preview-long-term-held-tier-0", min: 0, max: 500, apr: 8 }],
+  });
+  const heldUnavailable = previewBybitFixedProduct("preview-unavailable-held", "api", freshAt, {
+    name: "Fixed Saving · 已停止申购但有持仓",
+    availability: "unavailable",
+    termDays: 7,
+    tiers: [{ id: "preview-unavailable-held-tier-0", min: 0, max: 100, apr: 7.2 }],
+  });
+  const heldIneligible = previewBybitFixedProduct("preview-ineligible-held", "api", freshAt, {
+    name: "Fixed Saving · 不合资格但有持仓",
+    eligibilityRequired: true,
+    eligibilityLabel: "新用户",
+    eligibilityStatus: "ineligible",
+    termDays: 7,
+    tiers: [{ id: "preview-ineligible-held-tier-0", min: 0, max: 100, apr: 7.1 }],
+  });
+  const previousCycle = previewBybitFixedProduct("preview-cycle-old", "api", freshAt, {
+    name: "Fixed Saving · 上一期仍有持仓",
+    availability: "unavailable",
+    externalProductId: "preview-reused-product-id",
+    subscriptionStartsAt: new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString(),
+    subscriptionEndsAt: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+    termDays: 7,
+    tiers: [{ id: "preview-cycle-old-tier-0", min: 0, max: 100, apr: 6.8 }],
+  });
+  const currentCycle = previewBybitFixedProduct("preview-cycle-new", "api", freshAt, {
+    name: "Fixed Saving · 新一期零持仓",
+    availability: "available",
+    externalProductId: "preview-reused-product-id",
+    subscriptionStartsAt: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+    subscriptionEndsAt: new Date(now.getTime() + 6 * 24 * 60 * 60 * 1000).toISOString(),
+    termDays: 7,
+    tiers: [{ id: "preview-cycle-new-tier-0", min: 0, max: 100, apr: 6.9 }],
+  });
   const products = [
     ...rates.map((rate) => previewProduct(rate.productId, rate)),
     bybitEligibilityApi,
     bybitEligibilityManual,
+    boundaryOpportunity,
+    heldBelowThreshold,
+    heldLongTerm,
+    heldUnavailable,
+    heldIneligible,
+    previousCycle,
+    currentCycle,
     previewProduct("bn-bh-usdc", undefined, { rateCoverage: "unavailable" }),
     previewProduct("bg-usdgo"),
     previewProduct("mexc-ph-usdt"),
@@ -47,6 +101,13 @@ export function localPrivateProductsPreview(now = new Date()) {
     "bg-usdc": 200,
     "preview-bybit-fixed-api": 0,
     "preview-bybit-fixed-manual": 80,
+    "preview-apr-six": 0,
+    "preview-below-threshold-held": 25,
+    "preview-long-term-held": 40,
+    "preview-unavailable-held": 30,
+    "preview-ineligible-held": 20,
+    "preview-cycle-old": 10,
+    "preview-cycle-new": 0,
     "okx-usdt": 500,
     "okx-usdc": 500,
     "okx-btc": 0,
@@ -66,6 +127,13 @@ export function localPrivateProductsPreview(now = new Date()) {
       "by-g-btc-3d": "error",
       "by-g-usdt-short-fixed": "partial",
       "preview-bybit-fixed-api": "synced",
+      "preview-apr-six": "synced",
+      "preview-below-threshold-held": "synced",
+      "preview-long-term-held": "synced",
+      "preview-unavailable-held": "synced",
+      "preview-ineligible-held": "synced",
+      "preview-cycle-old": "synced",
+      "preview-cycle-new": "synced",
     },
     note: "本地测试数据：包含完整、缓存、字段缺失、资格待确认、未获取、同步失败、部分同步和两种 Bybit 持仓来源。",
     failures: ["Bybit.com BTC"],
@@ -97,6 +165,12 @@ export function localPrivateHoldingsPreview(now = new Date()) {
     "okx-usdt": { apr: 10, firstTierLimit: 500, termDays: null, purchaseDate: null, updatedAt },
     "okx-usdc": { apr: 10, firstTierLimit: 500, termDays: 180, purchaseDate: dateOnlyOffset(now, -190), updatedAt },
     "okx-btc": { apr: 5, firstTierLimit: 0.01, termDays: 180, purchaseDate: dateOnlyOffset(now, -3), updatedAt },
+    "preview-apr-six": { apr: null, firstTierLimit: null, termDays: null, purchaseDate: dateOnlyOffset(now, -1), updatedAt },
+    "preview-below-threshold-held": { apr: null, firstTierLimit: null, termDays: null, purchaseDate: dateOnlyOffset(now, -2), updatedAt },
+    "preview-long-term-held": { apr: null, firstTierLimit: null, termDays: null, purchaseDate: dateOnlyOffset(now, -4), updatedAt },
+    "preview-unavailable-held": { apr: null, firstTierLimit: null, termDays: null, purchaseDate: dateOnlyOffset(now, -10), updatedAt },
+    "preview-ineligible-held": { apr: null, firstTierLimit: null, termDays: null, purchaseDate: dateOnlyOffset(now, -2), updatedAt },
+    "preview-cycle-old": { apr: null, firstTierLimit: null, termDays: null, purchaseDate: dateOnlyOffset(now, -14), updatedAt },
   };
   const manualProducts = [
     previewManualProduct("manual-preview-limited", "USDT", "limited", 7),
@@ -113,17 +187,12 @@ export function localPrivateHoldingsPreview(now = new Date()) {
   overrides["manual-preview-fixed"] = { apr: 6.2, firstTierLimit: 100, termDays: 7, purchaseDate: dateOnlyOffset(now, -12), updatedAt };
   overrides["manual-preview-fixed-missing-term"] = { apr: 6.2, firstTierLimit: 100, termDays: null, purchaseDate: null, updatedAt };
   overrides["manual-preview-fixed-missing-date"] = { apr: 6.0, firstTierLimit: 100, termDays: null, purchaseDate: null, updatedAt };
-  return { holdings, overrides, manualProducts, hiddenSeedProductIds: [], found: true };
+  return { holdings, overrides, manualProducts, hiddenProductIds: [], found: true };
 }
 
 function previewBybitEligibilityProduct(id: string, holdingDataMode: "api" | "manual", fetchedAt: string, now: Date): Product {
-  const base = seedProducts.find((product) => product.id === "by-g-usdt-short-fixed")!;
-  return {
-    ...base,
-    id,
+  return previewBybitFixedProduct(id, holdingDataMode, fetchedAt, {
     name: "Fixed Saving · 3 天",
-    holdingDataMode,
-    productType: "fixed",
     termDays: 3,
     minimumAmount: 100,
     subscriptionEndsAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
@@ -131,9 +200,31 @@ function previewBybitEligibilityProduct(id: string, holdingDataMode: "api" | "ma
     eligibilityLabel: "Crazy Thursday: New User",
     eligibilityStatus: "unknown",
     tiers: [{ id: `${id}-tier-0`, min: 0, max: 200, apr: 555 }],
+  });
+}
+
+function previewBybitFixedProduct(
+  id: string,
+  holdingDataMode: "api" | "manual",
+  fetchedAt: string,
+  patch: Partial<Product> = {},
+): Product {
+  const base = seedProducts.find((product) => product.id === "by-g-usdt-short-fixed")!;
+  return {
+    ...base,
+    id,
+    name: "Fixed Saving · 7 天",
+    productType: "fixed",
+    termDays: 7,
+    tiers: [{ id: `${id}-tier-0`, min: 0, max: 200, apr: 6.5 }],
     source: { kind: "live", label: "Bybit.com 官方固定期限 API", fetchedAt },
     rateCoverage: "complete",
+    availability: "available",
     identityKey: id,
+    ...patch,
+    productDataMode: "api",
+    apiAccess: "authenticated",
+    holdingDataMode,
   };
 }
 

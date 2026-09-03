@@ -1,10 +1,10 @@
 type IdentitySnapshot = {
   productType?: "flexible" | "fixed";
   termDays?: number;
-  eligibilityRequired?: boolean;
-  eligibilityLabel?: string;
-  minimumAmount?: number;
-  tiers?: Array<{ min: number; max: number | null }>;
+  subscriptionStartsAt?: string;
+  subscriptionEndsAt?: string;
+  /** Accepted for adapter compatibility, but ordinary rate tiers are mutable. */
+  tiers?: unknown;
 };
 
 // `identityKey` is the internal comparison value. The adapter decides whether
@@ -25,10 +25,8 @@ export function productIdentityFingerprint(snapshot: IdentitySnapshot) {
   return JSON.stringify({
     productType: snapshot.productType ?? null,
     termDays: snapshot.termDays ?? null,
-    eligibilityRequired: snapshot.eligibilityRequired ?? false,
-    eligibilityLabel: snapshot.eligibilityLabel ?? null,
-    minimumAmount: snapshot.minimumAmount ?? null,
-    tiers: (snapshot.tiers ?? []).map(({ min, max }) => ({ min, max })),
+    subscriptionStartsAt: snapshot.subscriptionStartsAt ?? null,
+    subscriptionEndsAt: snapshot.subscriptionEndsAt ?? null,
   });
 }
 
