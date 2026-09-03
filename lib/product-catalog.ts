@@ -8,6 +8,11 @@ import { defaultCatalogSeedProducts } from "./seed-data";
 
 const retiredDefaultProductIds = new Set(["by-eu-usdc"]);
 
+export function isRetiredDefaultProduct(product: Pick<Product, "id" | "accountId" | "asset" | "productDataMode">) {
+  return retiredDefaultProductIds.has(product.id)
+    || (product.accountId === "bybit-eu" && product.asset === "USDC" && product.productDataMode === "manual");
+}
+
 /**
  * The catalogue is user-scoped because authenticated APIs may expose a
  * different product set for every account. Identity changes create a new row;
@@ -159,9 +164,10 @@ export async function prepareProductCatalogSync(
   // Retire legacy default placeholders that are no longer part of the
   // catalogue. Keep a positive holding visible, but allow a future API rate
   // (with a real product payload) to create/reactivate the product normally.
-  for (const row of rows.filter((candidate) => candidate.status === "active" && retiredDefaultProductIds.has(candidate.product_id))) {
+  for (const row of rows.filter((candidate) => candidate.status === "active")) {
     if (selectedByCanonical.has(row.canonical_product_id) || selectedByCanonical.has(row.product_id)) continue;
     const product = parseProduct(row.payload)[0];
+    if (!product || !isRetiredDefaultProduct(product)) continue;
     const evidence = product
       ? existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeAccounts)
       : { known: false, amount: 0 };

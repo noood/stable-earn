@@ -616,7 +616,7 @@ function ProductRow({ product, baseProduct, manualSettings, holding, holdingAvai
   const account = accounts.find((item) => item.id === product.accountId)!;
   const productInfoIssues = productInformationIssues(product, manualSettings);
   return (
-    <tr className={`product-row ${!editing && holdingAvailable && holding <= 0 && productInfoIssues.length === 0 ? "product-row-empty" : ""}`}>
+    <tr className={`product-row ${!editing && holdingAvailable && holding <= 0 ? "product-row-empty" : ""}`}>
       <TableCell>
         {editing && manualProduct
           ? <ManualProductIdentityEditor product={baseProduct} account={account} disabled={saving} onChange={onManualProductChange} onDelete={onDelete} />
