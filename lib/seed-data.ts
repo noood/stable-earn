@@ -43,6 +43,11 @@ export const seedProducts: Product[] = [
   { ...product("mexc-uk-btc", "mexc-uk", "mexc", "uk", "BTC", "活期理财", [[0, null, 0]], { kind: "manual", label: "尚未接入可验证的实时 APR" }), rateCoverage: "unavailable" },
 ];
 
+// Products kept only for local/demo scenarios are not used to populate the
+// authenticated catalogue. This lets us exercise legacy and incomplete
+// states without making them appear as real default products.
+export const defaultCatalogSeedProducts = seedProducts.filter((product) => product.id !== "by-eu-usdc");
+
 function product(
   id: string,
   accountId: string,

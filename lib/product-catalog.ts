@@ -4,7 +4,9 @@ import type { LiveRate } from "./live-rates";
 import { productShouldBeActive } from "./opportunity-policy";
 import { productIdentityFingerprint } from "./product-identity";
 import { resolveProductWithoutApiData } from "./product-status";
-import { seedProducts } from "./seed-data";
+import { defaultCatalogSeedProducts } from "./seed-data";
+
+const retiredDefaultProductIds = new Set(["by-eu-usdc"]);
 
 /**
  * The catalogue is user-scoped because authenticated APIs may expose a
@@ -77,7 +79,7 @@ export async function prepareProductCatalogSync(
     const canonicalProductId = rate.canonicalProductId ?? rate.productId;
     const identityKey = rate.identityKey ?? canonicalProductId;
     const fingerprint = normalizeFingerprint(rate.identityFingerprint);
-    const seed = seedProducts.find((product) => product.id === canonicalProductId);
+    const seed = defaultCatalogSeedProducts.find((product) => product.id === canonicalProductId);
     const exact = byIdentity.get(identityLookupKey(identityKey, fingerprint));
     const compatible = !exact ? rows.find((row) => {
       if (row.identity_key !== identityKey) return false;
@@ -132,7 +134,7 @@ export async function prepareProductCatalogSync(
     if (productIds[sourceId]) continue;
     const amount = Number(rawAmount);
     const current = resolveExistingRow(rows, sourceId);
-    const seed = seedProducts.find((product) => product.id === sourceId);
+    const seed = defaultCatalogSeedProducts.find((product) => product.id === sourceId);
     const base = current ? parseProduct(current.payload)[0] : seed;
     if (!base || !Number.isFinite(amount)) continue;
     const id = current?.product_id ?? base.id;
@@ -152,6 +154,30 @@ export async function prepareProductCatalogSync(
       planned.set(id, { product, status: "active" });
       statements.push(insertCatalogStatement(db, ownerId, product, base.id, product.identityKey, now));
     }
+  }
+
+  // Retire legacy default placeholders that are no longer part of the
+  // catalogue. Keep a positive holding visible, but allow a future API rate
+  // (with a real product payload) to create/reactivate the product normally.
+  for (const row of rows.filter((candidate) => candidate.status === "active" && retiredDefaultProductIds.has(candidate.product_id))) {
+    if (selectedByCanonical.has(row.canonical_product_id) || selectedByCanonical.has(row.product_id)) continue;
+    const product = parseProduct(row.payload)[0];
+    const evidence = product
+      ? existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeAccounts)
+      : { known: false, amount: 0 };
+    if (evidence.known && evidence.amount > 0) continue;
+    if (product) planned.set(row.product_id, { product, status: "archived" });
+    statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
+  }
+  // A previous delete should not block a later real API product with the same
+  // identifier. Only clear the marker when there is no positive holding to
+  // preserve the user's explicit hide choice for an owned product.
+  for (const productId of retiredDefaultProductIds) {
+    const freshAmount = firstHolding(freshHoldings, [productId]);
+    const persistedAmount = persistedHoldings.get(productId);
+    if ((freshAmount !== undefined && freshAmount > 0) || (persistedAmount !== undefined && persistedAmount > 0)) continue;
+    statements.push(db.prepare("DELETE FROM hidden_products WHERE user_id = ? AND product_id = ?").bind(ownerId, productId));
+    statements.push(db.prepare("DELETE FROM hidden_seed_products WHERE user_id = ? AND product_id = ?").bind(ownerId, productId));
   }
 
   const products = [...planned.values()]

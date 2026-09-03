@@ -616,7 +616,7 @@ function ProductRow({ product, baseProduct, manualSettings, holding, holdingAvai
   const account = accounts.find((item) => item.id === product.accountId)!;
   const productInfoIssues = productInformationIssues(product, manualSettings);
   return (
-    <tr className={`product-row ${!editing && holdingAvailable && holding <= 0 ? "product-row-empty" : ""}`}>
+    <tr className={`product-row ${!editing && holdingAvailable && holding <= 0 && productInfoIssues.length === 0 ? "product-row-empty" : ""}`}>
       <TableCell>
         {editing && manualProduct
           ? <ManualProductIdentityEditor product={baseProduct} account={account} disabled={saving} onChange={onManualProductChange} onDelete={onDelete} />
@@ -753,9 +753,12 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
   if (!holdingAvailable) {
     summary = <HoldingSummary muted compact label={editing ? undefined : <span className={holdingAmountClassName}>持仓未获取</span>} note={holdingSyncNote(holdingSyncState)} />;
   } else if (productInfoIssues.length > 0) {
-    // The APR column owns completeness. Suppress the entire quota summary so
-    // a lone holding amount never appears below the edit control.
-    summary = holdingCacheNote ? <HoldingSummary muted compact cacheNote={holdingCacheNote} /> : null;
+    // Incomplete product data owns the warning in the APR column. View mode
+    // still shows the known holding, but never invents quota/progress details;
+    // edit mode keeps the input as the sole holding value.
+    summary = editing
+      ? (holdingCacheNote ? <HoldingSummary muted compact cacheNote={holdingCacheNote} /> : null)
+      : <HoldingSummary compact label={holdingLabel()} cacheNote={holdingCacheNote} />;
   } else if (firstTierCapacity === null) {
     summary = <HoldingSummary compact label={holdingLabel(`${capacityLabel}不限额`)} cacheNote={holdingCacheNote} />;
   } else {
