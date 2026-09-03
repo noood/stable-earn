@@ -14,10 +14,9 @@ export async function GET(request: Request) {
   return NextResponse.json({
     sources: credentialAccounts.map((account) => ({
       ...account,
-      mode: "api" as const,
       configured: configuredIds.has(account.id),
     })),
-    manualSources: manualDataAccounts.map((account) => ({ ...account, mode: "manual" as const })),
+    manualSources: manualDataAccounts,
   }, { headers: privateResponseHeaders });
 }
 

@@ -24,11 +24,11 @@ export const seedProducts: Product[] = [
   product("bn-bh-usdt", "binance-bahrain", "binance", "bahrain", "USDT", "Simple Earn Flexible", [[0, 500, 6.2], [500, null, 2.5]], accountApiReference, accountProductApiHolding),
   product("bn-bh-usdc", "binance-bahrain", "binance", "bahrain", "USDC", "Simple Earn Flexible", [[0, 200, 5.8], [200, null, 2.2]], accountApiReference, accountProductApiHolding),
   { ...product("by-g-usdt", "bybit-global", "bybit", "global", "USDT", "Easy Earn Flexible", [[0, null, 0]], { kind: "manual", label: "奖励信息需人工确认" }, { productDataMode: "manual", holdingDataMode: "api" }), rateCoverage: "unavailable" },
-  { ...product("by-g-usdt-short-fixed", "bybit-global", "bybit", "global", "USDT", "Fixed Saving · 7 天以内", [[0, 1000, 4]], { kind: "private", label: "等待 Bybit 官方固定期限 API" }, accountProductApiHolding), productType: "fixed", termDays: 7, requiresLiveRate: true },
+  { ...product("by-g-usdt-short-fixed", "bybit-global", "bybit", "global", "USDT", "Fixed Saving · 7 天以内", [[0, 1000, 4]], { kind: "private", label: "等待 Bybit 官方固定期限 API" }, accountProductApiHolding), productType: "fixed", termDays: 7 },
   product("by-g-usdc", "bybit-global", "bybit", "global", "USDC", "Easy Earn Flexible", [[0, null, 3.8]], manual, publicProductApiHolding),
   product("by-eu-usdt", "bybit-eu", "bybit", "eu", "USDT", "Easy Earn Flexible", [[0, null, 3.5]], manual, publicProductManualHolding),
   { ...product("by-eu-usdc", "bybit-eu", "bybit", "eu", "USDC", "Rewards Service Flexible", [[0, null, 0]], { kind: "manual", label: "奖励信息需人工确认" }, manualProductManualHolding), rateCoverage: "unavailable" },
-  { ...product("by-g-btc-3d", "bybit-global", "bybit", "global", "BTC", "Fixed Saving · 7 天以内", [[0, 1, 4]], { kind: "private", label: "等待 Bybit 官方固定期限 API" }, accountProductApiHolding), productType: "fixed", termDays: 7, minimumAmount: 0.001, requiresLiveRate: true },
+  { ...product("by-g-btc-3d", "bybit-global", "bybit", "global", "BTC", "Fixed Saving · 7 天以内", [[0, 1, 4]], { kind: "private", label: "等待 Bybit 官方固定期限 API" }, accountProductApiHolding), productType: "fixed", termDays: 7, minimumAmount: 0.001 },
   product("bg-usdt-simple", "bitget-global", "bitget", "global", "USDT", "Simple Earn", [[0, 300, 6.66], [300, null, 1.3]], { kind: "manual", label: "等待 Bitget 账户 API" }, accountProductApiHolding),
   product("bg-usdc", "bitget-global", "bitget", "global", "USDC", "Simple Earn", [[0, 300, 6.66], [300, 1000000, 1.75]], { kind: "manual", label: "等待 Bitget 账户 API" }, accountProductApiHolding),
   { ...product("bg-usdgo", "bitget-global", "bitget", "global", "USDGO", "Simple Earn Flexible", [[0, null, 6.13]], { kind: "manual", label: "手动维护" }, manualProductManualHolding), rateCoverage: "unavailable" },
@@ -46,7 +46,7 @@ export const seedProducts: Product[] = [
 // These records are templates for normalizing live API results and building
 // local/demo scenarios. They are never sufficient, by themselves, to admit a
 // product into an authenticated user's catalogue.
-export const catalogProductTemplates = seedProducts.filter((product) => product.id !== "by-eu-usdc");
+export const catalogProductTemplates = seedProducts;
 
 function product(
   id: string,

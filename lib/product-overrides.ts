@@ -84,15 +84,6 @@ export function productTermStatus(product: Product, purchaseDate: string | null 
   };
 }
 
-export function manualUpdateAge(updatedAt: string | null | undefined, today = new Date()) {
-  if (!updatedAt) return null;
-  const updated = new Date(updatedAt);
-  if (!Number.isFinite(updated.getTime())) return null;
-  const todayDay = calendarDayTimestamp(today);
-  const updatedDay = calendarDayTimestamp(updated);
-  return Math.max(0, Math.floor((todayDay - updatedDay) / dayMs));
-}
-
 export function formatShortDate(value: string | null | undefined) {
   const timestamp = parseDateOnly(value) ?? (value ? Date.parse(value) : Number.NaN);
   if (!Number.isFinite(timestamp)) return "";

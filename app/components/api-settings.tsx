@@ -3,12 +3,12 @@
 import { useEffect, useState } from "react";
 import { AccountBadge, ActionButton, ModalFrame, SectionIntro } from "@/app/components/ui";
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
+import type { Account } from "@/lib/domain";
 import { accounts } from "@/lib/seed-data";
 
 type ApiCredentialSource = {
   id: string;
   label: string;
-  mode: "api";
   configured: boolean;
   requiresPassphrase: boolean;
   syncDescription: string;
@@ -16,7 +16,6 @@ type ApiCredentialSource = {
 type ManualDataSource = {
   id: string;
   label: string;
-  mode: "manual";
   syncDescription: string;
 };
 type ApiConfigResult = { sources: ApiCredentialSource[]; manualSources: ManualDataSource[] };
@@ -176,16 +175,7 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
             return (
               <div key={source.id} className="card px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    {account && <AccountBadge account={account} />}
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="type-label font-semibold">{source.label}</span>
-                        <span className={`status-chip status-chip-compact ${statusClass}`}>{statusLabel}</span>
-                      </div>
-                      <p className="text-secondary type-caption mt-2">配置后{source.syncDescription}</p>
-                    </div>
-                  </div>
+                  <SourceSummary account={account} label={source.label} statusLabel={statusLabel} statusClass={statusClass} description={`配置后${source.syncDescription}`} />
                   <div className="flex shrink-0 items-center gap-1.5">
                     {!source.configured && <ActionButton variant="secondary" disabled={modalBusy} onClick={openEditor}>添加</ActionButton>}
                     {source.configured && <ApiRowMenu label={source.label} disabled={modalBusy || isSelected} onUpdate={openEditor} onRemove={() => void remove(source.id, source.label)} />}
@@ -197,12 +187,16 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
           }) ?? <ApiSettingsSkeleton />}
           {(status?.manualSources ?? []).map((source) => {
             const account = accounts.find((item) => item.id === source.id);
-            return <div key={source.id} className="card px-4 py-3"><div className="flex items-center gap-3">{account && <AccountBadge account={account} />}<div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="type-label font-semibold">{source.label}</span><span className="status-chip status-chip-compact status-chip-muted">手动维护</span></div><p className="text-secondary type-caption mt-2">{source.syncDescription}</p></div></div></div>;
+            return <div key={source.id} className="card px-4 py-3"><SourceSummary account={account} label={source.label} statusLabel="手动维护" statusClass="status-chip-muted" description={source.syncDescription} /></div>;
           })}
         </div>
       </section>
     </ModalFrame>
   );
+}
+
+function SourceSummary({ account, label, statusLabel, statusClass, description }: { account?: Account; label: string; statusLabel: string; statusClass: string; description: string }) {
+  return <div className="flex min-w-0 items-center gap-3">{account && <AccountBadge account={account} />}<div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="type-label font-semibold">{label}</span><span className={`status-chip status-chip-compact ${statusClass}`}>{statusLabel}</span></div><p className="text-secondary type-caption mt-2">{description}</p></div></div>;
 }
 
 function ApiSettingsSkeleton() {

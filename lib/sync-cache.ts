@@ -95,17 +95,6 @@ export async function recordSyncAttempt(
   return attemptedAt;
 }
 
-export async function saveSyncCache<T>(
-  db: D1Database,
-  ownerId: string,
-  cacheKey: string,
-  payload: T,
-  updatedAt = new Date().toISOString(),
-) {
-  await prepareSyncCacheSave(db, ownerId, cacheKey, payload, updatedAt).run();
-  return updatedAt;
-}
-
 export function prepareSyncCacheSave<T>(
   db: D1Database,
   ownerId: string,

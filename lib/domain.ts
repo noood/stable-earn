@@ -64,7 +64,6 @@ export type Product = {
   externalProductId?: string;
   identityKey: string;
   identityFingerprint?: string;
-  requiresLiveRate?: boolean;
   manualFields?: {
     termDays?: boolean;
   };
@@ -86,11 +85,6 @@ export function effectiveApr(product: Product, holding: number) {
   if (holding <= 0) return 0;
   const earned = allocate(product, holding).reduce((sum, tier) => sum + tier.amount * tier.apr, 0);
   return earned / holding;
-}
-
-export function marginalApr(product: Product, holding: number) {
-  const tier = product.tiers.find((item) => item.max === null || holding < item.max);
-  return tier?.apr ?? 0;
 }
 
 export function remainingHighYield(product: Product, holding: number) {

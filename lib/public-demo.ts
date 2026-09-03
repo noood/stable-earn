@@ -2,12 +2,12 @@ import type { HoldingMap, Product } from "./domain";
 import type { ProductOverrideMap } from "./product-overrides";
 import { seedProducts } from "./seed-data";
 
-type DemoFacts = Partial<Pick<Product, "productType" | "termDays" | "requiresLiveRate">>;
+type DemoFacts = Partial<Pick<Product, "productType" | "termDays">>;
 
 export const publicDemoProducts: Product[] = [
   demoProduct("bn-g-usdt"),
   demoProduct("bg-usdt-simple"),
-  demoProduct("by-g-usdt-short-fixed", [[0, 1000, 4.5]], { productType: "fixed", termDays: 7, requiresLiveRate: false }),
+  demoProduct("by-g-usdt-short-fixed", [[0, 1000, 4.5]], { productType: "fixed", termDays: 7 }),
   demoProduct("mexc-uk-usdt", [[0, 1000, 4.8]]),
 ];
 
