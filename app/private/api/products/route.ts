@@ -89,7 +89,7 @@ export async function GET(request: Request) {
     }
     if (cached?.payload) {
       const state = cached.lastError ? "error" : "fresh";
-      const statusText = "按每日 08:00、20:00 的计划缓存读取，未请求交易所。";
+      const statusText = "按每日 06:00、18:00 的计划缓存读取，未请求交易所。";
       return cachedResponse(cached, state, statusText, now, manualCooldownDuration);
     }
     if (cached?.lastError) {

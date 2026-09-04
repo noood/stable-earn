@@ -148,7 +148,7 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
     <ModalFrame ariaLabel="API 设置" title="API 设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-5">
       <div className="highlight-panel type-caption px-4 py-3 text-secondary">浏览器不会保存输入内容。服务器使用 AES-GCM 加密，并将密文绑定到当前邮箱与平台账号；完整 Key 和 Secret 不会从服务器返回。关闭弹窗或保存后，输入内容会从页面状态清除。</div>
       <section>
-        <SectionIntro title="手动刷新" description="只限制你主动请求交易所的频率；每天 08:00、20:00 的计划更新不受影响。设置会同步到当前邮箱的所有设备。" />
+        <SectionIntro title="手动刷新" description="只限制你主动请求交易所的频率；每天 06:00、18:00 的计划更新不受影响。设置会同步到当前邮箱的所有设备。" />
         <div className="cooldown-options" role="radiogroup" aria-label="手动刷新冷却时间" aria-busy={cooldownMinutes === null || savingCooldown}>
           {([{ value: 0, label: "无" }, { value: 30, label: "30 分钟" }] as const).map((option) => (
             <button key={option.value} type="button" role="radio" aria-checked={cooldownMinutes === option.value} className="cooldown-option" disabled={cooldownMinutes === null || savingCooldown} onClick={() => void updateCooldown(option.value)}>

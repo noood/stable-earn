@@ -7,7 +7,7 @@
   "main": "worker.ts",
   "workers_dev": true,
   "triggers": {
-    "crons": ["0 0,12 * * *"]
+    "crons": ["0 22,10 * * *"]
   },
   "vars": {
     "TEAM_DOMAIN": "https://your-team.cloudflareaccess.com",

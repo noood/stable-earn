@@ -991,8 +991,8 @@ function nextScheduledRefreshAt(now: number) {
   const shanghaiOffsetMs = 8 * 60 * 60 * 1000;
   const local = new Date(now + shanghaiOffsetMs);
   const hour = local.getUTCHours();
-  const targetHour = hour < 8 ? 8 : hour < 20 ? 20 : 8;
-  if (hour >= 20) local.setUTCDate(local.getUTCDate() + 1);
+  const targetHour = hour < 6 ? 6 : hour < 18 ? 18 : 6;
+  if (hour >= 18) local.setUTCDate(local.getUTCDate() + 1);
   return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), targetHour - 8)).toISOString();
 }
 
