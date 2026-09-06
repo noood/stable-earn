@@ -1,4 +1,4 @@
-import { exchangeFetch } from "@/lib/exchange-fetch";
+import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 
 type OkxCredentials = {
   apiKey: string;
@@ -63,7 +63,7 @@ async function signedGet(path: string, credentials: OkxCredentials) {
           "OK-ACCESS-PASSPHRASE": credentials.passphrase,
         },
       });
-      const body = await response.json() as OkxResponse;
+      const body = await readExchangeJson<OkxResponse>(response);
       if (!response.ok || body.code !== "0") {
         throw new Error(`OKX read-only API failed (${response.status}/${body.code ?? "unknown"})`);
       }

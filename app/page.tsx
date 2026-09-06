@@ -10,7 +10,7 @@ import { effectiveApr, formatAmount, remainingHighYield, type Account, type Asse
 import { applyProductOverride, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { holdingSyncNote, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
 import { freshHoldingIdsForSave } from "@/lib/holding-cache";
-import { nextScheduledRefreshAt, syncFailureSummary } from "@/lib/sync-notice";
+import { nextScheduledRefreshAt, scheduledRefreshPending, syncFailureSummary } from "@/lib/sync-notice";
 import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
 import { accounts, seedProducts } from "@/lib/seed-data";
 import { highestProductApr, maximumShortTermDays, meetsOpportunityApr, minimumOpportunityApr, productHasComparableApr, productHasKnownCapacity } from "@/lib/opportunity-policy";
@@ -107,6 +107,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const [hasSyncFailure, setHasSyncFailure] = useState(false);
   const [syncFailures, setSyncFailures] = useState<string[]>([]);
   const [syncing, setSyncing] = useState(false);
+  const [syncCache, setSyncCache] = useState<ApiResult["cache"]>();
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [manualRefreshAvailableAt, setManualRefreshAvailableAt] = useState<string | null>(null);
   const [clock, setClock] = useState(() => Date.now());
@@ -245,6 +246,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       if (!response.ok) {
         const errorData = await response.json().catch(() => null) as { cache?: ApiResult["cache"] } | null;
         if (errorData?.cache?.state === "error") {
+          setSyncCache(errorData.cache);
           setSyncing(false);
           setHasSyncFailure(true);
           setSyncFailures(["产品和持仓数据更新失败"]);
@@ -256,6 +258,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         throw new Error("rate refresh failed");
       }
       const data = await response.json() as ApiResult;
+      setSyncCache(data.cache);
       const hardFailure = data.cache?.state === "stale" || data.cache?.state === "error";
       const failures = data.failures?.filter(Boolean) ?? [];
       setSyncing(data.cache?.state === "syncing");
@@ -534,9 +537,10 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     : sum, 0);
   const holdingProductCount = assetProducts.filter((product) => holdingIsKnown(product) && (activeHoldings[product.id] ?? 0) > 0).length;
   const manualRefreshCooling = Boolean(manualRefreshAvailableAt && Date.parse(manualRefreshAvailableAt) > clock);
-  const automaticRefreshSummary = syncing ? null : formatSyncDateTime(nextScheduledRefreshAt(clock));
-  const currentDataSummary = syncing && !lastUpdated
-    ? "首次数据同步中，请稍候。"
+  const updating = !isDemo && (localPreview ? syncing : scheduledRefreshPending(clock, syncCache));
+  const automaticRefreshSummary = updating ? null : formatSyncDateTime(nextScheduledRefreshAt(clock));
+  const currentDataSummary = updating
+    ? lastUpdated ? `当前数据截至 ${formatSyncDateTime(lastUpdated)}。` : "暂无成功数据。"
     : loading
     ? "正在更新…"
     : localPreview
@@ -550,7 +554,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         : "暂无成功数据。";
   const failureSummary = syncFailureSummary(syncFailures);
   const personalDataBlocked = !holdingsReady && personalDataError;
-  const initialLoading = !personalDataBlocked && !isDemo && (!holdingsReady || (loading && !lastUpdated) || (syncing && !lastUpdated));
+  const initialLoading = !personalDataBlocked && !isDemo && (!holdingsReady || (loading && !lastUpdated) || (updating && !lastUpdated));
 
   return (
     <main className="min-h-screen">
@@ -576,9 +580,9 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
             {personalDataBlocked
               ? <p className="text-warning font-semibold">个人数据读取失败，请重试；暂不显示不完整的持仓和统计。</p>
-              : initialLoading && !syncing
+              : initialLoading && !updating
               ? <span className="skeleton-block skeleton-notice" aria-hidden="true" />
-            : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{!loading && !isDemo && syncing && lastUpdated && <span className="text-secondary font-semibold"> 正在更新数据中，请稍候。</span>}{!loading && !isDemo && !syncing && hasSyncFailure && <span className="text-warning font-semibold"> {failureSummary}</span>}</p>}
+            : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-danger font-semibold"> 正在更新中，请稍候。</span>}{!loading && !isDemo && !updating && hasSyncFailure && <span className="text-warning font-semibold"> {failureSummary}</span>}</p>}
           </div>
           {personalDataBlocked && <ActionButton size="small" variant="secondary" disabled={personalDataLoading || loading} onClick={() => void retryPersonalData()}>{personalDataLoading || loading ? "重试中…" : "重试"}</ActionButton>}
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}

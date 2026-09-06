@@ -6,7 +6,7 @@ const load = moduleLoader();
 const { productInformationIssues, productParticipatesInInterest, holdingSyncNote } = load("@/lib/product-status");
 const { productHasComparableApr, productHasKnownCapacity, productShouldBeActive } = load("@/lib/opportunity-policy");
 const { applyProductOverride, productTermStatus } = load("@/lib/product-overrides");
-const { syncFailureSummary, nextScheduledRefreshAt } = load("@/lib/sync-notice");
+const { syncFailureSummary, nextScheduledRefreshAt, scheduledRefreshPending } = load("@/lib/sync-notice");
 const { localPrivateProductsPreview, localSyncScenarioPreview } = load("@/lib/local-preview");
 const base = localPrivateProductsPreview().products.find((p) => p.id === "bn-g-usdt");
 
@@ -64,4 +64,47 @@ test("repeated local preview requests keep the failed holding timestamp fixed", 
   assert.notEqual(first.cache.updatedAt, second.cache.updatedAt);
   assert.deepEqual(first.holdingFallbacks, second.holdingFallbacks);
   assert.deepEqual(localSyncScenarioPreview("success").holdingFallbacks, {});
+});
+
+const previousSnapshot = {
+  state: "fresh", updatedAt: "2026-09-06T06:23:00Z",
+  lastAttemptAt: "2026-09-06T06:23:00Z", lastError: null,
+};
+const at = (time) => Date.parse(`2026-09-06T${time}+08:00`);
+
+test("scheduled banner covers the exact 18:00 boundary before the next poll", () => {
+  assert.equal(scheduledRefreshPending(at("17:59:59"), previousSnapshot), false);
+  assert.equal(scheduledRefreshPending(at("18:00:00"), previousSnapshot), true);
+  assert.equal(scheduledRefreshPending(at("18:00:59"), previousSnapshot), true);
+  assert.equal(scheduledRefreshPending(at("18:06:00"), previousSnapshot), true);
+  assert.equal(scheduledRefreshPending(at("18:15:00"), previousSnapshot), false);
+});
+
+test("scheduled banner handles 06:00 and a first load with no cache", () => {
+  assert.equal(scheduledRefreshPending(at("05:59:59"), null), false);
+  assert.equal(scheduledRefreshPending(at("06:00:00"), null), true);
+  assert.equal(scheduledRefreshPending(at("06:14:59"), null), true);
+  assert.equal(scheduledRefreshPending(at("06:15:00"), null), false);
+});
+
+test("old errors do not hide the new slot; committed full or partial results end it", () => {
+  assert.equal(scheduledRefreshPending(at("18:00:00"), { ...previousSnapshot, lastError: "old failure" }), true);
+  for (const state of ["updated", "fresh", "cooldown"]) {
+    assert.equal(scheduledRefreshPending(at("18:01:00"), {
+      ...previousSnapshot, state, updatedAt: "2026-09-06T10:00:30Z",
+    }), false);
+  }
+  assert.equal(scheduledRefreshPending(at("18:07:00"), {
+    ...previousSnapshot, state: "error", lastAttemptAt: "2026-09-06T10:06:00Z", lastError: "final failure",
+  }), false);
+});
+
+test("observed attempts stay updating through retries but cannot remain updating forever", () => {
+  const running = { ...previousSnapshot, state: "syncing", lastAttemptAt: "2026-09-06T10:06:00Z" };
+  assert.equal(scheduledRefreshPending(at("18:06:30"), running), true);
+  assert.equal(scheduledRefreshPending(at("18:16:00"), running), true);
+  assert.equal(scheduledRefreshPending(at("18:21:00"), running), false);
+  assert.equal(scheduledRefreshPending(at("18:00:00"), {
+    ...running, lastAttemptAt: "2026-09-05T22:00:00Z",
+  }), true);
 });

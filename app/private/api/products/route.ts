@@ -15,6 +15,7 @@ import { cachedHoldingTimes } from "@/lib/holding-cache";
 import { compareProductIdentity, type ProductIdentityChange } from "@/lib/product-identity";
 import { prepareProductCatalogSync, resolveCatalogProductIds, type ProductCatalogSync } from "@/lib/product-catalog";
 import type { HoldingSyncState, Product } from "@/lib/domain";
+import { diagnosticErrorKind, syncDiagnostic, withSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
 import {
   formatCacheTime,
   loadSyncCache,
@@ -59,6 +60,9 @@ type PrivatePayloadBuild = {
   retryable: boolean;
 };
 type RefreshOptions = {
+  trigger?: "scheduled" | "manual" | "initial";
+  attempt?: number;
+  runId?: string;
   manual?: boolean;
   acceptPartial?: boolean;
   persistFailure?: boolean;
@@ -136,6 +140,24 @@ export async function GET(request: Request) {
 }
 
 export async function refreshPrivateProductsCache(db: D1Database, userId: string, options: RefreshOptions = {}) {
+  return withSyncDiagnostics(userId, {
+    trigger: options.trigger ?? (options.manual ? "manual" : "initial"), attempt: options.attempt ?? 1, runId: options.runId,
+  }, async () => {
+    const startedAt = Date.now();
+    const progress = { committed: false };
+    syncDiagnostic("sync_started");
+    try {
+      const saved = await refreshPrivateProductsAttempt(db, userId, options, progress);
+      syncDiagnostic("sync_finished", { outcome: saved.payload?.partial ? "partial" : "success", committed: true, durationMs: Date.now() - startedAt }, Boolean(saved.payload?.partial));
+      return saved;
+    } catch (error) {
+      syncDiagnostic("sync_finished", { outcome: "error", errorKind: diagnosticErrorKind(error), committed: progress.committed, finalAttempt: options.persistFailure !== false, durationMs: Date.now() - startedAt }, true);
+      throw error;
+    }
+  });
+}
+
+async function refreshPrivateProductsAttempt(db: D1Database, userId: string, options: RefreshOptions, progress: { committed: boolean }) {
   const {
     manual = false,
     acceptPartial = true,
@@ -151,6 +173,7 @@ export async function refreshPrivateProductsCache(db: D1Database, userId: string
       ...catalog.statements,
       prepareSyncCacheSave(db, userId, privateCacheKey, payload, payload.fetchedAt),
     ]);
+    progress.committed = true;
     return (await loadSyncCache<PrivateProductsPayload>(db, userId, privateCacheKey))!;
   } catch (error) {
     if (persistFailure) await recordSyncFailure(db, userId, privateCacheKey, safeCacheError(error));
@@ -174,9 +197,10 @@ async function buildPrivatePayload(
   cached: SyncCacheRecord<PrivateProductsPayload> | null,
 ): Promise<PrivatePayloadBuild> {
   const credentials = await loadCredentials(db, userId);
-  const publicSnapshotPromise = fetchPublicRateSnapshot();
+  const publicSnapshotPromise = withSyncPlatform("public", fetchPublicRateSnapshot);
   const binanceGlobalCredential = credentials["binance-global"];
   const binanceGlobalJob = runPrivate(
+    "binance-global",
     Boolean(binanceGlobalCredential),
     () => fetchBinanceFlexibleSnapshot({
       apiKey: binanceGlobalCredential!.apiKey,
@@ -185,6 +209,7 @@ async function buildPrivatePayload(
   );
   const binanceBahrainCredential = credentials["binance-bahrain"];
   const binanceBahrainJob = runPrivate(
+    "binance-bahrain",
     Boolean(binanceBahrainCredential),
     () => fetchBinanceFlexibleSnapshot({
       apiKey: binanceBahrainCredential!.apiKey,
@@ -193,6 +218,7 @@ async function buildPrivatePayload(
   );
   const bybitGlobalCredential = credentials["bybit-global"];
   const bybitGlobalJob = runPrivate(
+    "bybit-global",
     Boolean(bybitGlobalCredential),
     async () => {
       const bybitCredentials = {
@@ -222,6 +248,7 @@ async function buildPrivatePayload(
   );
   const bitgetCredential = credentials["bitget-global"];
   const bitgetJob = runPrivate(
+    "bitget-global",
     Boolean(bitgetCredential?.passphrase),
     () => fetchBitgetSavingsSnapshot({
       apiKey: bitgetCredential!.apiKey,
@@ -231,6 +258,7 @@ async function buildPrivatePayload(
   );
   const okxCredential = credentials["okx-global"];
   const okxJob = runPrivate(
+    "okx-global",
     Boolean(okxCredential?.passphrase),
     () => fetchOkxSavingsHoldings({
       apiKey: okxCredential!.apiKey,
@@ -361,6 +389,13 @@ async function buildPrivatePayload(
     .map(([productId, time]) => [catalogProductIds[productId] ?? productId, time])
     .filter(([productId]) => activeProductIds.has(productId) && !freshHoldingProductIds.has(productId)));
   const successfulPrivateJobs = Object.values(privateStatus).filter((status) => status === "synced" || status === "partial").length;
+  // Log before the all-failed throw, which deliberately preserves the old cache.
+  syncDiagnostic("sync_platforms", {
+    ...privateStatus,
+    publicOutcome: publicRates.length === 0 ? "no_usable_rates" : publicFailures.length ? "partial" : "success",
+    ...(bitget ? { bitgetProducts: bitget.sync.products, bitgetHoldings: bitget.sync.holdings } : {}),
+    ...(bybitGlobal ? { bybitFailedScopes: bybitGlobal.failedScopes.filter((scope) => ["USDT", "USDC", "定期产品", "定期持仓"].includes(scope)) } : {}),
+  }, configuredError || publicFailures.length > 0);
   if (publicRates.length === 0 && successfulPrivateJobs === 0) {
     throw new Error("公开与账户接口均未返回可用数据");
   }
@@ -463,15 +498,17 @@ function updatedFallbackTime(value: string | undefined) {
   return value ?? new Date(0).toISOString();
 }
 
-function runPrivate<T>(configured: boolean, task: () => Promise<T>): Promise<PrivateResult<T>> {
+function runPrivate<T>(platform: string, configured: boolean, task: () => Promise<T>): Promise<PrivateResult<T>> {
   if (!configured) return Promise.resolve({ snapshot: null, status: "not_configured" });
-  return task()
-    .then((snapshot) => ({ snapshot, status: "synced" as const }))
-    .catch((error: unknown) => ({
-      snapshot: null,
-      status: "error" as const,
-      diagnostic: safeDiagnostic(error),
-    }));
+  return withSyncPlatform(platform, async () => {
+    const startedAt = Date.now();
+    try {
+      return { snapshot: await task(), status: "synced" as const };
+    } catch (error) {
+      syncDiagnostic("platform_read_error", { errorKind: diagnosticErrorKind(error), durationMs: Date.now() - startedAt }, true);
+      return { snapshot: null, status: "error" as const, diagnostic: safeDiagnostic(error) };
+    }
+  });
 }
 
 function normalizeLegacyNote(note: string) {
@@ -550,10 +587,10 @@ function extractPlatforms(text: string) {
 function privateFailureLabel(key: keyof PrivateStatuses, label: string, diagnostic?: string) {
   if (key === "bybitGlobal" && diagnostic?.startsWith("scopes:")) return label;
   if (key === "bitget" && diagnostic?.includes("public_blocked")) {
-    return `${label}（官方 API 暂时拒绝本站服务器访问）`;
+    return `${label}（账户与公开接口均访问失败，原因待检查）`;
   }
   if (key === "bitget" && diagnostic?.includes("public_ok")) {
-    return `${label}（API Key、Passphrase 或权限被拒绝）`;
+    return `${label}（账户接口读取失败，公开接口可访问）`;
   }
   if (diagnostic === "timeout") return `${label}（请求超时）`;
   if (!diagnostic || diagnostic === "unknown") return `${label}（连接失败，原因待检查）`;

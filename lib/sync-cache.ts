@@ -1,7 +1,7 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 
 const DEFAULT_MANUAL_REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
-const SYNC_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+export const SYNC_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
 
 export type SyncCacheState = "fresh" | "updated" | "stale" | "syncing" | "cooldown" | "error";
 

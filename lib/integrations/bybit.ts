@@ -1,4 +1,4 @@
-import { exchangeFetch } from "@/lib/exchange-fetch";
+import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import { buildProductIdentity } from "@/lib/product-identity";
 import type { Product } from "@/lib/domain";
 
@@ -236,7 +236,7 @@ async function publicGet<Row>(path: string, query: URLSearchParams, baseUrls: re
         signal: controller.signal,
         headers: { Accept: "application/json" },
       });
-      const body = await response.json() as BybitResponse<Row>;
+      const body = await readExchangeJson<BybitResponse<Row>>(response);
       if (!response.ok || body.retCode !== 0) {
         throw new Error(`Bybit public API failed (${response.status}/${body.retCode ?? "unknown"})`);
       }
@@ -274,7 +274,7 @@ async function signedGet<Row>(path: string, query: URLSearchParams, credentials:
           "X-BAPI-RECV-WINDOW": recvWindow,
         },
       });
-      const body = await response.json() as BybitResponse<Row>;
+      const body = await readExchangeJson<BybitResponse<Row>>(response);
       if (!response.ok || body.retCode !== 0) {
         throw new Error(`Bybit read-only API failed (${response.status}/${body.retCode ?? "unknown"})`);
       }

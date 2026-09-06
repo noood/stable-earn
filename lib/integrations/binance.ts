@@ -1,4 +1,4 @@
-import { exchangeFetch } from "@/lib/exchange-fetch";
+import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import { buildProductIdentity } from "@/lib/product-identity";
 import type { LiveRate } from "@/lib/live-rates";
 
@@ -182,7 +182,7 @@ async function signedGet<ResponseBody>(
         },
       },
     );
-    const body = await response.json().catch(() => null) as (ResponseBody & { code?: number }) | null;
+    const body = await readExchangeJson<ResponseBody & { code?: number }>(response).catch(() => null);
     if (!response.ok || (typeof body?.code === "number" && body.code < 0)) {
       throw new Error(`Binance read-only API failed (${response.status}/${body?.code ?? "unknown"})`);
     }

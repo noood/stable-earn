@@ -1,4 +1,4 @@
-import { exchangeFetch } from "@/lib/exchange-fetch";
+import { exchangeFetch, logExchangePayload, readExchangeJson, readExchangeText } from "@/lib/exchange-fetch";
 import { buildProductIdentity } from "@/lib/product-identity";
 import type { LiveRate } from "@/lib/live-rates";
 
@@ -209,7 +209,7 @@ async function signedGet<Data>(path: string, query: URLSearchParams, credentials
         locale: "en-US",
       },
     });
-    const rawBody = await response.text();
+    const rawBody = await readExchangeText(response);
     let body: BitgetResponse<Data> = {};
     try {
       body = JSON.parse(rawBody) as BitgetResponse<Data>;
@@ -217,6 +217,7 @@ async function signedGet<Data>(path: string, query: URLSearchParams, credentials
       // Some upstream access denials return HTML instead of Bitget's JSON
       // envelope. Classify it without exposing the response body.
     }
+    logExchangePayload(response, body.code ? body : null);
     if (!response.ok || body.code !== "00000") {
       const responseKind = body.code ?? (rawBody.trimStart().startsWith("<") ? "html" : "non_bitget_json");
       throw new Error(`Bitget read-only API failed (${response.status}/${responseKind})`);
@@ -243,7 +244,7 @@ async function canReachBitgetPublicApi(baseUrl = "https://api.bitget.com") {
       headers: { Accept: "application/json" },
     });
     if (!response.ok) return false;
-    const body = await response.json() as BitgetResponse<{ serverTime?: string }>;
+    const body = await readExchangeJson<BitgetResponse<{ serverTime?: string }>>(response);
     return body.code === "00000";
   } catch {
     return false;

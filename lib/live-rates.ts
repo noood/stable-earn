@@ -1,4 +1,4 @@
-import { exchangeFetch } from "@/lib/exchange-fetch";
+import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import type { EligibilityStatus, Product, ProductAvailability, RateCoverage } from "@/lib/domain";
 import { buildProductIdentity } from "@/lib/product-identity";
 
@@ -92,10 +92,10 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
     try {
       const url = `${base}/v5/earn/product?category=FlexibleSaving&coin=${endpoint.coin}`;
       const response = await exchangeFetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
-      const body = await response.json() as {
+      const body = await readExchangeJson<{
         retCode?: number;
         result?: { list?: Array<{ productId?: string; estimateApr?: string; status?: string }> };
-      };
+      }>(response);
       if (!response.ok || body.retCode !== 0) throw new Error(`Bybit returned ${response.status}/${body.retCode ?? "unknown"}`);
       const item = body.result?.list?.find((candidate) => candidate.status === "Available") ?? body.result?.list?.[0];
       const baseApr = parsePercent(item?.estimateApr);

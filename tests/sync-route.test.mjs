@@ -3,6 +3,7 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
 function fixture() {
+  const logs = [];
   let time = Date.parse("2026-09-05T00:56:15.064Z");
   class Clock extends Date {
     constructor(...args) { super(...(args.length ? args : [time])); }
@@ -14,7 +15,10 @@ function fixture() {
     prepare(sql) {
       return { bind(...args) {
         const statement = {
-          async first() { return row; },
+          async first() {
+            if (mode === "readback-error" && row?.payload) throw Error("readback failed");
+            return row;
+          },
           async run() {
             if (sql.includes("SET last_error = ?")) row.last_error = args[0];
             else if (sql.includes("payload = excluded.payload")) {
@@ -55,10 +59,10 @@ function fixture() {
       prepareProductCatalogSync: async (_db, _id, rates) => ({ products, rates, productIds: {}, statements: [] }),
       resolveCatalogProductIds: async () => ({}),
     },
-  }, { Date: Clock });
+  }, { Date: Clock, console: { info: (record) => logs.push(record), warn: (record) => logs.push(record) } });
   const route = load("@/app/private/api/products/route");
   return {
-    route, db, load,
+    route, db, load, logs,
     now: () => new Clock().toISOString(),
     step(nextMode) { time += 60000; mode = nextMode; },
     refresh: (options) => route.refreshPrivateProductsCache(db, "test-user", options),
@@ -66,6 +70,40 @@ function fixture() {
     record: () => row,
   };
 }
+
+test("sync logs preserve platform outcomes before total failure and correlate scheduled retries", async () => {
+  const f = fixture();
+  f.step("error");
+  await assert.rejects(f.refresh({ trigger: "scheduled", attempt: 3, runId: "scheduled-run" }));
+  const statuses = f.logs.find((r) => r.event === "sync_platforms");
+  assert.equal(statuses.binanceGlobal, "error");
+  assert.equal(statuses.bitget, "error");
+  assert.equal(statuses.publicOutcome, "no_usable_rates");
+  const end = f.logs.at(-1);
+  assert.equal(end.event, "sync_finished");
+  assert.equal(end.outcome, "error");
+  assert.equal(end.committed, false);
+  assert.equal(end.attempt, 3);
+  assert.ok(f.logs.every((r) => r.runId === "scheduled-run" && r.userRef === end.userRef));
+  f.step("partial");
+  await f.refresh({ manual: true });
+  assert.equal(f.logs.at(-1).trigger, "manual");
+  assert.equal(f.logs.at(-1).outcome, "partial");
+  assert.equal(f.logs.at(-1).committed, true);
+  const partial = f.logs.findLast((r) => r.event === "sync_platforms");
+  assert.equal(partial.bitgetProducts, true);
+  assert.equal(partial.bitgetHoldings, false);
+});
+
+test("a failed readback after a successful commit is not logged as an uncommitted refresh", async () => {
+  const f = fixture();
+  f.step("readback-error");
+  await assert.rejects(f.refresh());
+  assert.ok(f.record().payload);
+  assert.equal(f.logs.at(-1).event, "sync_finished");
+  assert.equal(f.logs.at(-1).outcome, "error");
+  assert.equal(f.logs.at(-1).committed, true);
+});
 
 test("real sync route: success → partial → partial → total failure → recovery", async () => {
   const f = fixture();

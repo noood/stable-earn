@@ -47,6 +47,8 @@ npm run check
 
 计划任务按 UTC 22:00、10:00 执行，对应上海时间 06:00、18:00；失败时会自动重试。普通部署不会清空 D1 数据。
 
+同步失败时，在 Worker 的 Observability / Events 中查找 `sync_finished`，查看[诊断日志说明](docs/DATA-STATES.md#同步诊断日志)。日志从部署后开始记录，不包含密钥或持仓金额。
+
 ## 开发文档
 
 - [数据状态与展示规则](docs/DATA-STATES.md)：产品目录、持仓、收益和同步状态。

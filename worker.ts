@@ -5,6 +5,7 @@ import { listPrivateSyncUserIds, refreshPrivateProductsCache } from "@/app/priva
 const scheduledRetryDelays = [0, 60_000, 5 * 60_000] as const;
 
 async function scheduledRefresh() {
+  const runId = crypto.randomUUID();
   const db = await getDatabase();
   let pendingUserIds = await listPrivateSyncUserIds(db);
 
@@ -17,16 +18,16 @@ async function scheduledRefresh() {
     for (const userId of pendingUserIds) {
       try {
         await refreshPrivateProductsCache(db, userId, {
+          trigger: "scheduled", attempt: attemptIndex + 1, runId,
           acceptPartial: finalAttempt,
           persistFailure: finalAttempt,
           // Record every attempt so the UI can show the retry window while
           // the first two attempts are still in progress.
           recordAttempt: true,
         });
-      } catch (error) {
+      } catch {
         failedUserIds.push(userId);
-        const message = error instanceof Error ? error.message : "unknown error";
-        console.warn(`Scheduled refresh attempt ${attemptIndex + 1} failed: ${message}`);
+        // The refresh logs its correlated outcome before rethrowing.
       }
     }
     pendingUserIds = failedUserIds;
