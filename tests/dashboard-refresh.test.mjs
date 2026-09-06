@@ -22,6 +22,7 @@ for (const scenario of [
   { name: "total failure carrying old synced flags", state: "error", fallbacks: {}, saved: [] },
   { name: "silent cache polling", state: "updated", fallbacks: {}, silent: true, saved: [] },
   { name: "recovery with unchanged amount", state: "updated", fallbacks: {}, saved: ["bitget", "binance"] },
+  { name: "personal data unavailable", state: "updated", fallbacks: {}, personalReady: false, saved: [] },
 ]) {
   test(`dashboard saves only fresh holdings: ${scenario.name}`, async () => {
     const writes = [];
@@ -34,6 +35,7 @@ for (const scenario of [
     const deps = {
       freshHoldingIdsForSave, isDemo: false, productsEndpoint: "/products", holdingsEndpoint: "/holdings",
       hiddenProductIdsRef: { current: [] }, productOverridesRef: { current: {} }, manualProductsRef: { current: [] },
+      personalDataReadyRef: { current: scenario.personalReady !== false },
       manualProductPayload: (product) => product,
       fetch: async (_url, options) => {
         if (options?.method === "PUT") writes.push(JSON.parse(options.body));

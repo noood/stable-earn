@@ -83,6 +83,10 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const [holdings, setHoldings] = useState<HoldingMap>(isDemo ? publicDemoHoldings : emptyHoldings);
   const [productOverrides, setProductOverrides] = useState<ProductOverrideMap>(isDemo ? publicDemoOverrides : {});
   const [holdingsReady, setHoldingsReady] = useState(isDemo);
+  const [personalDataError, setPersonalDataError] = useState(false);
+  const [personalDataLoading, setPersonalDataLoading] = useState(false);
+  const personalDataReadyRef = useRef(isDemo);
+  const personalDataLoadingRef = useRef(false);
   const [editing, setEditing] = useState(false);
   const [draftHoldings, setDraftHoldings] = useState<HoldingMap>(emptyHoldings);
   const [draftOverrides, setDraftOverrides] = useState<ProductOverrideMap>({});
@@ -148,43 +152,59 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   useEffect(() => {
     // Keep polling even when the first request failed and there is no cache
     // timestamp yet; a later scheduled refresh should appear without reload.
-    if (isDemo || editing) return;
+    if (isDemo || editing || !holdingsReady) return;
     const timer = window.setInterval(() => {
       void refreshRates(holdingsRef.current, { silent: true });
     }, 60_000);
     return () => window.clearInterval(timer);
     // Polling only reads the cache; avoid rerunning it for every portfolio update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, isDemo, productsEndpoint]);
+  }, [editing, holdingsReady, isDemo, productsEndpoint]);
+
+  async function loadPersonalData(): Promise<HoldingMap | null> {
+    setPersonalDataLoading(true);
+    try {
+      const response = await fetch(holdingsEndpoint, { cache: "no-store" });
+      if (!response.ok) throw new Error("cloud holdings unavailable");
+      const data = await response.json() as HoldingsApiResult;
+      if (data.products?.length) setProducts(data.products);
+      setProductOverrides(data.overrides ?? {});
+      setManualProducts(data.manualProducts ?? []);
+      const hiddenIds = data.hiddenProductIds ?? [];
+      setHiddenProductIds(hiddenIds);
+      productOverridesRef.current = data.overrides ?? {};
+      manualProductsRef.current = data.manualProducts ?? [];
+      hiddenProductIdsRef.current = hiddenIds;
+      const next = { ...emptyHoldings, ...data.holdings };
+      setHoldings(next);
+      holdingsRef.current = next;
+      personalDataReadyRef.current = true;
+      setPersonalDataError(false);
+      return next;
+    } catch {
+      // A failed read is not an empty portfolio. Keep any existing data.
+      setPersonalDataError(true);
+      return null;
+    } finally {
+      setPersonalDataLoading(false);
+    }
+  }
+
+  async function retryPersonalData() {
+    if (personalDataLoadingRef.current) return;
+    personalDataLoadingRef.current = true;
+    try {
+      const loaded = await loadPersonalData();
+      if (loaded === null) return;
+      // Read the saved product snapshot, without requesting the exchanges.
+      await refreshRates(loaded);
+      setHoldingsReady(true);
+    } finally {
+      personalDataLoadingRef.current = false;
+    }
+  }
 
   useEffect(() => {
-    async function loadHoldings() {
-      try {
-        const response = await fetch(holdingsEndpoint, { cache: "no-store" });
-        if (!response.ok) throw new Error("cloud holdings unavailable");
-        const data = await response.json() as HoldingsApiResult;
-        if (data.products?.length) setProducts(data.products);
-        setProductOverrides(data.overrides ?? {});
-        setManualProducts(data.manualProducts ?? []);
-        const hiddenIds = data.hiddenProductIds ?? [];
-        setHiddenProductIds(hiddenIds);
-        productOverridesRef.current = data.overrides ?? {};
-        manualProductsRef.current = data.manualProducts ?? [];
-        hiddenProductIdsRef.current = hiddenIds;
-        if (data.found) {
-          const next = { ...emptyHoldings, ...data.holdings };
-          setHoldings(next);
-          return next;
-        }
-
-        setHoldings(emptyHoldings);
-        return emptyHoldings;
-      } catch {
-        setHoldings(emptyHoldings);
-        return emptyHoldings;
-      }
-    }
-
     async function initialize() {
       if (isDemo) {
         setHoldings(publicDemoHoldings);
@@ -199,9 +219,14 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       setLoading(true);
       const productsResponse = fetch(productsEndpoint, { cache: "no-store" });
       void productsResponse.catch(() => undefined);
-      const loaded = await loadHoldings();
-      setHoldingsReady(true);
-      await refreshRates(loaded, { response: productsResponse });
+      personalDataLoadingRef.current = true;
+      try {
+        const loaded = await loadPersonalData();
+        await refreshRates(loaded ?? holdingsRef.current, { response: productsResponse });
+        setHoldingsReady(loaded !== null);
+      } finally {
+        personalDataLoadingRef.current = false;
+      }
     }
 
     const frame = window.requestAnimationFrame(() => void initialize());
@@ -255,7 +280,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         const freshHoldingIds = freshHoldingIdsForSave(
           acceptedHoldingUpdates, data.holdingFallbacks ?? {}, data.cache?.state, options?.silent,
         );
-        if (freshHoldingIds.length > 0) {
+        if (personalDataReadyRef.current && freshHoldingIds.length > 0) {
           void persistPortfolio(next, productOverridesRef.current, manualProductsRef.current, {
             holdingProductIds: freshHoldingIds,
             overrideProductIds: [],
@@ -336,6 +361,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   }
 
   function beginEditing() {
+    if (!holdingsReady) return;
     setDraftHoldings({ ...holdings });
     setDraftOverrides(structuredClone(productOverrides));
     setDraftManualProducts(structuredClone(manualProducts));
@@ -523,7 +549,8 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         ? `当前数据截至 ${formatSyncDateTime(lastUpdated)}${automaticRefreshSummary ? `，预计 ${automaticRefreshSummary} 自动更新` : ""}。`
         : "暂无成功数据。";
   const failureSummary = syncFailureSummary(syncFailures);
-  const initialLoading = !isDemo && (!holdingsReady || (loading && !lastUpdated) || (syncing && !lastUpdated));
+  const personalDataBlocked = !holdingsReady && personalDataError;
+  const initialLoading = !personalDataBlocked && !isDemo && (!holdingsReady || (loading && !lastUpdated) || (syncing && !lastUpdated));
 
   return (
     <main className="min-h-screen">
@@ -534,10 +561,10 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
           <HeaderMenu
             userEmail={userEmail}
             demo={isDemo}
-            loading={loading}
+            loading={loading || personalDataLoading}
             manualRefreshCooling={manualRefreshCooling}
             cooldownUntil={manualRefreshAvailableAt}
-            onManualRefresh={() => void refreshRates(activeHoldings, { manual: true })}
+            onManualRefresh={() => holdingsReady ? void refreshRates(activeHoldings, { manual: true }) : void retryPersonalData()}
             onApiSettings={isDemo ? openPrivateApiSettings : () => setShowApiSettings(true)}
           />
         </div>
@@ -547,14 +574,17 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         <div className="card type-caption mb-5 flex items-center justify-between gap-4 px-5 py-3.5" aria-live="polite">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
-            {initialLoading && !syncing
+            {personalDataBlocked
+              ? <p className="text-warning font-semibold">个人数据读取失败，请重试；暂不显示不完整的持仓和统计。</p>
+              : initialLoading && !syncing
               ? <span className="skeleton-block skeleton-notice" aria-hidden="true" />
             : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{!loading && !isDemo && syncing && lastUpdated && <span className="text-secondary font-semibold"> 正在更新数据中，请稍候。</span>}{!loading && !isDemo && !syncing && hasSyncFailure && <span className="text-warning font-semibold"> {failureSummary}</span>}</p>}
           </div>
+          {personalDataBlocked && <ActionButton size="small" variant="secondary" disabled={personalDataLoading || loading} onClick={() => void retryPersonalData()}>{personalDataLoading || loading ? "重试中…" : "重试"}</ActionButton>}
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
         </div>
         <section className="metrics-panel card mb-7 grid overflow-hidden sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6" aria-busy={initialLoading}>
-          {initialLoading ? <>{Array.from({ length: 6 }, (_, index) => <MetricSkeleton key={index} highlight={index === 0} />)}</> : <>
+          {personalDataBlocked ? <p className="col-span-full text-muted type-caption px-6 py-5">个人数据尚未加载，暂不显示统计。</p> : initialLoading ? <>{Array.from({ length: 6 }, (_, index) => <MetricSkeleton key={index} highlight={index === 0} />)}</> : <>
             <Metric highlight label={`总持仓 · ${asset}`} value={formatAmount(totalHolding)} note={`${holdingProductCount} 个持仓产品`} />
             <Metric label="组合有效 APR" value={`${portfolioApr.toFixed(2)}%`} note="按各阶梯实际占用加权" />
             <Metric label={`预计每日收益 · ${asset}`} value={formatAmount(annualEarn / 365)} note="含活期、定期" />
@@ -570,8 +600,8 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
               <h2 className="type-title font-semibold tracking-[-0.02em]">{asset} 持仓</h2>
               <p className="table-toolbar-subtitle text-muted type-caption">
                 {editing
-                  ? <>展示手动添加和 API 同步的产品{!isDemo && <>，<ActionButton variant="text" className="table-toolbar-inline-action" onClick={() => setShowApiSettings(true)}>配置 API</ActionButton></>}</>
-                  : `API 机会：APR ≥ ${minimumOpportunityApr}% 的活期或 ${maximumShortTermDays} 天内定期；保留已有持仓和手动产品`}
+                  ? <>展示手动添加和 API 同步的产品，<ActionButton variant="text" className="table-toolbar-inline-action" onClick={isDemo ? openPrivateApiSettings : () => setShowApiSettings(true)}>配置 API</ActionButton></>
+                  : `仅展示已有持仓，或 APR ≥ ${minimumOpportunityApr}% 的活期及 ${maximumShortTermDays} 天内定期产品`}
               </p>
             </div>
             {editing
@@ -579,7 +609,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
               : <div key="view-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant={isDemo ? "secondary" : "primary"} onClick={beginEditing} disabled={!holdingsReady}>编辑持仓</ActionButton></div>}
           </div>
           {holdingSaveError && <div className="table-error-panel error-panel type-caption font-medium">保存失败，请检查网络后重试；表格中的修改仍然保留。</div>}
-          <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={initialLoading}><colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /></colgroup><thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th></tr></thead><tbody>{initialLoading ? <ProductTableSkeleton /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
+          <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={initialLoading}><colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /></colgroup><thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th></tr></thead><tbody>{personalDataBlocked ? <tr><td colSpan={4} className="text-muted">个人数据尚未加载，请重试。</td></tr> : initialLoading ? <ProductTableSkeleton /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
             const baseProduct = activeBaseProducts.find((product) => product.id === listedProduct.id) ?? listedProduct;
             const manualSettings = activeOverrides[listedProduct.id];
             const displayProduct = applyProductOverride(baseProduct, manualSettings);
