@@ -10,8 +10,8 @@ import { fetchPublicRateSnapshot, summarizePublicFailures, type LiveRate } from 
 import { privateResponseHeaders } from "@/lib/request-security";
 import { mergeRates } from "@/lib/rate-cache";
 import { loadManualRefreshCooldown, manualRefreshCooldownMs } from "@/lib/user-settings";
-import { isLocalPreviewRequest, localPrivateProductsPreview } from "@/lib/local-preview";
-import { filterFallbacksByFailures } from "@/lib/sync-fallback";
+import { isLocalPreviewRequest, localPrivateProductsPreview, localSyncScenarioPreview } from "@/lib/local-preview";
+import { cachedHoldingTimes } from "@/lib/holding-cache";
 import { compareProductIdentity, type ProductIdentityChange } from "@/lib/product-identity";
 import { prepareProductCatalogSync, resolveCatalogProductIds, type ProductCatalogSync } from "@/lib/product-catalog";
 import type { HoldingSyncState, Product } from "@/lib/domain";
@@ -71,7 +71,9 @@ export async function GET(request: Request) {
   const identity = await getUserIdentity(request);
   if (!identity) return NextResponse.json({ error: "请先登录。" }, { status: 401, headers: privateResponseHeaders });
   if (isLocalPreviewRequest(request)) {
-    return NextResponse.json(localPrivateProductsPreview(), { headers: privateResponseHeaders });
+    const scenario = new URL(request.url).searchParams.get("syncScenario");
+    const preview = localSyncScenarioPreview(scenario) ?? localPrivateProductsPreview();
+    return NextResponse.json(preview, { status: scenario === "initial-error" ? 502 : 200, headers: privateResponseHeaders });
   }
 
   const db = await getDatabase();
@@ -85,7 +87,9 @@ export async function GET(request: Request) {
 
   if (!manual) {
     if (syncAttemptInProgress(cached, now)) {
-      return initialSyncingResponse(cached, now, manualCooldownDuration);
+      return cached?.payload
+        ? cachedResponse(cached, "syncing", "正在更新数据中，请稍候。", now, manualCooldownDuration)
+        : initialSyncingResponse(cached, now, manualCooldownDuration);
     }
     if (cached?.payload) {
       const state = cached.lastError ? "error" : "fresh";
@@ -290,7 +294,8 @@ async function buildPrivatePayload(
     binanceGlobalResult.status === "synced" ? "binance-global" : null,
     binanceBahrainResult.status === "synced" ? "binance-bahrain" : null,
     bybitGlobalStatus === "synced" ? "bybit-global" : null,
-    bitgetStatus === "synced" ? "bitget-global" : null,
+    // Bitget's sparse holding response does not prove zero for absent rows.
+    // Keep explicit values (including 0), but do not infer an empty account.
     okxResult.status === "synced" ? "okx-global" : null,
   ].filter((accountId): accountId is string => Boolean(accountId));
   const catalog = await prepareProductCatalogSync(db, userId, freshRates, freshHoldingUpdates, completeAccountIds);
@@ -348,10 +353,13 @@ async function buildPrivatePayload(
     okx: okxResult.diagnostic,
   };
   const configuredError = Object.values(privateStatus).some((status) => status === "error" || status === "partial");
-  const holdingFallbacks = Object.fromEntries(Object.keys(cached?.payload?.holdingUpdates ?? {})
-    .map((productId) => catalogProductIds[productId] ?? productId)
-    .filter((productId) => activeProductIds.has(productId) && !freshHoldingProductIds.has(productId))
-    .map((productId) => [productId, cached?.updatedAt ?? updatedFallbackTime(cached?.payload?.fetchedAt)]));
+  const holdingFallbacks = Object.fromEntries(Object.entries(cachedHoldingTimes(
+    cached?.payload?.holdingUpdates ?? {},
+    cached?.payload?.holdingFallbacks ?? {},
+    cached?.updatedAt ?? updatedFallbackTime(cached?.payload?.fetchedAt),
+  ))
+    .map(([productId, time]) => [catalogProductIds[productId] ?? productId, time])
+    .filter(([productId]) => activeProductIds.has(productId) && !freshHoldingProductIds.has(productId)));
   const successfulPrivateJobs = Object.values(privateStatus).filter((status) => status === "synced" || status === "partial").length;
   if (publicRates.length === 0 && successfulPrivateJobs === 0) {
     throw new Error("公开与账户接口均未返回可用数据");
@@ -396,17 +404,20 @@ function cachedResponse(
 ) {
   const payload = record.payload!;
   const failures = payload.failures ?? legacyFailures(payload.note);
-  const responseFailures = state === "error" ? ["产品和持仓数据更新失败"] : state === "syncing" ? [] : failures;
-  const showPartialFallbacks = state !== "syncing" && payload.partial;
+  const failed = state === "error" || Boolean(record.lastError);
+  const responseFailures = state === "syncing" ? [] : failed ? ["产品和持仓数据更新失败"] : failures;
   return NextResponse.json({
     ...payload,
     partial: state === "syncing" ? false : payload.partial,
-    rateFallbacks: state === "error"
+    rateFallbacks: failed
       ? Object.fromEntries(payload.rates.map((rate) => [rate.productId, rate.fetchedAt || record.updatedAt]))
-      : showPartialFallbacks ? filterFallbacksByFailures(payload.rateFallbacks ?? {}, failures) : {},
-    holdingFallbacks: state === "error"
-      ? Object.fromEntries(Object.keys(payload.holdingUpdates).map((productId) => [productId, record.updatedAt]))
-      : showPartialFallbacks ? filterFallbacksByFailures(payload.holdingFallbacks ?? {}, failures) : {},
+      : payload.rateFallbacks ?? {},
+    holdingFallbacks: failed
+      ? cachedHoldingTimes(payload.holdingUpdates, payload.holdingFallbacks ?? {}, record.updatedAt ?? payload.fetchedAt)
+      : payload.holdingFallbacks ?? {},
+    holdingSyncStates: failed
+      ? Object.fromEntries(Object.entries(payload.holdingSyncStates ?? {}).map(([id, status]) => [id, status === "not_configured" ? status : "error"]))
+      : payload.holdingSyncStates,
     fetchedAt: record.updatedAt ?? payload.fetchedAt,
     cache: syncCacheMetadata(record, state, now, manualCooldownDuration),
     note: state === "syncing" ? statusText : `${statusText} ${normalizeLegacyNote(payload.note)}`.trim(),

@@ -45,6 +45,7 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
   const [busy, setBusy] = useState(false);
   const [savingCooldown, setSavingCooldown] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState(false);
 
   function loadStatus() {
     return fetch("/private/api/credentials", { cache: "no-store" })
@@ -53,9 +54,11 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
         return response.json() as Promise<ApiConfigResult>;
       })
       .then((result) => {
+        setStatusError(false);
         setStatus(rememberApiConfig(result));
       })
       .catch(() => {
+        setStatusError(true);
         if (!apiConfigSessionCache) setStatus(null);
       });
   }
@@ -160,6 +163,7 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
       {message && <div className="muted-panel type-caption px-3 py-2.5 font-medium">{message}</div>}
       <section>
         <SectionIntro title="平台连接" />
+        {statusError && <div className="error-panel type-caption mb-3 px-3 py-2.5" role="alert">配置状态读取失败，请重试。<ActionButton variant="text" size="small" onClick={() => { setStatusError(false); void loadStatus(); }}>重试</ActionButton></div>}
         <div className="space-y-2">
           {status?.sources.map((source) => {
             const account = accounts.find((item) => item.id === source.id);
@@ -184,7 +188,7 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
                 {isSelected && <form className="api-credential-form mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void save(); }} autoComplete="off"><div><h4 className="type-body font-semibold">配置 {source.label}</h4><p className="text-muted type-caption mt-1">只填写只读密钥；交易、转账、申购、赎回和提现权限必须关闭。</p></div><SecretField label="API Key" value={apiKey} onChange={setApiKey} /><SecretField label="API Secret" value={apiSecret} onChange={setApiSecret} />{source.requiresPassphrase && <SecretField label="Passphrase" value={passphrase} onChange={setPassphrase} />}<div className="flex justify-end gap-2"><ActionButton type="button" variant="secondary" disabled={modalBusy} onClick={() => { setSelectedId(null); clearForm(); }}>取消</ActionButton><ActionButton type="submit" disabled={modalBusy || !apiKey.trim() || !apiSecret.trim() || (source.requiresPassphrase && !passphrase.trim())}>{busy ? "加密保存中…" : "加密保存"}</ActionButton></div></form>}
               </div>
             );
-          }) ?? <ApiSettingsSkeleton />}
+          }) ?? (statusError ? null : <ApiSettingsSkeleton />)}
           {(status?.manualSources ?? []).map((source) => {
             const account = accounts.find((item) => item.id === source.id);
             return <div key={source.id} className="card px-4 py-3"><SourceSummary account={account} label={source.label} statusLabel="手动维护" statusClass="status-chip-muted" description={source.syncDescription} /></div>;

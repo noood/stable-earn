@@ -12,7 +12,8 @@
     "deploy": "node scripts/deploy.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run lint && npm run typecheck",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "verify": "npm run lint && npm run typecheck && npm test",
     "check": "npm run verify && npm run build"
   },
   "dependencies": {

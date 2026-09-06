@@ -555,12 +555,11 @@ input:focus-visible,
   font-weight: 600;
 }
 .holding-summary-note {
-  overflow: hidden;
   color: var(--text-muted);
   font-size: var(--type-micro);
   line-height: var(--leading-micro);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .product-meta-warning,
 .holding-summary-note-warning { color: var(--warning-text); font-weight: 650; }

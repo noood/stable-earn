@@ -19,7 +19,9 @@ export async function GET(request: Request) {
   const userId = await getUserId(request);
   if (!userId) return NextResponse.json({ error: "请先登录后再读取持仓。" }, { status: 401, headers: privateResponseHeaders });
   if (isLocalPreviewRequest(request)) {
-    return NextResponse.json(localPrivateHoldingsPreview(), { headers: privateResponseHeaders });
+    return NextResponse.json(new URL(request.url).searchParams.has("syncScenario")
+      ? { holdings: {}, overrides: {}, manualProducts: [], hiddenProductIds: [], found: false }
+      : localPrivateHoldingsPreview(), { headers: privateResponseHeaders });
   }
 
   const db = await getDatabase();

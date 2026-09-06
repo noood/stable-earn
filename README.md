@@ -1,6 +1,6 @@
 # Stable Earn
 
-Stable Earn 是一个用于查看稳定币持仓、比较 APR 和估算收益的 Cloudflare Workers 应用。
+Stable Earn 是一个用于查看加密资产理财持仓、比较 APR 和估算收益的 Cloudflare Workers 应用。
 
 ## 功能
 
@@ -27,6 +27,9 @@ npm run dev
 ```bash
 npm run check
 ```
+
+包含代码检查、类型检查、自动化测试和构建；单独运行测试用 `npm test`。
+测试不需要交易所密钥或线上数据库；本地模拟场景见 [测试说明](docs/DATA-STATES.md#验证方式)。
 
 ## 部署到 Cloudflare
 

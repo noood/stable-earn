@@ -190,6 +190,37 @@ export function localPrivateHoldingsPreview(now = new Date()) {
   return { holdings, overrides, manualProducts, hiddenProductIds: [], found: true };
 }
 
+// Fixed source time makes repeated page reloads useful for timestamp regression
+// checks. These scenarios are available only behind the development preview.
+export function localSyncScenarioPreview(scenario: string | null, now = new Date()) {
+  if (!scenario || !["partial", "error", "success", "syncing", "initial-syncing", "initial-error"].includes(scenario)) return null;
+  const initial = scenario.startsWith("initial-");
+  const sourceAt = "2026-09-05T00:56:15.064Z";
+  const updatedAt = scenario === "error" ? sourceAt : now.toISOString();
+  const ids = ["bg-usdc", "bn-g-usdc"];
+  const rates = initial ? [] : ids.map((id) => previewRate(id, [[0, 500, 6.2]], updatedAt, "本地模拟 API"));
+  const failedIds = scenario === "partial" ? ["bg-usdc"] : scenario === "error" ? ids : [];
+  return {
+    products: rates.map((rate) => previewProduct(rate.productId, rate)),
+    rates,
+    rateFallbacks: scenario === "error" ? Object.fromEntries(ids.map((id) => [id, sourceAt])) : {},
+    holdingUpdates: initial ? {} : { "bg-usdc": 299.64, "bn-g-usdc": 0 },
+    holdingSourceIds: initial ? [] : ids,
+    holdingFallbacks: Object.fromEntries(failedIds.map((id) => [id, sourceAt])),
+    holdingSyncStates: Object.fromEntries(ids.map((id) => [id, failedIds.includes(id) ? "error" : "synced"])),
+    fetchedAt: initial ? null : updatedAt,
+    partial: scenario === "partial",
+    failures: scenario.endsWith("error") ? ["产品和持仓数据更新失败"] : scenario === "partial" ? ["Bitget（持仓接口未完整返回）"] : [],
+    cache: {
+      state: scenario.endsWith("syncing") ? "syncing" : scenario.endsWith("error") ? "error" : "updated",
+      updatedAt: initial ? null : updatedAt,
+      lastAttemptAt: now.toISOString(),
+      lastError: scenario.endsWith("error") ? "产品和持仓数据更新失败" : null,
+      expiresAt: null, cooldownUntil: null,
+    },
+  };
+}
+
 function previewBybitEligibilityProduct(id: string, holdingDataMode: "api" | "manual", fetchedAt: string, now: Date): Product {
   return previewBybitFixedProduct(id, holdingDataMode, fetchedAt, {
     name: "Fixed Saving · 3 天",

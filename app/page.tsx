@@ -9,6 +9,8 @@ import { AccountBadge, ActionButton, HoldingSummary, Metric, MetricSkeleton, Mod
 import { effectiveApr, formatAmount, remainingHighYield, type Account, type Asset, type HoldingMap, type HoldingSyncState, type Product } from "@/lib/domain";
 import { applyProductOverride, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { holdingSyncNote, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
+import { freshHoldingIdsForSave } from "@/lib/holding-cache";
+import { nextScheduledRefreshAt, syncFailureSummary } from "@/lib/sync-notice";
 import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
 import { accounts, seedProducts } from "@/lib/seed-data";
 import { highestProductApr, maximumShortTermDays, meetsOpportunityApr, minimumOpportunityApr, productHasComparableApr, productHasKnownCapacity } from "@/lib/opportunity-policy";
@@ -109,7 +111,9 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const manualProductsRef = useRef<Product[]>([]);
   const hiddenProductIdsRef = useRef<string[]>([]);
   const holdingsRef = useRef<HoldingMap>(holdings);
-  const previewQuery = localPreview ? "?preview=1" : "";
+  const previewScenario = localPreview && typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("syncScenario") : null;
+  const previewQuery = localPreview ? `?preview=1${previewScenario ? `&syncScenario=${encodeURIComponent(previewScenario)}` : ""}` : "";
   const holdingsEndpoint = `/private/api/holdings${previewQuery}`;
   const productsEndpoint = `/private/api/products${previewQuery}`;
 
@@ -248,9 +252,12 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       if (!isDemo && Object.keys(acceptedHoldingUpdates).length > 0) {
         const next = { ...baseHoldings, ...acceptedHoldingUpdates };
         setHoldings(next);
-        if (!options?.silent) {
+        const freshHoldingIds = freshHoldingIdsForSave(
+          acceptedHoldingUpdates, data.holdingFallbacks ?? {}, data.cache?.state, options?.silent,
+        );
+        if (freshHoldingIds.length > 0) {
           void persistPortfolio(next, productOverridesRef.current, manualProductsRef.current, {
-            holdingProductIds: Object.keys(acceptedHoldingUpdates),
+            holdingProductIds: freshHoldingIds,
             overrideProductIds: [],
             manualProductIds: [],
             deletedManualProductIds: [],
@@ -269,7 +276,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       setSyncing(false);
       if (!options?.silent) {
         setHasSyncFailure(true);
-        setSyncFailures(["交易所"]);
+        setSyncFailures(["页面数据读取失败"]);
       }
     } finally {
       if (!options?.silent) setLoading(false);
@@ -509,17 +516,13 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     : localPreview
       ? lastUpdated
         ? `本地测试数据截至 ${formatSyncDateTime(lastUpdated)}；不会写入数据库。`
-        : "正在加载本地测试数据…"
+        : "暂无成功测试数据。"
     : isDemo
       ? "以下均为演示数据。"
       : lastUpdated
         ? `当前数据截至 ${formatSyncDateTime(lastUpdated)}${automaticRefreshSummary ? `，预计 ${automaticRefreshSummary} 自动更新` : ""}。`
         : "暂无成功数据。";
-  const wholeUpdateFailed = syncFailures.some(isWholeUpdateFailure);
-  const failedPlatforms = [...new Set(syncFailures.map(failureTarget).filter(Boolean))];
-  const failureSummary = wholeUpdateFailed
-    ? "本次产品和持仓数据更新失败；下次更新将重试。"
-    : `${failedPlatforms.length ? failedPlatforms.join("、") : "交易所"} API 暂不可用；下次更新将重试。`;
+  const failureSummary = syncFailureSummary(syncFailures);
   const initialLoading = !isDemo && (!holdingsReady || (loading && !lastUpdated) || (syncing && !lastUpdated));
 
   return (
@@ -568,7 +571,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
               <p className="table-toolbar-subtitle text-muted type-caption">
                 {editing
                   ? <>展示手动添加和 API 同步的产品{!isDemo && <>，<ActionButton variant="text" className="table-toolbar-inline-action" onClick={() => setShowApiSettings(true)}>配置 API</ActionButton></>}</>
-                  : `展示当前目录中 APR ≥ ${minimumOpportunityApr}% 的活期、${maximumShortTermDays} 天内定期及已有持仓产品`}
+                  : `API 机会：APR ≥ ${minimumOpportunityApr}% 的活期或 ${maximumShortTermDays} 天内定期；保留已有持仓和手动产品`}
               </p>
             </div>
             {editing
@@ -954,46 +957,13 @@ function formatSyncDateTime(value: string) {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) return value;
   return new Date(timestamp).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
   });
-}
-
-function failureTarget(value: string) {
-  const platformAssets: Record<string, Asset[]> = {
-    "Binance.com": ["USDT", "USDC"],
-    "Binance Bahrain": ["USDT", "USDC"],
-    "Bybit.com": ["USDT", "USDC", "BTC"],
-    "Bybit EU": ["USDT", "USDC"],
-    Bitget: ["USDT", "USDC", "USDGO"],
-    OKX: ["USDT", "USDC", "BTC"],
-    MEXC: ["USDT", "USDC", "BTC"],
-  };
-  const platform = Object.keys(platformAssets).find((candidate) => value.startsWith(candidate));
-  if (value.includes("交易所数据更新失败")) return "交易所";
-  if (!platform) return value.replace(/（.*$/, "").trim();
-  const failedAssets = platformAssets[platform].filter((asset) => value.includes(asset));
-  const failedArea = ["定期产品", "定期持仓"].find((area) => value.includes(area));
-  if (failedArea) return `${platform} ${failedArea}`;
-  return failedAssets.length > 0 && failedAssets.length < platformAssets[platform].length
-    ? `${platform} ${failedAssets.join("/")}`
-    : platform;
-}
-
-function isWholeUpdateFailure(value: string) {
-  return value === "公开交易所" || value.includes("数据更新失败");
-}
-
-function nextScheduledRefreshAt(now: number) {
-  const shanghaiOffsetMs = 8 * 60 * 60 * 1000;
-  const local = new Date(now + shanghaiOffsetMs);
-  const hour = local.getUTCHours();
-  const targetHour = hour < 6 ? 6 : hour < 18 ? 18 : 6;
-  if (hour >= 18) local.setUTCDate(local.getUTCDate() + 1);
-  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), targetHour - 8)).toISOString();
 }
 
 function sameOverride(left?: ProductOverride, right?: ProductOverride) {
