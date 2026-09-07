@@ -9,6 +9,10 @@
   "triggers": {
     "crons": ["0 22,10 * * *"]
   },
+  "queues": {
+    "producers": [{ "binding": "SYNC_QUEUE", "queue": "stable-earn-sync" }],
+    "consumers": [{ "queue": "stable-earn-sync", "max_batch_size": 1, "max_batch_timeout": 0, "max_retries": 2, "retry_delay": 60, "max_concurrency": 1 }]
+  },
   "vars": {
     "TEAM_DOMAIN": "https://your-team.cloudflareaccess.com",
     "POLICY_AUD": "YOUR_CLOUDFLARE_ACCESS_AUDIENCE"

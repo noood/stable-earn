@@ -1,4 +1,4 @@
-import { diagnosticErrorKind, syncDiagnostic } from "./sync-diagnostics";
+import { accessFailureReason, diagnosticErrorKind, syncDiagnostic } from "./sync-diagnostics";
 
 const DEFAULT_RETRY_DELAY_MS = 800;
 const responses = new WeakMap<Response, { requestId: string; startedAt: number }>();
@@ -37,7 +37,8 @@ async function fetchWithDiagnostics(input: string, init: RequestInit | undefined
   try {
     const response = await fetch(input, init);
     responses.set(response, { requestId, startedAt });
-    syncDiagnostic("exchange_http", { ...target, httpStatus: response.status, durationMs: Date.now() - startedAt }, !response.ok);
+    syncDiagnostic("exchange_http", { ...target, httpStatus: response.status,
+      ...(!response.ok ? responseDiagnostics(response) : {}), durationMs: Date.now() - startedAt }, !response.ok);
     return response;
   } catch (error) {
     syncDiagnostic("exchange_http", { ...target, outcome: diagnosticErrorKind(error, init?.signal?.aborted), durationMs: Date.now() - startedAt }, true);
@@ -45,7 +46,7 @@ async function fetchWithDiagnostics(input: string, init: RequestInit | undefined
   }
 }
 
-export function logExchangePayload(response: Response, body: unknown) {
+export function logExchangePayload(response: Response, body: unknown, rawText = "") {
   const request = responses.get(response);
   if (!request) return;
   const record = body && typeof body === "object" ? body as Record<string, unknown> : null;
@@ -54,13 +55,19 @@ export function logExchangePayload(response: Response, body: unknown) {
   const failed = !record || (apiCode !== "absent" && apiCode !== "0" && apiCode !== "00000");
   syncDiagnostic("exchange_payload", {
     requestId: request.requestId, httpStatus: response.status, apiCode,
+    ...(isAccessFailure(response.status) ? { accessReason: accessFailureReason(response.status,
+      [record?.msg, record?.retMsg, record?.message, rawText].filter((value) => typeof value === "string").join(" ")) } : {}),
     bodyKind: record ? "json" : "invalid_json", durationMs: Date.now() - request.startedAt,
   }, !response.ok || failed);
 }
 
 export async function readExchangeJson<T>(response: Response): Promise<T> {
-  const body = await readExchangeBody(response, () => response.json()) as T;
-  logExchangePayload(response, body);
+  let rawText = "";
+  const body = await readExchangeBody(response, async () => {
+    rawText = await response.text();
+    return JSON.parse(rawText) as T;
+  }, () => rawText);
+  logExchangePayload(response, body, rawText);
   return body;
 }
 
@@ -68,17 +75,40 @@ export function readExchangeText(response: Response): Promise<string> {
   return readExchangeBody(response, () => response.text());
 }
 
-async function readExchangeBody<T>(response: Response, read: () => Promise<T>): Promise<T> {
+async function readExchangeBody<T>(response: Response, read: () => Promise<T>, diagnosticText = () => ""): Promise<T> {
   try {
     return await read();
   } catch (error) {
     const request = responses.get(response);
     if (request) syncDiagnostic("exchange_body_error", {
       requestId: request.requestId, httpStatus: response.status,
+      ...(isAccessFailure(response.status) ? { accessReason: accessFailureReason(response.status, diagnosticText()) } : {}),
       errorKind: diagnosticErrorKind(error), durationMs: Date.now() - request.startedAt,
     }, true);
     throw error;
   }
+}
+
+function isAccessFailure(status: number) {
+  return status === 403 || status === 451 || status === 429;
+}
+
+function responseDiagnostics(response: Response) {
+  const contentType = response.headers.get("content-type") ?? "";
+  const fields: Record<string, string> = {
+    responseType: contentType.includes("json") ? "json" : contentType.includes("html") ? "html" : "other",
+  };
+  // Only named upstream trace headers, with strict shape and length checks.
+  const allowed = [
+    ["cf-ray", /^[a-f0-9]{16,32}(?:-[A-Z]{3})?$/i],
+    ["x-request-id", /^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/i],
+    ["x-amz-cf-id", /^[A-Za-z0-9_+/=-]{40,100}$/],
+  ] as const;
+  for (const [header, shape] of allowed) {
+    const value = response.headers.get(header);
+    if (value && shape.test(value)) fields[header] = value;
+  }
+  return fields;
 }
 
 function isRetryableStatus(status: number) {

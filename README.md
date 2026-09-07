@@ -40,12 +40,13 @@ npm run check
    - `TEAM_DOMAIN`
    - `POLICY_AUD`
 3. 设置 Worker Secret：`CREDENTIAL_ENCRYPTION_KEY`。
-4. 按顺序执行 `drizzle/` 中尚未执行的 D1 migration。
-5. 运行 `npm run deploy`，或使用 Cloudflare Workers Builds 自动部署。
+4. 在 Cloudflare Queues 中创建队列 `stable-earn-sync`（首次部署或升级时只需创建一次）。生产者、消费者及重试配置由部署写入；若改名，请同步修改 `wrangler.jsonc` 中的两处队列名。
+5. 按顺序执行 `drizzle/` 中尚未执行的 D1 migration。
+6. 运行 `npm run deploy`，或使用 Cloudflare Workers Builds 自动部署。
 
 `wrangler.jsonc` 只包含占位值。不要把真实账号、数据库 ID、Access 配置或密钥提交到 Git。部署后需要在应用中配置只读权限的交易所 API Key，并关闭交易、转账、申购、赎回和提现权限。公开演示不需要这些 Cloudflare 配置；私人页面需要使用者自己的 Workers、D1、Access 和 API Key。
 
-计划任务按 UTC 22:00、10:00 执行，对应上海时间 06:00、18:00；失败时会自动重试。普通部署不会清空 D1 数据。
+计划任务按 UTC 22:00、10:00 执行，对应上海时间 06:00、18:00；队列按用户执行同步，失败后等待 1 分钟、再等待 5 分钟重试，每次使用独立任务额度。队列可能有投递延迟，并非保证整点完成。普通部署不会清空 D1 数据。
 
 同步失败时，在 Worker 的 Observability / Events 中查找 `sync_finished`，查看[诊断日志说明](docs/DATA-STATES.md#同步诊断日志)。日志从部署后开始记录，不包含密钥或持仓金额。
 

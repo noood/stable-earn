@@ -103,3 +103,44 @@ test("unknown destinations and non-numeric API codes are redacted", async () => 
   assert.equal(f.logs[1].apiCode, "non_numeric");
   assert.doesNotMatch(JSON.stringify(f.logs), /secret|SECRET/);
 });
+
+test("runtime subrequest exhaustion is explicit, not inferred from a generic zero-duration error", async () => {
+  for (const [message, expected] of [["Too many subrequests. SECRET", "subrequest_limit_exceeded"], ["unrelated SECRET", "error"]]) {
+    const f = fixture(async () => { throw Error(message); });
+    await assert.rejects(f.withSyncDiagnostics("user", { trigger: "scheduled", attempt: 3 }, () => f.exchangeFetch("https://api.bitget.com/api/v2/public/time")));
+    assert.equal(f.logs[0].outcome, expected);
+    assert.doesNotMatch(JSON.stringify(f.logs), /SECRET/);
+  }
+});
+
+test("access denial reasons use response evidence and never emit response text", async () => {
+  for (const [status, body, reason] of [
+    [451, JSON.stringify({ code: 0, msg: "Service unavailable from a restricted location SECRET" }), "region_restricted"],
+    [403, "<html>The distribution is configured to block access from your country SECRET</html>", "region_restricted"],
+    [403, JSON.stringify({ retMsg: "access too frequent SECRET" }), "rate_limited"],
+    [403, JSON.stringify({ msg: "Unmatched IP SECRET" }), "ip_not_allowed"],
+    [403, "<html>Forbidden SECRET</html>", "access_denied_unknown"],
+    [451, "<html>Forbidden SECRET</html>", "access_denied_unknown"],
+  ]) {
+    const f = fixture(async () => new Response(body, { status }));
+    await f.withSyncDiagnostics("user", { trigger: "manual", attempt: 1 }, async () => {
+      try { await f.readExchangeJson(await f.exchangeFetch("https://api.bybit.com/v5/earn/product")); } catch { /* HTML is still rejected. */ }
+    });
+    assert.equal(f.logs.at(-1).accessReason, reason);
+    assert.doesNotMatch(JSON.stringify(f.logs), /SECRET|<html>|restricted location/);
+  }
+});
+
+test("Bitget text responses share reason classification; only validated trace headers are logged", async () => {
+  const f = fixture(async () => new Response("<html>access too frequent SECRET</html>", { status: 403, headers: {
+    "content-type": "text/html", "cf-ray": "a370cf99ab6188cc-HKG", "x-request-id": "SECRET", "set-cookie": "SECRET",
+  } }));
+  await f.withSyncDiagnostics("user", { trigger: "manual", attempt: 1 }, async () => {
+    const response = await f.exchangeFetch("https://api.bitget.com/api/v2/earn/savings/assets");
+    f.logExchangePayload(response, null, await f.readExchangeText(response));
+  });
+  assert.equal(f.logs[0]["cf-ray"], "a370cf99ab6188cc-HKG");
+  assert.equal(f.logs[0].responseType, "html");
+  assert.equal(f.logs.at(-1).accessReason, "rate_limited");
+  assert.doesNotMatch(JSON.stringify(f.logs), /SECRET|set-cookie|x-request-id/);
+});

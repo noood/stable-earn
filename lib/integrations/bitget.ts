@@ -217,7 +217,7 @@ async function signedGet<Data>(path: string, query: URLSearchParams, credentials
       // Some upstream access denials return HTML instead of Bitget's JSON
       // envelope. Classify it without exposing the response body.
     }
-    logExchangePayload(response, body.code ? body : null);
+    logExchangePayload(response, body.code ? body : null, rawBody);
     if (!response.ok || body.code !== "00000") {
       const responseKind = body.code ?? (rawBody.trimStart().startsWith("<") ? "html" : "non_bitget_json");
       throw new Error(`Bitget read-only API failed (${response.status}/${responseKind})`);

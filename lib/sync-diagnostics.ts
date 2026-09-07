@@ -28,6 +28,8 @@ export function syncDiagnostic(event: string, fields: Record<string, unknown> = 
 }
 
 export function diagnosticErrorKind(error: unknown, aborted = false) {
+  // Match known runtime wording; never emit the original exception text.
+  if (error instanceof Error && /too many subrequests|subrequests? limit exceeded/i.test(error.message)) return "subrequest_limit_exceeded";
   if (aborted || (error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name))) return "timeout_or_abort";
   if (error instanceof SyntaxError) return "invalid_json";
   if (error instanceof TypeError) return "network_or_type_error";
@@ -37,4 +39,13 @@ export function diagnosticErrorKind(error: unknown, aborted = false) {
     if (/^(Binance|Bybit) returned no\b/.test(error.message)) return "missing_product_or_apr";
   }
   return "error";
+}
+
+export function accessFailureReason(status: number, text: string) {
+  const sample = text.slice(0, 16_384);
+  if (/restricted location|country.{0,40}(?:block(?:ed)?|restricted)|(?:block(?:ed)?|restricted).{0,40}country|region.{0,30}not supported/i.test(sample)) return "region_restricted";
+  if (/access too frequent|too many requests|rate limit (?:exceeded|breached)|request (?:frequency|rate).{0,20}exceeded/i.test(sample)) return "rate_limited";
+  if (/(?:ip|address).{0,40}(?:not (?:in|on).{0,10}whitelist|not whitelisted)|unmatched ip|ip.{0,20}(?:mismatch|not allowed)/i.test(sample)) return "ip_not_allowed";
+  if (status === 429) return "rate_limited";
+  return "access_denied_unknown";
 }
