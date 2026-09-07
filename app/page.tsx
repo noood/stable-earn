@@ -579,22 +579,21 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
             {personalDataBlocked
-              ? <p className="text-warning font-semibold">个人数据读取失败，请重试；暂不显示不完整的持仓和统计。</p>
+              ? <p className="text-warning font-semibold">服务器读取失败，数据无法显示，请刷新页面。</p>
               : initialLoading && !updating
               ? <span className="skeleton-block skeleton-notice" aria-hidden="true" />
             : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-danger font-semibold"> 正在更新中，请稍候。</span>}{!loading && !isDemo && !updating && hasSyncFailure && <span className="text-warning font-semibold"> {failureSummary}</span>}</p>}
           </div>
-          {personalDataBlocked && <ActionButton size="small" variant="secondary" disabled={personalDataLoading || loading} onClick={() => void retryPersonalData()}>{personalDataLoading || loading ? "重试中…" : "重试"}</ActionButton>}
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
         </div>
         <section className="metrics-panel card mb-7 grid overflow-hidden sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6" aria-busy={initialLoading}>
-          {personalDataBlocked ? <p className="col-span-full text-muted type-caption px-6 py-5">个人数据尚未加载，暂不显示统计。</p> : initialLoading ? <>{Array.from({ length: 6 }, (_, index) => <MetricSkeleton key={index} highlight={index === 0} />)}</> : <>
-            <Metric highlight label={`总持仓 · ${asset}`} value={formatAmount(totalHolding)} note={`${holdingProductCount} 个持仓产品`} />
-            <Metric label="组合有效 APR" value={`${portfolioApr.toFixed(2)}%`} note="按各阶梯实际占用加权" />
-            <Metric label={`预计每日收益 · ${asset}`} value={formatAmount(annualEarn / 365)} note="含活期、定期" />
-            <Metric label={bestProduct?.rateCoverage === "max_only" ? "最高公开 APR" : "最佳首档 APR"} value={bestProduct ? `${highestProductApr(bestProduct).toFixed(2)}%` : "—"} note={bestProduct ? `${accountName(bestProduct.accountId)}${bestProduct.rateCoverage === "max_only" ? " · 阶梯待确认" : ""}` : "暂无产品"} />
-            <Metric label="高息剩余额度" value={formatAmount(highYieldLeft)} note="APR ≥ 6% 的已知额度" />
-            <Metric label="超出首档" value={formatAmount(tierOneOverflow)} valueTone={tierOneOverflow > 0 ? "danger" : "default"} note={tierOneOverflow > 0 ? "已进入次档" : "未超出首档"} />
+          {initialLoading ? <>{Array.from({ length: 6 }, (_, index) => <MetricSkeleton key={index} highlight={index === 0} />)}</> : <>
+            <Metric highlight label={`总持仓 · ${asset}`} value={personalDataBlocked ? "—" : formatAmount(totalHolding)} note={personalDataBlocked ? "— 个持仓产品" : `${holdingProductCount} 个持仓产品`} />
+            <Metric label="组合有效 APR" value={personalDataBlocked ? "—" : `${portfolioApr.toFixed(2)}%`} note="按各阶梯实际占用加权" />
+            <Metric label={`预计每日收益 · ${asset}`} value={personalDataBlocked ? "—" : formatAmount(annualEarn / 365)} note="含活期、定期" />
+            <Metric label={!personalDataBlocked && bestProduct?.rateCoverage === "max_only" ? "最高公开 APR" : "最佳首档 APR"} value={!personalDataBlocked && bestProduct ? `${highestProductApr(bestProduct).toFixed(2)}%` : "—"} note={personalDataBlocked ? "—" : bestProduct ? `${accountName(bestProduct.accountId)}${bestProduct.rateCoverage === "max_only" ? " · 阶梯待确认" : ""}` : "暂无产品"} />
+            <Metric label="高息剩余额度" value={personalDataBlocked ? "—" : formatAmount(highYieldLeft)} note="APR ≥ 6% 的已知额度" />
+            <Metric label="超出首档" value={personalDataBlocked ? "—" : formatAmount(tierOneOverflow)} valueTone={!personalDataBlocked && tierOneOverflow > 0 ? "danger" : "default"} note={personalDataBlocked ? "—" : tierOneOverflow > 0 ? "已进入次档" : "未超出首档"} />
           </>}
         </section>
 
@@ -613,7 +612,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
               : <div key="view-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant={isDemo ? "secondary" : "primary"} onClick={beginEditing} disabled={!holdingsReady}>编辑持仓</ActionButton></div>}
           </div>
           {holdingSaveError && <div className="table-error-panel error-panel type-caption font-medium">保存失败，请检查网络后重试；表格中的修改仍然保留。</div>}
-          <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={initialLoading}><colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /></colgroup><thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th></tr></thead><tbody>{personalDataBlocked ? <tr><td colSpan={4} className="text-muted">个人数据尚未加载，请重试。</td></tr> : initialLoading ? <ProductTableSkeleton /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
+          <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={initialLoading}><colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /></colgroup><thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th></tr></thead><tbody>{personalDataBlocked ? <tr><td colSpan={4}><EmptyProductState message="服务器读取失败，数据无法显示，请刷新页面。" /></td></tr> : initialLoading ? <ProductTableSkeleton /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
             const baseProduct = activeBaseProducts.find((product) => product.id === listedProduct.id) ?? listedProduct;
             const manualSettings = activeOverrides[listedProduct.id];
             const displayProduct = applyProductOverride(baseProduct, manualSettings);
@@ -729,8 +728,8 @@ function InlineSelect({ ariaLabel, value, options, disabled, className = "", onC
   return <><button ref={buttonRef} type="button" className={`inline-select-trigger ${className}`} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={toggleMenu}><span>{selectedLabel}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></button>{open && createPortal(<div ref={menuRef} className="inline-select-menu" role="listbox" aria-label={ariaLabel} style={{ top: position.top, left: position.left, maxHeight: position.maxHeight }}>{options.map((option) => <button key={option.value} type="button" role="option" aria-selected={option.value === value} onClick={() => { onChange(option.value); setOpen(false); }}><span>{option.label}</span>{option.value === value && <span aria-hidden="true">✓</span>}</button>)}</div>, document.body)}</>;
 }
 
-function EmptyProductState() {
-  return <div className="empty-product-state"><p className="text-muted type-label font-semibold">吸引人的稳定理财尚未出现！</p></div>;
+function EmptyProductState({ message = "吸引人的稳定理财尚未出现！" }: { message?: string }) {
+  return <div className="empty-product-state"><p className="text-muted type-label font-semibold">{message}</p></div>;
 }
 
 function ProductTableSkeleton() {
