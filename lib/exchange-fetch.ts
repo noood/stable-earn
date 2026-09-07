@@ -38,7 +38,7 @@ async function fetchWithDiagnostics(input: string, init: RequestInit | undefined
     const response = await fetch(input, init);
     responses.set(response, { requestId, startedAt });
     syncDiagnostic("exchange_http", { ...target, httpStatus: response.status,
-      ...(!response.ok ? responseDiagnostics(response) : {}), durationMs: Date.now() - startedAt }, !response.ok);
+      ...responseDiagnostics(response), durationMs: Date.now() - startedAt }, !response.ok);
     return response;
   } catch (error) {
     syncDiagnostic("exchange_http", { ...target, outcome: diagnosticErrorKind(error, init?.signal?.aborted), durationMs: Date.now() - startedAt }, true);

@@ -16,6 +16,7 @@ export const credentialAccounts = [
 ] as const;
 
 export const manualDataAccounts = [
+  { id: "bybit-eu", label: "Bybit EU", syncDescription: "USDT 产品利率自动获取；持仓及其他产品信息需要手动维护" },
   { id: "mexc-ph", label: "MEXC · PH 🇵🇭", syncDescription: "产品信息与持仓需要手动维护" },
   { id: "mexc-uk", label: "MEXC · UK 🇬🇧", syncDescription: "产品信息与持仓需要手动维护" },
 ] as const;

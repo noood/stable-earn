@@ -144,3 +144,41 @@ test("Bitget text responses share reason classification; only validated trace he
   assert.equal(f.logs.at(-1).accessReason, "rate_limited");
   assert.doesNotMatch(JSON.stringify(f.logs), /SECRET|set-cookie|x-request-id/);
 });
+
+test("successful responses record validated upstream traces without extra requests or sensitive data", async () => {
+  for (const trigger of ["scheduled", "manual"]) {
+    let calls = 0;
+    const f = fixture(async () => {
+      calls++;
+      return Response.json({ code: "00000", data: "SECRET-BODY" }, { headers: {
+        "cf-ray": "a370cf99ab6188cc-HKG",
+        "x-request-id": "12345678-1234-1234-1234-123456789abc",
+        "x-amz-cf-id": "A".repeat(43) + "=",
+        "set-cookie": "SECRET-COOKIE", "authorization": "SECRET-AUTH",
+        "x-real-ip": "192.0.2.123",
+      } });
+    });
+    await f.withSyncDiagnostics("user", { trigger, attempt: 1 }, async () => {
+      await f.readExchangeJson(await f.exchangeFetch("https://api.bitget.com/api/v2/earn/savings/assets"));
+    });
+    assert.equal(calls, 1);
+    assert.equal(f.logs.length, 2);
+    const http = f.logs[0];
+    assert.equal(http.httpStatus, 200);
+    assert.equal(http.responseType, "json");
+    assert.equal(http["cf-ray"], "a370cf99ab6188cc-HKG");
+    assert.equal(http["x-request-id"], "12345678-1234-1234-1234-123456789abc");
+    assert.equal(http["x-amz-cf-id"], "A".repeat(43) + "=");
+    assert.equal(http.requestId, f.logs[1].requestId);
+    assert.doesNotMatch(JSON.stringify(f.logs), /SECRET|set-cookie|authorization|192\.0\.2\.123|x-real-ip/);
+  }
+});
+
+test("successful responses omit missing or malformed upstream traces", async () => {
+  for (const headers of [{}, { "cf-ray": "SECRET", "x-request-id": "SECRET", "x-amz-cf-id": "A".repeat(101) }]) {
+    const f = fixture(async () => Response.json({}, { headers }));
+    await f.withSyncDiagnostics("user", { trigger: "manual", attempt: 1 }, () => f.exchangeFetch("https://api.bybit.com/v5/earn/product"));
+    for (const name of ["cf-ray", "x-request-id", "x-amz-cf-id"]) assert.equal(Object.hasOwn(f.logs[0], name), false);
+    assert.equal(f.logs[0].httpStatus, 200);
+  }
+});
