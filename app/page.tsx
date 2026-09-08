@@ -16,6 +16,7 @@ import { accounts, seedProducts } from "@/lib/seed-data";
 import { highestProductApr, maximumShortTermDays, meetsOpportunityApr, minimumOpportunityApr, productHasComparableApr, productHasKnownCapacity } from "@/lib/opportunity-policy";
 
 type ApiResult = {
+  dailyRefreshPending?: boolean;
   products?: Product[];
   rates: Array<{
     productId: string;
@@ -107,10 +108,13 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const [hasSyncFailure, setHasSyncFailure] = useState(false);
   const [syncFailures, setSyncFailures] = useState<string[]>([]);
   const [syncing, setSyncing] = useState(false);
+  const [refreshingExchange, setRefreshingExchange] = useState(false);
   const [syncCache, setSyncCache] = useState<ApiResult["cache"]>();
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [manualRefreshAvailableAt, setManualRefreshAvailableAt] = useState<string | null>(null);
   const [clock, setClock] = useState(() => Date.now());
+  const dailyRefreshPendingRef = useRef(!isDemo && !localPreview);
+  const refreshInFlightRef = useRef(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const productOverridesRef = useRef<ProductOverrideMap>({});
   const manualProductsRef = useRef<Product[]>([]);
@@ -121,6 +125,10 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const previewQuery = localPreview ? `?preview=1${previewScenario ? `&syncScenario=${encodeURIComponent(previewScenario)}` : ""}` : "";
   const holdingsEndpoint = `/private/api/holdings${previewQuery}`;
   const productsEndpoint = `/private/api/products${previewQuery}`;
+  function refreshEndpoint(manual = false) {
+    const flag = manual ? "refresh=1" : dailyRefreshPendingRef.current ? "visit=1" : "";
+    return flag ? `${productsEndpoint}${productsEndpoint.includes("?") ? "&" : "?"}${flag}` : productsEndpoint;
+  }
 
   function openPrivateDashboard() {
     window.location.assign("/private/home");
@@ -158,7 +166,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       void refreshRates(holdingsRef.current, { silent: true });
     }, 60_000);
     return () => window.clearInterval(timer);
-    // Polling only reads the cache; avoid rerunning it for every portfolio update.
+    // Polls only read cache once this opening's daily refresh has been handled.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing, holdingsReady, isDemo, productsEndpoint]);
 
@@ -197,7 +205,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     try {
       const loaded = await loadPersonalData();
       if (loaded === null) return;
-      // Read the saved product snapshot, without requesting the exchanges.
+      // Resume this opening's refresh only if it has not yet been attempted.
       await refreshRates(loaded);
       setHoldingsReady(true);
     } finally {
@@ -218,7 +226,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         .then((session) => setUserEmail(session.email))
         .catch(() => setUserEmail(null));
       setLoading(true);
-      const productsResponse = fetch(productsEndpoint, { cache: "no-store" });
+      const productsResponse = fetch(refreshEndpoint(), { cache: "no-store" });
       void productsResponse.catch(() => undefined);
       personalDataLoadingRef.current = true;
       try {
@@ -239,12 +247,17 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   }, []);
 
   async function refreshRates(baseHoldings: HoldingMap = holdings, options?: { manual?: boolean; response?: Promise<Response>; silent?: boolean }) {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    const refreshingDaily = !options?.manual && dailyRefreshPendingRef.current;
     if (!options?.silent) setLoading(true);
+    if (options?.manual || dailyRefreshPendingRef.current) setRefreshingExchange(true);
     try {
-      const endpoint = options?.manual ? `${productsEndpoint}${productsEndpoint.includes("?") ? "&" : "?"}refresh=1` : productsEndpoint;
+      const endpoint = refreshEndpoint(options?.manual);
       const response = await (options?.response ?? fetch(endpoint, { cache: "no-store" }));
       if (!response.ok) {
-        const errorData = await response.json().catch(() => null) as { cache?: ApiResult["cache"] } | null;
+        const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending"> | null;
+        if (!options?.manual) dailyRefreshPendingRef.current = errorData?.dailyRefreshPending === true;
         if (errorData?.cache?.state === "error") {
           setSyncCache(errorData.cache);
           setSyncing(false);
@@ -258,6 +271,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         throw new Error("rate refresh failed");
       }
       const data = await response.json() as ApiResult;
+      if (!options?.manual) dailyRefreshPendingRef.current = data.dailyRefreshPending === true;
       setSyncCache(data.cache);
       const hardFailure = data.cache?.state === "stale" || data.cache?.state === "error";
       const failures = data.failures?.filter(Boolean) ?? [];
@@ -281,7 +295,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         const next = { ...baseHoldings, ...acceptedHoldingUpdates };
         setHoldings(next);
         const freshHoldingIds = freshHoldingIdsForSave(
-          acceptedHoldingUpdates, data.holdingFallbacks ?? {}, data.cache?.state, options?.silent,
+          acceptedHoldingUpdates, data.holdingFallbacks ?? {}, data.cache?.state, options?.silent && !refreshingDaily,
         );
         if (personalDataReadyRef.current && freshHoldingIds.length > 0) {
           void persistPortfolio(next, productOverridesRef.current, manualProductsRef.current, {
@@ -301,12 +315,16 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       setManualRefreshAvailableAt(data.cache?.cooldownUntil ?? null);
       setClock(Date.now());
     } catch {
+      // A network/read failure does not start a repeating exchange retry loop.
+      if (!options?.manual) dailyRefreshPendingRef.current = false;
       setSyncing(false);
       if (!options?.silent) {
         setHasSyncFailure(true);
         setSyncFailures(["页面数据读取失败"]);
       }
     } finally {
+      refreshInFlightRef.current = false;
+      setRefreshingExchange(false);
       if (!options?.silent) setLoading(false);
     }
   }
@@ -537,7 +555,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     : sum, 0);
   const holdingProductCount = assetProducts.filter((product) => holdingIsKnown(product) && (activeHoldings[product.id] ?? 0) > 0).length;
   const manualRefreshCooling = Boolean(manualRefreshAvailableAt && Date.parse(manualRefreshAvailableAt) > clock);
-  const updating = !isDemo && (localPreview ? syncing : scheduledRefreshPending(clock, syncCache));
+  const updating = !isDemo && (localPreview ? syncing : refreshingExchange || scheduledRefreshPending(clock, syncCache));
   const automaticRefreshSummary = updating ? null : formatSyncDateTime(nextScheduledRefreshAt(clock));
   const currentDataSummary = updating
     ? lastUpdated ? `当前数据截至 ${formatSyncDateTime(lastUpdated)}。` : "暂无成功数据。"

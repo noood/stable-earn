@@ -52,10 +52,11 @@ test("banner distinguishes whole failure, interface scope and page network failu
   assert.match(syncFailureSummary(["页面数据读取失败"]), /^页面数据读取失败/);
 });
 
-test("next refresh uses Shanghai 06:00 and 18:00 across day boundaries", () => {
-  assert.equal(nextScheduledRefreshAt(Date.parse("2026-09-05T21:59:00Z")), "2026-09-05T22:00:00.000Z");
-  assert.equal(nextScheduledRefreshAt(Date.parse("2026-09-05T22:00:00Z")), "2026-09-06T10:00:00.000Z");
-  assert.equal(nextScheduledRefreshAt(Date.parse("2026-09-06T10:00:00Z")), "2026-09-06T22:00:00.000Z");
+test("next refresh uses Shanghai 07:00 across day and month boundaries", () => {
+  assert.equal(nextScheduledRefreshAt(Date.parse("2026-09-05T22:59:00Z")), "2026-09-05T23:00:00.000Z");
+  assert.equal(nextScheduledRefreshAt(Date.parse("2026-09-05T23:00:00Z")), "2026-09-06T23:00:00.000Z");
+  assert.equal(nextScheduledRefreshAt(Date.parse("2026-09-06T10:00:00Z")), "2026-09-06T23:00:00.000Z");
+  assert.equal(nextScheduledRefreshAt(Date.parse("2026-09-30T23:00:00Z")), "2026-10-01T23:00:00.000Z");
 });
 
 test("repeated local preview requests keep the failed holding timestamp fixed", () => {
@@ -67,44 +68,44 @@ test("repeated local preview requests keep the failed holding timestamp fixed", 
 });
 
 const previousSnapshot = {
-  state: "fresh", updatedAt: "2026-09-06T06:23:00Z",
-  lastAttemptAt: "2026-09-06T06:23:00Z", lastError: null,
+  state: "fresh", updatedAt: "2026-09-05T06:23:00Z",
+  lastAttemptAt: "2026-09-05T06:23:00Z", lastError: null,
 };
 const at = (time) => Date.parse(`2026-09-06T${time}+08:00`);
 
-test("scheduled banner covers the exact 18:00 boundary before the next poll", () => {
-  assert.equal(scheduledRefreshPending(at("17:59:59"), previousSnapshot), false);
-  assert.equal(scheduledRefreshPending(at("18:00:00"), previousSnapshot), true);
-  assert.equal(scheduledRefreshPending(at("18:00:59"), previousSnapshot), true);
-  assert.equal(scheduledRefreshPending(at("18:06:00"), previousSnapshot), true);
-  assert.equal(scheduledRefreshPending(at("18:15:00"), previousSnapshot), false);
+test("scheduled banner covers the exact 07:00 boundary before the next poll", () => {
+  assert.equal(scheduledRefreshPending(at("06:59:59"), previousSnapshot), false);
+  assert.equal(scheduledRefreshPending(at("07:00:00"), previousSnapshot), true);
+  assert.equal(scheduledRefreshPending(at("07:00:59"), previousSnapshot), true);
+  assert.equal(scheduledRefreshPending(at("07:03:30"), previousSnapshot), true);
+  assert.equal(scheduledRefreshPending(at("07:15:00"), previousSnapshot), false);
 });
 
-test("scheduled banner handles 06:00 and a first load with no cache", () => {
-  assert.equal(scheduledRefreshPending(at("05:59:59"), null), false);
-  assert.equal(scheduledRefreshPending(at("06:00:00"), null), true);
-  assert.equal(scheduledRefreshPending(at("06:14:59"), null), true);
-  assert.equal(scheduledRefreshPending(at("06:15:00"), null), false);
+test("scheduled banner handles 07:00 and a first load with no cache", () => {
+  assert.equal(scheduledRefreshPending(at("06:59:59"), null), false);
+  assert.equal(scheduledRefreshPending(at("07:00:00"), null), true);
+  assert.equal(scheduledRefreshPending(at("07:14:59"), null), true);
+  assert.equal(scheduledRefreshPending(at("07:15:00"), null), false);
 });
 
 test("old errors do not hide the new slot; committed full or partial results end it", () => {
-  assert.equal(scheduledRefreshPending(at("18:00:00"), { ...previousSnapshot, lastError: "old failure" }), true);
+  assert.equal(scheduledRefreshPending(at("07:00:00"), { ...previousSnapshot, lastError: "old failure" }), true);
   for (const state of ["updated", "fresh", "cooldown"]) {
-    assert.equal(scheduledRefreshPending(at("18:01:00"), {
-      ...previousSnapshot, state, updatedAt: "2026-09-06T10:00:30Z",
+    assert.equal(scheduledRefreshPending(at("07:01:00"), {
+      ...previousSnapshot, state, updatedAt: "2026-09-05T23:00:30Z",
     }), false);
   }
-  assert.equal(scheduledRefreshPending(at("18:07:00"), {
-    ...previousSnapshot, state: "error", lastAttemptAt: "2026-09-06T10:06:00Z", lastError: "final failure",
+  assert.equal(scheduledRefreshPending(at("07:04:00"), {
+    ...previousSnapshot, state: "error", lastAttemptAt: "2026-09-05T23:03:30Z", lastError: "final failure",
   }), false);
 });
 
 test("observed attempts stay updating through retries but cannot remain updating forever", () => {
-  const running = { ...previousSnapshot, state: "syncing", lastAttemptAt: "2026-09-06T10:06:00Z" };
-  assert.equal(scheduledRefreshPending(at("18:06:30"), running), true);
-  assert.equal(scheduledRefreshPending(at("18:16:00"), running), true);
-  assert.equal(scheduledRefreshPending(at("18:21:00"), running), false);
-  assert.equal(scheduledRefreshPending(at("18:00:00"), {
+  const running = { ...previousSnapshot, state: "syncing", lastAttemptAt: "2026-09-05T23:03:00Z" };
+  assert.equal(scheduledRefreshPending(at("07:03:30"), running), true);
+  assert.equal(scheduledRefreshPending(at("07:16:00"), running), true);
+  assert.equal(scheduledRefreshPending(at("07:18:00"), running), false);
+  assert.equal(scheduledRefreshPending(at("07:00:00"), {
     ...running, lastAttemptAt: "2026-09-05T22:00:00Z",
   }), true);
 });

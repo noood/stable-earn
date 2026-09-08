@@ -22,9 +22,8 @@ function failureTarget(value: string) {
 export function nextScheduledRefreshAt(now: number) {
   const local = new Date(now + 8 * 60 * 60 * 1000);
   const hour = local.getUTCHours();
-  const targetHour = hour < 6 ? 6 : hour < 18 ? 18 : 6;
-  if (hour >= 18) local.setUTCDate(local.getUTCDate() + 1);
-  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), targetHour - 8)).toISOString();
+  if (hour >= 7) local.setUTCDate(local.getUTCDate() + 1);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), 7 - 8)).toISOString();
 }
 
 type RefreshStatus = {
@@ -36,7 +35,7 @@ type RefreshStatus = {
 
 /** Bridge the gap between a scheduled slot and the next cache poll. */
 export function scheduledRefreshPending(now: number, cache?: RefreshStatus | null) {
-  const slot = Date.parse(nextScheduledRefreshAt(now)) - 12 * 60 * 60 * 1000;
+  const slot = Date.parse(nextScheduledRefreshAt(now)) - 24 * 60 * 60 * 1000;
   const attemptedAt = Date.parse(cache?.lastAttemptAt ?? "");
   if (cache?.state === "syncing" && attemptedAt >= slot) {
     return attemptedAt <= now && now - attemptedAt < SYNC_ATTEMPT_WINDOW_MS;

@@ -95,7 +95,7 @@ test("text body read failures retain the request context without exposing body e
 
 test("unknown destinations and non-numeric API codes are redacted", async () => {
   const f = fixture(async () => Response.json({ code: "SECRET-CODE" }));
-  await f.withSyncDiagnostics("user", { trigger: "initial", attempt: 1 }, async () => {
+  await f.withSyncDiagnostics("user", { trigger: "daily", attempt: 1 }, async () => {
     await f.readExchangeJson(await f.exchangeFetch("https://secret-host.example/secret-path?coin=SECRET-ASSET"));
   });
   assert.equal(f.logs[0].host, "custom_host");

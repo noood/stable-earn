@@ -1,13 +1,14 @@
 import { getDatabase } from "@/lib/db";
 import { listPrivateSyncUserIds, refreshPrivateProductsCache } from "@/app/private/api/products/route";
 import { loadSyncCache } from "@/lib/sync-cache";
+import { acquireRefresh, finishScheduledRefresh, releaseRefresh, scheduledRefreshDone } from "@/lib/refresh-control";
 import { diagnosticErrorKind, syncDiagnostic, withSyncDiagnostics } from "@/lib/sync-diagnostics";
 
 export type ScheduledSyncJob = { userId: string; scheduledAt: number };
-const slotDurationMs = 12 * 60 * 60 * 1000;
+const slotDurationMs = 24 * 60 * 60 * 1000;
 
 export async function enqueueScheduledRefresh(queue: Queue<ScheduledSyncJob>, scheduledTime: number) {
-  // Normalize delivery jitter, retaining the scheduled hour (UTC 22/10).
+  // Normalize delivery jitter, retaining the scheduled hour (UTC 23).
   const scheduledAt = Math.floor(scheduledTime / 3_600_000) * 3_600_000;
   const db = await getDatabase();
   const users = await listPrivateSyncUserIds(db);
@@ -28,7 +29,7 @@ export async function consumeScheduledRefresh(batch: MessageBatch<ScheduledSyncJ
     return;
   }
   const attempt = message.attempts;
-  const finalAttempt = attempt >= 3;
+  const finalAttempt = attempt >= 2;
   await withSyncDiagnostics(job.userId, {
     trigger: "scheduled", attempt, runId: `scheduled:${job.scheduledAt}`,
   }, async () => {
@@ -39,24 +40,42 @@ export async function consumeScheduledRefresh(batch: MessageBatch<ScheduledSyncJ
         return;
       }
       const db = await getDatabase();
-      const cached = await loadSyncCache(db, job.userId, "private-products");
-      // Queues deliver at least once. Do not repeat a committed run or overwrite
-      // a newer manual result; a persisted final error also completes this slot.
-      if (Date.parse(cached?.updatedAt ?? "") >= job.scheduledAt
-        || (cached?.lastError && cached.lastAttemptAt !== cached.lastManualAt
-          && Date.parse(cached.lastAttemptAt ?? "") >= job.scheduledAt)) {
-        syncDiagnostic("sync_skipped", { reason: "slot_already_resolved" });
-        message.ack();
+      const token = await acquireRefresh(db, job.userId);
+      if (!token) {
+        // A browser refresh already owns the account. Never overlap its writes.
+        if (!finalAttempt) message.retry({ delaySeconds: 180 });
+        else message.ack();
+        syncDiagnostic("sync_skipped", { reason: "refresh_in_progress" });
         return;
       }
-      await refreshPrivateProductsCache(db, job.userId, {
-        trigger: "scheduled", attempt, runId: `scheduled:${job.scheduledAt}`,
-        acceptPartial: finalAttempt, persistFailure: finalAttempt, recordAttempt: true,
-      });
-      message.ack();
+      try {
+        const cached = await loadSyncCache(db, job.userId, "private-products");
+        // A browser failure is not a completed scheduled job. Track queue
+        // completion explicitly rather than inferring it from last_error.
+        if (Date.parse(cached?.updatedAt ?? "") >= job.scheduledAt
+          || await scheduledRefreshDone(db, job.userId, job.scheduledAt)) {
+          syncDiagnostic("sync_skipped", { reason: "slot_already_resolved" });
+          message.ack();
+          return;
+        }
+        try {
+          await refreshPrivateProductsCache(db, job.userId, {
+            trigger: "scheduled", attempt, runId: `scheduled:${job.scheduledAt}`,
+            leaseToken: token,
+            acceptPartial: finalAttempt, persistFailure: finalAttempt, recordAttempt: true,
+          });
+        } catch (error) {
+          if (finalAttempt) await finishScheduledRefresh(db, job.userId, token, job.scheduledAt);
+          throw error;
+        }
+        await finishScheduledRefresh(db, job.userId, token, job.scheduledAt);
+        message.ack();
+      } finally {
+        await releaseRefresh(db, job.userId, token);
+      }
     } catch (error) {
       if (!finalAttempt) {
-        const delaySeconds = attempt === 1 ? 60 : 300;
+        const delaySeconds = 180;
         syncDiagnostic("sync_retry_queued", { delaySeconds, errorKind: diagnosticErrorKind(error) }, true);
         // A retry is a NEW queue invocation, not a sleep in this invocation.
         message.retry({ delaySeconds });

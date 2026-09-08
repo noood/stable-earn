@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-type Context = { runId: string; userRef: string; trigger: "scheduled" | "manual" | "initial"; attempt: number; platform?: string };
+type Context = { runId: string; userRef: string; trigger: "scheduled" | "manual" | "daily"; attempt: number; platform?: string };
 const context = new AsyncLocalStorage<Context>();
 
 export async function withSyncDiagnostics<T>(
@@ -34,6 +34,7 @@ export function diagnosticErrorKind(error: unknown, aborted = false) {
   if (error instanceof SyntaxError) return "invalid_json";
   if (error instanceof TypeError) return "network_or_type_error";
   if (error instanceof Error) {
+    if (error.message === "refresh lease expired") return "refresh_superseded";
     if (error.message === "公开与账户接口均未返回可用数据") return "no_usable_data";
     if (error.message === "已配置平台未完整同步") return "incomplete_sync";
     if (/^(Binance|Bybit) returned no\b/.test(error.message)) return "missing_product_or_apr";

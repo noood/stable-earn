@@ -16,6 +16,8 @@ import { compareProductIdentity, type ProductIdentityChange } from "@/lib/produc
 import { prepareProductCatalogSync, resolveCatalogProductIds, type ProductCatalogSync } from "@/lib/product-catalog";
 import type { HoldingSyncState, Product } from "@/lib/domain";
 import { diagnosticErrorKind, syncDiagnostic, withSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
+import { acquireRefresh, claimDailyRefresh, refreshIsLocked, releaseRefresh, renewRefresh } from "@/lib/refresh-control";
+import { scheduledRefreshPending } from "@/lib/sync-notice";
 import {
   formatCacheTime,
   loadSyncCache,
@@ -60,7 +62,8 @@ type PrivatePayloadBuild = {
   retryable: boolean;
 };
 type RefreshOptions = {
-  trigger?: "scheduled" | "manual" | "initial";
+  leaseToken?: string;
+  trigger?: "scheduled" | "manual" | "daily";
   attempt?: number;
   runId?: string;
   manual?: boolean;
@@ -81,67 +84,64 @@ export async function GET(request: Request) {
   }
 
   const db = await getDatabase();
-  const manual = new URL(request.url).searchParams.get("refresh") === "1";
-  const now = Date.now();
-  const [cached, manualCooldownMinutes] = await Promise.all([
-    loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey),
-    loadManualRefreshCooldown(db, identity.userId),
-  ]);
-  const manualCooldownDuration = manualRefreshCooldownMs(manualCooldownMinutes);
+  const params = new URL(request.url).searchParams;
+  const manual = params.get("refresh") === "1";
+  const daily = !manual && params.get("visit") === "1";
+  const manualCooldownDuration = manualRefreshCooldownMs(await loadManualRefreshCooldown(db, identity.userId));
+  let pending = false;
+  async function reply(response: Response) {
+    const body = await response.json() as Record<string, unknown>;
+    return NextResponse.json({ ...body, dailyRefreshPending: daily && pending }, {
+      status: response.status, headers: privateResponseHeaders,
+    });
+  }
+  function snapshot(record: SyncCacheRecord<PrivateProductsPayload> | null, busy = false) {
+    const now = Date.now();
+    const state = busy || syncAttemptInProgress(record, now) ? "syncing" : record?.lastError ? "error" : "fresh";
+    if (record?.payload) return cachedResponse(record, state,
+      state === "syncing" ? "正在更新数据中，请稍候。" : "已读取保存的数据。", now, manualCooldownDuration);
+    if (state === "error" && record) return initialErrorResponse(record, now, manualCooldownDuration);
+    return initialSyncingResponse(record, now, manualCooldownDuration, state);
+  }
 
-  if (!manual) {
-    if (syncAttemptInProgress(cached, now)) {
-      return cached?.payload
-        ? cachedResponse(cached, "syncing", "正在更新数据中，请稍候。", now, manualCooldownDuration)
-        : initialSyncingResponse(cached, now, manualCooldownDuration);
+  // Ordinary polls never contact exchanges, including accounts without a cache.
+  if (!manual && !daily) {
+    const busy = await refreshIsLocked(db, identity.userId);
+    return reply(snapshot(await loadSyncCache(db, identity.userId, privateCacheKey), busy));
+  }
+  const token = await acquireRefresh(db, identity.userId);
+  if (!token) {
+    pending = true;
+    return reply(snapshot(await loadSyncCache(db, identity.userId, privateCacheKey), true));
+  }
+  try {
+    const cached = await loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey);
+    const now = Date.now();
+    // Reserve the whole scheduled retry window, not just an individual request.
+    if (scheduledRefreshPending(now, syncCacheMetadata(cached, syncAttemptInProgress(cached, now) ? "syncing" : "fresh", now))) {
+      pending = true;
+      return reply(snapshot(cached, true));
     }
-    if (cached?.payload) {
-      const state = cached.lastError ? "error" : "fresh";
-      const statusText = "按每日 06:00、18:00 的计划缓存读取，未请求交易所。";
-      return cachedResponse(cached, state, statusText, now, manualCooldownDuration);
-    }
-    if (cached?.lastError) {
-      return initialErrorResponse(cached, now, manualCooldownDuration);
+    if (daily && !await claimDailyRefresh(db, identity.userId, token)) return reply(snapshot(cached));
+    const cooldownUntil = manualCooldownUntil(cached, now, manualCooldownDuration);
+    if (manual && cooldownUntil) {
+      if (cached?.payload) return reply(cachedResponse(cached, "cooldown", `手动刷新冷却中，可在 ${formatCacheTime(cooldownUntil)} 后重试。`, now, manualCooldownDuration));
+      return reply(NextResponse.json({ error: `手动刷新冷却中，可在 ${formatCacheTime(cooldownUntil)} 后重试。` }, { status: 429 }));
     }
     try {
-      const saved = await refreshPrivateProductsCache(db, identity.userId);
-      return cachedResponse(saved, "updated", "已完成首次产品同步。", now, manualCooldownDuration);
+      const saved = await refreshPrivateProductsCache(db, identity.userId, { manual, trigger: daily ? "daily" : "manual", leaseToken: token });
+      return reply(cachedResponse(saved, "updated", "已完成刷新。", Date.now(), manualCooldownDuration));
     } catch {
-      const failedCache = await loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey);
-      if (syncAttemptInProgress(failedCache, Date.now())) {
-        return initialSyncingResponse(failedCache, Date.now(), manualCooldownDuration);
-      }
-      return NextResponse.json({ error: "交易所数据暂时无法获取，且当前账户尚无成功缓存。", cache: syncCacheMetadata(failedCache, "error", now, manualCooldownDuration) }, {
-        status: 502,
-        headers: privateResponseHeaders,
-      });
+      return reply(snapshot(await loadSyncCache(db, identity.userId, privateCacheKey)));
     }
-  }
-
-  const cooldownUntil = manualCooldownUntil(cached, now, manualCooldownDuration);
-  if (manual && cooldownUntil) {
-    if (cached?.payload) return cachedResponse(cached, "cooldown", `手动刷新冷却中，可在 ${formatCacheTime(cooldownUntil)} 后重试。`, now, manualCooldownDuration);
-    return NextResponse.json({ error: `手动刷新冷却中，可在 ${formatCacheTime(cooldownUntil)} 后重试。` }, { status: 429, headers: privateResponseHeaders });
-  }
-
-  try {
-    const saved = await refreshPrivateProductsCache(db, identity.userId, { manual: true });
-    return cachedResponse(saved, "updated", "已完成手动刷新。", now, manualCooldownDuration);
-  } catch {
-    const failedCache = await loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey);
-    if (failedCache?.payload) {
-      return cachedResponse(failedCache, "error", `更新暂时失败，继续显示 ${formatCacheTime(failedCache.updatedAt)} 的最近一次成功数据。`, now, manualCooldownDuration);
-    }
-    return NextResponse.json({ error: "交易所数据暂时无法获取，且当前账户尚无成功缓存。" }, {
-      status: 502,
-      headers: privateResponseHeaders,
-    });
+  } finally {
+    await releaseRefresh(db, identity.userId, token);
   }
 }
 
 export async function refreshPrivateProductsCache(db: D1Database, userId: string, options: RefreshOptions = {}) {
   return withSyncDiagnostics(userId, {
-    trigger: options.trigger ?? (options.manual ? "manual" : "initial"), attempt: options.attempt ?? 1, runId: options.runId,
+    trigger: options.trigger ?? "manual", attempt: options.attempt ?? 1, runId: options.runId,
   }, async () => {
     const startedAt = Date.now();
     const progress = { committed: false };
@@ -168,6 +168,7 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
   if (recordAttempt) await recordSyncAttempt(db, userId, privateCacheKey, manual);
   try {
     const { payload, catalog, retryable } = await buildPrivatePayload(db, userId, cached);
+    if (options.leaseToken && !await renewRefresh(db, userId, options.leaseToken)) throw new Error("refresh lease expired");
     if (retryable && !acceptPartial) throw new Error("已配置平台未完整同步");
     await db.batch([
       ...catalog.statements,
@@ -176,7 +177,9 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
     progress.committed = true;
     return (await loadSyncCache<PrivateProductsPayload>(db, userId, privateCacheKey))!;
   } catch (error) {
-    if (persistFailure) await recordSyncFailure(db, userId, privateCacheKey, safeCacheError(error));
+    if (persistFailure && (!options.leaseToken || await renewRefresh(db, userId, options.leaseToken))) {
+      await recordSyncFailure(db, userId, privateCacheKey, safeCacheError(error));
+    }
     throw error;
   }
 }
@@ -466,6 +469,7 @@ function initialSyncingResponse(
   record: SyncCacheRecord<PrivateProductsPayload> | null,
   now: number,
   manualCooldownDuration: number,
+  state: SyncCacheState = "syncing",
 ) {
   return NextResponse.json({
     products: [],
@@ -476,10 +480,10 @@ function initialSyncingResponse(
     holdingFallbacks: {},
     holdingSyncStates: {},
     partial: false,
-    note: "首次数据同步进行中，等待自动重试。",
+    note: state === "syncing" ? "正在更新数据中，请稍候。" : "尚无成功数据。",
     failures: [],
     fallbackUpdatedAt: null,
-    cache: syncCacheMetadata(record, "syncing", now, manualCooldownDuration),
+    cache: syncCacheMetadata(record, state, now, manualCooldownDuration),
   }, { headers: privateResponseHeaders });
 }
 

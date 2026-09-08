@@ -23,6 +23,7 @@ function harness(fetch) {
     manualProductsRef: { current: [{ id: "manual" }] }, hiddenProductIdsRef: { current: ["hidden"] },
     personalDataReadyRef: { current: false }, personalDataLoadingRef: { current: false },
     refreshRates: async (...args) => { reads.push(args); },
+    refreshEndpoint: () => "/products?visit=1",
   };
   for (const [, name] of code.matchAll(/\b(set[A-Z]\w*)\(/g)) deps[name] = (value) => { state[name] = value; };
   return {

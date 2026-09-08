@@ -7,11 +7,11 @@
   "main": "worker.ts",
   "workers_dev": true,
   "triggers": {
-    "crons": ["0 22,10 * * *"]
+    "crons": ["0 23 * * *"]
   },
   "queues": {
     "producers": [{ "binding": "SYNC_QUEUE", "queue": "stable-earn-sync" }],
-    "consumers": [{ "queue": "stable-earn-sync", "max_batch_size": 1, "max_batch_timeout": 0, "max_retries": 2, "retry_delay": 60, "max_concurrency": 1 }]
+    "consumers": [{ "queue": "stable-earn-sync", "max_batch_size": 1, "max_batch_timeout": 0, "max_retries": 1, "retry_delay": 180, "max_concurrency": 1 }]
   },
   "vars": {
     "TEAM_DOMAIN": "https://your-team.cloudflareaccess.com",

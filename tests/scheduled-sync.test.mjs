@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
+import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
-const slot = Date.parse("2026-09-06T22:00:00Z");
+const slot = Date.parse("2026-09-06T23:00:00Z");
 function fixture(users = ["first", "second"]) {
   let now = slot + 30000;
   const records = new Map();
   const logs = [], calls = [], batches = [];
   class Clock extends Date { static now() { return now; } }
-  const db = {};
+  const db = sqliteDb();
   const load = moduleLoader({
     "@/lib/db": { getDatabase: async () => db },
     "@/lib/sync-cache": { loadSyncCache: async (_db, user) => records.get(user) ?? null },
@@ -27,7 +28,7 @@ function fixture(users = ["first", "second"]) {
     },
   }, { Date: Clock, console: { info: (r) => logs.push(r), warn: (r) => logs.push(r) } });
   return {
-    ...load("@/lib/scheduled-sync"), records, logs, calls, batches,
+    ...load("@/lib/scheduled-sync"), records, logs, calls, batches, db,
     queue: { sendBatch: async (batch) => batches.push(batch) },
     step: (ms) => { now += ms; },
   };
@@ -46,22 +47,22 @@ test("cron only enqueues per-user jobs; producer batches at the documented maxim
   assert.equal(f.calls.length, 0);
 });
 
-test("three attempts run as separate queue deliveries with 60/300 second delays", async () => {
+test("two attempts run as separate queue deliveries with a 180 second delay", async () => {
   const f = fixture();
-  for (const attempt of [1, 2, 3]) {
+  for (const attempt of [1, 2]) {
     const msg = message("first", attempt);
     await f.consumeScheduledRefresh(batch(msg));
-    assert.equal(msg.delay, attempt === 1 ? 60 : attempt === 2 ? 300 : null);
-    assert.equal(msg.acked, attempt === 3);
-    f.step(attempt === 1 ? 60000 : 300000);
+    assert.equal(msg.delay, attempt === 1 ? 180 : null);
+    assert.equal(msg.acked, attempt === 2);
+    f.step(180000);
   }
-  assert.deepEqual(f.calls.map((r) => r.acceptPartial), [false, false, true]);
-  assert.deepEqual(f.calls.map((r) => r.persistFailure), [false, false, true]);
+  assert.deepEqual(f.calls.map((r) => r.acceptPartial), [false, true]);
+  assert.deepEqual(f.calls.map((r) => r.persistFailure), [false, true]);
   assert.equal(new Set(f.calls.map((r) => r.runId)).size, 1);
   const duplicate = message("first", 3);
   await f.consumeScheduledRefresh(batch(duplicate));
   assert.equal(duplicate.acked, true);
-  assert.equal(f.calls.length, 3);
+  assert.equal(f.calls.length, 2);
 });
 
 test("successful users stop immediately, partial users commit only at final attempt", async () => {
@@ -72,10 +73,10 @@ test("successful users stop immediately, partial users commit only at final atte
   const duplicate = message("success", 2);
   await f.consumeScheduledRefresh(batch(duplicate));
   assert.equal(f.calls.length, 1);
-  for (const attempt of [1, 2, 3]) {
+  for (const attempt of [1, 2]) {
     const msg = message("partial", attempt);
     await f.consumeScheduledRefresh(batch(msg));
-    assert.equal(msg.acked, attempt === 3);
+    assert.equal(msg.acked, attempt === 2);
     f.step(60000);
   }
   assert.ok(f.records.get("partial").updatedAt);
@@ -92,11 +93,28 @@ test("new committed manual data stops pending retry, but a failed manual attempt
   f.records.set("second", { lastAttemptAt: attemptedAt, lastManualAt: attemptedAt, lastError: "failed" });
   await f.consumeScheduledRefresh(batch(message("second", 2)));
   assert.equal(f.calls.length, 1);
+  f.records.set("daily-failed", { lastAttemptAt: attemptedAt, lastManualAt: null, lastError: "failed" });
+  await f.consumeScheduledRefresh(batch(message("daily-failed", 2)));
+  assert.equal(f.calls.length, 2);
+});
+
+test("queue cannot overwrite a browser refresh holding the account lease", async () => {
+  const f = fixture();
+  f.db.sqlite.prepare("INSERT INTO refresh_control (user_id, lease_token, lease_until) VALUES (?, ?, ?)")
+    .run("first", "browser-token", slot + 900000);
+  const first = message("first", 1);
+  await f.consumeScheduledRefresh(batch(first));
+  assert.equal(first.delay, 180);
+  const last = message("first", 2);
+  await f.consumeScheduledRefresh(batch(last));
+  assert.equal(last.acked, true);
+  assert.equal(last.delay, null);
+  assert.equal(f.calls.length, 0);
 });
 
 test("stale or malformed jobs cannot refresh accounts; multi-user consumer batches are rejected", async () => {
   const f = fixture();
-  for (const msg of [message("first", 1, slot - 43200000), message("first", 1, slot + 43200000), message(null)]) {
+  for (const msg of [message("first", 1, slot - 86400000), message("first", 1, slot + 86400000), message(null)]) {
     await f.consumeScheduledRefresh(batch(msg));
     assert.equal(msg.acked, true);
   }
@@ -104,12 +122,13 @@ test("stale or malformed jobs cannot refresh accounts; multi-user consumer batch
   assert.equal(f.calls.length, 0);
 });
 
-test("deployment guarantees one user per invocation and exactly two retries", () => {
+test("deployment guarantees one user per invocation and exactly one retry", () => {
   const config = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
   const consumer = config.queues.consumers[0];
   assert.equal(consumer.max_batch_size, 1);
-  assert.equal(consumer.max_retries, 2);
+  assert.equal(consumer.max_retries, 1);
+  assert.equal(consumer.retry_delay, 180);
   assert.equal(consumer.max_concurrency, 1);
   assert.equal(config.queues.producers[0].queue, consumer.queue);
-  assert.deepEqual(config.triggers.crons, ["0 22,10 * * *"]);
+  assert.deepEqual(config.triggers.crons, ["0 23 * * *"]);
 });
