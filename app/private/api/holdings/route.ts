@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   if (!userId) return NextResponse.json({ error: "请先登录后再读取持仓。" }, { status: 401, headers: privateResponseHeaders });
   if (isLocalPreviewRequest(request)) {
     const scenario = new URL(request.url).searchParams.get("syncScenario");
-    if (scenario === "personal-error") {
+    if (scenario === "personal-error" || scenario === "both-read-error") {
       return NextResponse.json({ error: "本地模拟：个人数据读取失败" }, { status: 503, headers: privateResponseHeaders });
     }
     return NextResponse.json(scenario

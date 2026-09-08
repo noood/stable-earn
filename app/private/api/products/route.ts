@@ -79,6 +79,9 @@ export async function GET(request: Request) {
   if (!identity) return NextResponse.json({ error: "请先登录。" }, { status: 401, headers: privateResponseHeaders });
   if (isLocalPreviewRequest(request)) {
     const scenario = new URL(request.url).searchParams.get("syncScenario");
+    if (scenario === "product-read-error" || scenario === "both-read-error") {
+      return NextResponse.json({ error: "本地模拟：交易所缓存读取失败" }, { status: 503, headers: privateResponseHeaders });
+    }
     const preview = localSyncScenarioPreview(scenario) ?? localPrivateProductsPreview();
     return NextResponse.json(preview, { status: scenario === "initial-error" ? 502 : 200, headers: privateResponseHeaders });
   }

@@ -210,7 +210,6 @@ input:focus-visible,
 .skeleton-label { width: 42%; height: var(--leading-caption); }
 .skeleton-value { width: 56%; height: var(--leading-metric); margin-top: var(--space-control); }
 .skeleton-note { width: 68%; height: var(--leading-micro); margin-top: var(--space-control); }
-.skeleton-notice { width: min(24rem, 72%); height: var(--leading-caption); }
 .skeleton-table-line { max-width: 100%; height: var(--leading-body); }
 @keyframes skeleton-shimmer { to { background-position-x: -200%; } }
 @media (prefers-reduced-motion: reduce) { .skeleton-block { animation: none; } }

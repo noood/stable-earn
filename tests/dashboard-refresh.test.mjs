@@ -43,6 +43,7 @@ test("page resumes a deferred daily opening, then returns to cache-only polling"
 for (const scenario of [
   { name: "partial result", state: "updated", fallbacks: { bitget: "2026-09-05T00:56:15.064Z" }, saved: ["binance"] },
   { name: "ordinary cache read", state: "fresh", fallbacks: {}, saved: [] },
+  { name: "opening cache read preserves daily opportunity without writing holdings", state: "fresh", fallbacks: {}, daily: true, cacheOnly: true, saved: [] },
   { name: "total failure carrying old synced flags", state: "error", fallbacks: {}, saved: [] },
   { name: "silent cache polling", state: "updated", fallbacks: {}, silent: true, saved: [] },
   { name: "daily refresh resumed after background wait", state: "updated", fallbacks: {}, silent: true, daily: true, saved: ["bitget", "binance"] },
@@ -61,6 +62,7 @@ for (const scenario of [
       freshHoldingIdsForSave, isDemo: false, productsEndpoint: "/products", holdingsEndpoint: "/holdings",
       hiddenProductIdsRef: { current: [] }, productOverridesRef: { current: {} }, manualProductsRef: { current: [] },
       personalDataReadyRef: { current: scenario.personalReady !== false },
+      holdingsRef: { current: {} },
       refreshInFlightRef: { current: false }, dailyRefreshPendingRef: { current: Boolean(scenario.daily) },
       manualProductPayload: (product) => product,
       fetch: async (_url, options) => {
@@ -71,7 +73,9 @@ for (const scenario of [
     for (const [, name] of code.matchAll(/\b(set[A-Z]\w*)\(/g)) deps[name] = () => {};
     deps.setHoldings = (value) => { displayed = value; };
     const refresh = new Function(...Object.keys(deps), `${code}; return refreshRates;`)(...Object.values(deps));
-    await refresh({}, { silent: scenario.silent });
+    const read = await refresh({}, { silent: scenario.silent, cacheOnly: scenario.cacheOnly });
+    assert.equal(read, true);
+    if (scenario.cacheOnly) assert.equal(deps.dailyRefreshPendingRef.current, true);
     assert.deepEqual(displayed, data.holdingUpdates);
     assert.deepEqual(writes.flatMap((body) => Object.keys(body.holdings)), scenario.saved);
     assert.deepEqual(writes.flatMap((body) => body.changedHoldingProductIds), scenario.saved);

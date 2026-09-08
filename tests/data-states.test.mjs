@@ -49,7 +49,7 @@ test("banner distinguishes whole failure, interface scope and page network failu
   assert.match(syncFailureSummary(["Bybit.com 定期产品", "Bybit.com 定期持仓"]), /定期产品、Bybit.com 定期持仓/);
   assert.match(syncFailureSummary(["Bitget（USDGO 产品未返回）"]), /Bitget USDGO/);
   assert.match(syncFailureSummary(["产品和持仓数据更新失败"]), /^本次产品和持仓数据更新失败/);
-  assert.match(syncFailureSummary(["页面数据读取失败"]), /^页面数据读取失败/);
+  assert.equal(syncFailureSummary(["页面数据读取失败"]), "服务器读取失败，数据无法显示，请刷新页面。");
 });
 
 test("next refresh uses Shanghai 07:00 across day and month boundaries", () => {

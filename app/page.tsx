@@ -10,7 +10,7 @@ import { effectiveApr, formatAmount, remainingHighYield, type Account, type Asse
 import { applyProductOverride, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { holdingSyncNote, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
 import { freshHoldingIdsForSave } from "@/lib/holding-cache";
-import { nextScheduledRefreshAt, scheduledRefreshPending, syncFailureSummary } from "@/lib/sync-notice";
+import { dashboardReadState, nextScheduledRefreshAt, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
 import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
 import { accounts, seedProducts } from "@/lib/seed-data";
 import { highestProductApr, maximumShortTermDays, meetsOpportunityApr, minimumOpportunityApr, productHasComparableApr, productHasKnownCapacity } from "@/lib/opportunity-policy";
@@ -110,6 +110,8 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const [syncing, setSyncing] = useState(false);
   const [refreshingExchange, setRefreshingExchange] = useState(false);
   const [syncCache, setSyncCache] = useState<ApiResult["cache"]>();
+  const [productSnapshotReady, setProductSnapshotReady] = useState(false);
+  const [openingLoading, setOpeningLoading] = useState(!isDemo);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [manualRefreshAvailableAt, setManualRefreshAvailableAt] = useState<string | null>(null);
   const [clock, setClock] = useState(() => Date.now());
@@ -161,14 +163,15 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   useEffect(() => {
     // Keep polling even when the first request failed and there is no cache
     // timestamp yet; a later scheduled refresh should appear without reload.
-    if (isDemo || editing || !holdingsReady) return;
+    if (isDemo || editing || openingLoading || (!holdingsReady && !dailyRefreshPendingRef.current)) return;
     const timer = window.setInterval(() => {
+      if (!personalDataReadyRef.current && !dailyRefreshPendingRef.current) return;
       void refreshRates(holdingsRef.current, { silent: true });
     }, 60_000);
     return () => window.clearInterval(timer);
     // Polls only read cache once this opening's daily refresh has been handled.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, holdingsReady, isDemo, productsEndpoint]);
+  }, [editing, holdingsReady, isDemo, openingLoading, productsEndpoint]);
 
   async function loadPersonalData(): Promise<HoldingMap | null> {
     setPersonalDataLoading(true);
@@ -192,6 +195,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       return next;
     } catch {
       // A failed read is not an empty portfolio. Keep any existing data.
+      personalDataReadyRef.current = false;
       setPersonalDataError(true);
       return null;
     } finally {
@@ -202,14 +206,16 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   async function retryPersonalData() {
     if (personalDataLoadingRef.current) return;
     personalDataLoadingRef.current = true;
+    setOpeningLoading(true);
     try {
       const loaded = await loadPersonalData();
       if (loaded === null) return;
-      // Resume this opening's refresh only if it has not yet been attempted.
-      await refreshRates(loaded);
       setHoldingsReady(true);
+      await refreshRates(loaded, { cacheOnly: true });
+      if (dailyRefreshPendingRef.current) await refreshRates(holdingsRef.current);
     } finally {
       personalDataLoadingRef.current = false;
+      setOpeningLoading(false);
     }
   }
 
@@ -226,15 +232,19 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         .then((session) => setUserEmail(session.email))
         .catch(() => setUserEmail(null));
       setLoading(true);
-      const productsResponse = fetch(refreshEndpoint(), { cache: "no-store" });
+      // Show the saved snapshot before requesting today's opening refresh.
+      const productsResponse = fetch(productsEndpoint, { cache: "no-store" });
       void productsResponse.catch(() => undefined);
       personalDataLoadingRef.current = true;
       try {
         const loaded = await loadPersonalData();
-        await refreshRates(loaded ?? holdingsRef.current, { response: productsResponse });
         setHoldingsReady(loaded !== null);
+        await refreshRates(loaded ?? holdingsRef.current, { response: productsResponse, cacheOnly: true });
+        // An unreadable cache does not consume or cancel today's exchange attempt.
+        if (dailyRefreshPendingRef.current) await refreshRates(holdingsRef.current);
       } finally {
         personalDataLoadingRef.current = false;
+        setOpeningLoading(false);
       }
     }
 
@@ -246,19 +256,20 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function refreshRates(baseHoldings: HoldingMap = holdings, options?: { manual?: boolean; response?: Promise<Response>; silent?: boolean }) {
-    if (refreshInFlightRef.current) return;
+  async function refreshRates(baseHoldings: HoldingMap = holdings, options?: { manual?: boolean; response?: Promise<Response>; silent?: boolean; cacheOnly?: boolean }) {
+    if (refreshInFlightRef.current) return false;
     refreshInFlightRef.current = true;
-    const refreshingDaily = !options?.manual && dailyRefreshPendingRef.current;
+    const refreshingDaily = !options?.manual && !options?.cacheOnly && dailyRefreshPendingRef.current;
     if (!options?.silent) setLoading(true);
-    if (options?.manual || dailyRefreshPendingRef.current) setRefreshingExchange(true);
+    if (options?.manual || refreshingDaily) setRefreshingExchange(true);
     try {
-      const endpoint = refreshEndpoint(options?.manual);
+      const endpoint = options?.cacheOnly ? productsEndpoint : refreshEndpoint(options?.manual);
       const response = await (options?.response ?? fetch(endpoint, { cache: "no-store" }));
       if (!response.ok) {
         const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending"> | null;
-        if (!options?.manual) dailyRefreshPendingRef.current = errorData?.dailyRefreshPending === true;
+        if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = errorData?.dailyRefreshPending === true;
         if (errorData?.cache?.state === "error") {
+          setProductSnapshotReady(true);
           setSyncCache(errorData.cache);
           setSyncing(false);
           setHasSyncFailure(true);
@@ -266,12 +277,13 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
           setLastUpdated(errorData.cache.updatedAt);
           setManualRefreshAvailableAt(errorData.cache.cooldownUntil);
           setClock(Date.now());
-          return;
+          return true;
         }
         throw new Error("rate refresh failed");
       }
       const data = await response.json() as ApiResult;
-      if (!options?.manual) dailyRefreshPendingRef.current = data.dailyRefreshPending === true;
+      if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = data.dailyRefreshPending === true;
+      setProductSnapshotReady(true);
       setSyncCache(data.cache);
       const hardFailure = data.cache?.state === "stale" || data.cache?.state === "error";
       const failures = data.failures?.filter(Boolean) ?? [];
@@ -294,8 +306,9 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       if (!isDemo && Object.keys(acceptedHoldingUpdates).length > 0) {
         const next = { ...baseHoldings, ...acceptedHoldingUpdates };
         setHoldings(next);
+        holdingsRef.current = next;
         const freshHoldingIds = freshHoldingIdsForSave(
-          acceptedHoldingUpdates, data.holdingFallbacks ?? {}, data.cache?.state, options?.silent && !refreshingDaily,
+          acceptedHoldingUpdates, data.holdingFallbacks ?? {}, data.cache?.state, options?.cacheOnly || (options?.silent && !refreshingDaily),
         );
         if (personalDataReadyRef.current && freshHoldingIds.length > 0) {
           void persistPortfolio(next, productOverridesRef.current, manualProductsRef.current, {
@@ -314,14 +327,16 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       setLastUpdated(updatedAt);
       setManualRefreshAvailableAt(data.cache?.cooldownUntil ?? null);
       setClock(Date.now());
+      return true;
     } catch {
       // A network/read failure does not start a repeating exchange retry loop.
-      if (!options?.manual) dailyRefreshPendingRef.current = false;
+      if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = false;
       setSyncing(false);
       if (!options?.silent) {
         setHasSyncFailure(true);
         setSyncFailures(["页面数据读取失败"]);
       }
+      return false;
     } finally {
       refreshInFlightRef.current = false;
       setRefreshingExchange(false);
@@ -382,7 +397,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   }
 
   function beginEditing() {
-    if (!holdingsReady) return;
+    if (!canEdit) return;
     setDraftHoldings({ ...holdings });
     setDraftOverrides(structuredClone(productOverrides));
     setDraftManualProducts(structuredClone(manualProducts));
@@ -555,12 +570,16 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     : sum, 0);
   const holdingProductCount = assetProducts.filter((product) => holdingIsKnown(product) && (activeHoldings[product.id] ?? 0) > 0).length;
   const manualRefreshCooling = Boolean(manualRefreshAvailableAt && Date.parse(manualRefreshAvailableAt) > clock);
-  const updating = !isDemo && (localPreview ? syncing : refreshingExchange || scheduledRefreshPending(clock, syncCache));
+  const pageReadFailed = syncFailures.includes("页面数据读取失败");
+  const { updating, historyAvailable, dataBlocked, initialLoading, canEdit } = dashboardReadState({
+    isDemo, opening: openingLoading, requesting: loading || refreshingExchange,
+    backgroundUpdating: localPreview ? syncing : scheduledRefreshPending(clock, syncCache),
+    personalReady: holdingsReady, personalError: personalDataError,
+    productReady: productSnapshotReady, productReadFailed: pageReadFailed, lastUpdated,
+  });
   const automaticRefreshSummary = updating ? null : formatSyncDateTime(nextScheduledRefreshAt(clock));
-  const currentDataSummary = updating
-    ? lastUpdated ? `当前数据截至 ${formatSyncDateTime(lastUpdated)}。` : "暂无成功数据。"
-    : loading
-    ? "正在更新…"
+  const currentDataSummary = dataBlocked ? "" : updating
+    ? historyAvailable ? `当前数据截至 ${formatSyncDateTime(lastUpdated!)}。` : ""
     : localPreview
       ? lastUpdated
         ? `本地测试数据截至 ${formatSyncDateTime(lastUpdated)}；不会写入数据库。`
@@ -571,8 +590,6 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         ? `当前数据截至 ${formatSyncDateTime(lastUpdated)}${automaticRefreshSummary ? `，预计 ${automaticRefreshSummary} 自动更新` : ""}。`
         : "暂无成功数据。";
   const failureSummary = syncFailureSummary(syncFailures);
-  const personalDataBlocked = !holdingsReady && personalDataError;
-  const initialLoading = !personalDataBlocked && !isDemo && (!holdingsReady || (loading && !lastUpdated) || (updating && !lastUpdated));
 
   return (
     <main className="min-h-screen">
@@ -583,7 +600,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
           <HeaderMenu
             userEmail={userEmail}
             demo={isDemo}
-            loading={loading || personalDataLoading}
+            loading={openingLoading || loading || personalDataLoading}
             manualRefreshCooling={manualRefreshCooling}
             cooldownUntil={manualRefreshAvailableAt}
             onManualRefresh={() => holdingsReady ? void refreshRates(activeHoldings, { manual: true }) : void retryPersonalData()}
@@ -596,22 +613,20 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
         <div className="card type-caption mb-5 flex items-center justify-between gap-4 px-5 py-3.5" aria-live="polite">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
-            {personalDataBlocked
-              ? <p className="text-warning font-semibold">服务器读取失败，数据无法显示，请刷新页面。</p>
-              : initialLoading && !updating
-              ? <span className="skeleton-block skeleton-notice" aria-hidden="true" />
-            : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-danger font-semibold"> 正在更新中，请稍候。</span>}{!loading && !isDemo && !updating && hasSyncFailure && <span className="text-warning font-semibold"> {failureSummary}</span>}</p>}
+            {dataBlocked
+              ? <p className="text-danger font-semibold">{serverReadFailureMessage}</p>
+            : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-warning font-semibold">{historyAvailable ? " 正在更新中，请稍候。" : "数据正在更新中，请稍候。"}</span>}{!isDemo && !updating && hasSyncFailure && <span className="text-warning font-semibold"> {failureSummary}</span>}</p>}
           </div>
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
         </div>
         <section className="metrics-panel card mb-7 grid overflow-hidden sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6" aria-busy={initialLoading}>
           {initialLoading ? <>{Array.from({ length: 6 }, (_, index) => <MetricSkeleton key={index} highlight={index === 0} />)}</> : <>
-            <Metric highlight label={`总持仓 · ${asset}`} value={personalDataBlocked ? "—" : formatAmount(totalHolding)} note={personalDataBlocked ? "— 个持仓产品" : `${holdingProductCount} 个持仓产品`} />
-            <Metric label="组合有效 APR" value={personalDataBlocked ? "—" : `${portfolioApr.toFixed(2)}%`} note="按各阶梯实际占用加权" />
-            <Metric label={`预计每日收益 · ${asset}`} value={personalDataBlocked ? "—" : formatAmount(annualEarn / 365)} note="含活期、定期" />
-            <Metric label={!personalDataBlocked && bestProduct?.rateCoverage === "max_only" ? "最高公开 APR" : "最佳首档 APR"} value={!personalDataBlocked && bestProduct ? `${highestProductApr(bestProduct).toFixed(2)}%` : "—"} note={personalDataBlocked ? "—" : bestProduct ? `${accountName(bestProduct.accountId)}${bestProduct.rateCoverage === "max_only" ? " · 阶梯待确认" : ""}` : "暂无产品"} />
-            <Metric label="高息剩余额度" value={personalDataBlocked ? "—" : formatAmount(highYieldLeft)} note="APR ≥ 6% 的已知额度" />
-            <Metric label="超出首档" value={personalDataBlocked ? "—" : formatAmount(tierOneOverflow)} valueTone={!personalDataBlocked && tierOneOverflow > 0 ? "danger" : "default"} note={personalDataBlocked ? "—" : tierOneOverflow > 0 ? "已进入次档" : "未超出首档"} />
+            <Metric highlight label={`总持仓 · ${asset}`} value={dataBlocked ? "—" : formatAmount(totalHolding)} note={dataBlocked ? "— 个持仓产品" : `${holdingProductCount} 个持仓产品`} />
+            <Metric label="组合有效 APR" value={dataBlocked ? "—" : `${portfolioApr.toFixed(2)}%`} note="按各阶梯实际占用加权" />
+            <Metric label={`预计每日收益 · ${asset}`} value={dataBlocked ? "—" : formatAmount(annualEarn / 365)} note="含活期、定期" />
+            <Metric label={!dataBlocked && bestProduct?.rateCoverage === "max_only" ? "最高公开 APR" : "最佳首档 APR"} value={!dataBlocked && bestProduct ? `${highestProductApr(bestProduct).toFixed(2)}%` : "—"} note={dataBlocked ? "—" : bestProduct ? `${accountName(bestProduct.accountId)}${bestProduct.rateCoverage === "max_only" ? " · 阶梯待确认" : ""}` : "暂无产品"} />
+            <Metric label="高息剩余额度" value={dataBlocked ? "—" : formatAmount(highYieldLeft)} note="APR ≥ 6% 的已知额度" />
+            <Metric label="超出首档" value={dataBlocked ? "—" : formatAmount(tierOneOverflow)} valueTone={!dataBlocked && tierOneOverflow > 0 ? "warning" : "default"} note={dataBlocked ? "—" : tierOneOverflow > 0 ? "已进入次档" : "未超出首档"} />
           </>}
         </section>
 
@@ -627,10 +642,10 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
             </div>
             {editing
               ? <div key="editing-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant="secondary" onClick={cancelEditing} disabled={savingHoldings}>取消</ActionButton><ActionButton variant="secondary" onClick={addManualProduct} disabled={savingHoldings}>添加产品</ActionButton><ActionButton onClick={() => void finishEditing()} disabled={savingHoldings}>{savingHoldings ? "保存中…" : "保存持仓"}</ActionButton></div>
-              : <div key="view-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant={isDemo ? "secondary" : "primary"} onClick={beginEditing} disabled={!holdingsReady}>编辑持仓</ActionButton></div>}
+              : <div key="view-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant={isDemo ? "secondary" : "primary"} onClick={beginEditing} disabled={!canEdit}>编辑持仓</ActionButton></div>}
           </div>
           {holdingSaveError && <div className="table-error-panel error-panel type-caption font-medium">保存失败，请检查网络后重试；表格中的修改仍然保留。</div>}
-          <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={initialLoading}><colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /></colgroup><thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th></tr></thead><tbody>{personalDataBlocked ? <tr><td colSpan={4}><EmptyProductState message="服务器读取失败，数据无法显示，请刷新页面。" /></td></tr> : initialLoading ? <ProductTableSkeleton /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
+          <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={initialLoading}><colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /></colgroup><thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th></tr></thead><tbody>{dataBlocked ? <tr><td colSpan={4}><EmptyProductState message={serverReadFailureMessage} /></td></tr> : initialLoading ? <ProductTableSkeleton /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
             const baseProduct = activeBaseProducts.find((product) => product.id === listedProduct.id) ?? listedProduct;
             const manualSettings = activeOverrides[listedProduct.id];
             const displayProduct = applyProductOverride(baseProduct, manualSettings);

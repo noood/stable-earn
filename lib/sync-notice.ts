@@ -1,7 +1,24 @@
 import { SYNC_ATTEMPT_WINDOW_MS } from "./sync-cache";
 
+export const serverReadFailureMessage = "服务器读取失败，数据无法显示，请刷新页面。";
+
+/** Read failures and exchange failures have different display priorities. */
+export function dashboardReadState(input: {
+  isDemo: boolean; opening: boolean; requesting: boolean; backgroundUpdating: boolean;
+  personalReady: boolean; personalError: boolean; productReady: boolean; productReadFailed: boolean;
+  lastUpdated: string | null;
+}) {
+  const complete = input.personalReady && !input.personalError && input.productReady && !input.productReadFailed;
+  const historyAvailable = complete && Boolean(input.lastUpdated);
+  // A failed page read cannot establish that a scheduled job is still running.
+  const updating = !input.isDemo && (input.opening || input.requesting || (input.productReady && !input.productReadFailed && input.backgroundUpdating));
+  const dataBlocked = !input.isDemo && !updating && (input.personalError || input.productReadFailed);
+  return { updating, historyAvailable, dataBlocked, initialLoading: updating && !historyAvailable,
+    canEdit: input.isDemo || (complete && !updating) };
+}
+
 export function syncFailureSummary(failures: string[]) {
-  if (failures.includes("页面数据读取失败")) return "页面数据读取失败，请检查网络后重试；已有数据保持不变。";
+  if (failures.includes("页面数据读取失败")) return serverReadFailureMessage;
   if (failures.some((value) => value === "公开交易所" || value.includes("数据更新失败"))) {
     return "本次产品和持仓数据更新失败；下次更新将重试。";
   }

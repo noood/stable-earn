@@ -22,7 +22,8 @@ function harness(fetch) {
     productOverridesRef: { current: { manual: { apr: 8 } } },
     manualProductsRef: { current: [{ id: "manual" }] }, hiddenProductIdsRef: { current: ["hidden"] },
     personalDataReadyRef: { current: false }, personalDataLoadingRef: { current: false },
-    refreshRates: async (...args) => { reads.push(args); },
+    dailyRefreshPendingRef: { current: false },
+    refreshRates: async (...args) => { reads.push(args); return true; },
     refreshEndpoint: () => "/products?visit=1",
   };
   for (const [, name] of code.matchAll(/\b(set[A-Z]\w*)\(/g)) deps[name] = (value) => { state[name] = value; };
@@ -74,7 +75,58 @@ test("personal data retry restores all saved fields and only reads the product c
   assert.deepEqual(h.state.setProductOverrides, payload.overrides);
   assert.deepEqual(h.state.setManualProducts, payload.manualProducts);
   assert.deepEqual(h.state.setHiddenProductIds, payload.hiddenProductIds);
-  assert.deepEqual(h.reads, [[payload.holdings]]); // No manual:true / exchange refresh.
+  assert.deepEqual(h.reads, [[payload.holdings, { cacheOnly: true }]]);
+});
+
+test("opening applies the saved snapshot before starting the daily exchange refresh", async () => {
+  const h = harness(async () => ({ ok: true, json: async () => ({ holdings: {} }) }));
+  h.deps.dailyRefreshPendingRef.current = true;
+  await h.initialize();
+  assert.equal(h.reads.length, 2);
+  assert.equal(h.reads[0][1].cacheOnly, true);
+  assert.equal(h.reads[1][1], undefined);
+  assert.equal(h.state.setHoldingsReady, true);
+});
+
+test("an unreadable product cache still allows the daily refresh without rereading personal data", async () => {
+  const h = harness(async () => ({ ok: true, json: async () => ({ holdings: {} }) }));
+  h.deps.dailyRefreshPendingRef.current = true;
+  // Rebuild the closure with a failed cache read.
+  const reads = [];
+  h.deps.refreshRates = async (...args) => { reads.push(args); return false; };
+  const initialize = new Function(...Object.keys(h.deps), `${code}; return initialize;`)(...Object.values(h.deps));
+  await initialize();
+  assert.equal(reads.length, 2);
+  assert.equal(reads[0][1].cacheOnly, true);
+  assert.equal(reads[1][1], undefined);
+  assert.equal(h.state.setOpeningLoading, false);
+});
+
+test("personal failure does not cancel the daily refresh or enable personal writes", async () => {
+  let personalReads = 0;
+  const h = harness(async (url) => {
+    if (url === "/holdings") personalReads++;
+    return { ok: url !== "/holdings", json: async () => ({}) };
+  });
+  h.deps.dailyRefreshPendingRef.current = true;
+  await h.initialize();
+  assert.equal(personalReads, 1);
+  assert.equal(h.reads.length, 2);
+  assert.equal(h.state.setPersonalDataError, true);
+  assert.equal(h.deps.personalDataReadyRef.current, false);
+  assert.equal(h.state.setOpeningLoading, false);
+});
+
+test("opening stays in one loading state across the cache and daily requests", async () => {
+  const h = harness(async () => ({ ok: true, json: async () => ({ holdings: {} }) }));
+  h.deps.dailyRefreshPendingRef.current = true;
+  const transitions = [];
+  let opening = true;
+  h.deps.setOpeningLoading = value => { opening = value; transitions.push(value); };
+  h.deps.refreshRates = async () => { assert.equal(opening, true); return true; };
+  const initialize = new Function(...Object.keys(h.deps), `${code}; return initialize;`)(...Object.values(h.deps));
+  await initialize();
+  assert.deepEqual(transitions, [false]);
 });
 
 test("an actually empty personal portfolio is successful, not a read failure", async () => {
