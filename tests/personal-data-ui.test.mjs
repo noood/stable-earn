@@ -78,11 +78,12 @@ test("updating copy uses one warning style, with a timestamp only when available
   for (const lastUpdated of [null, "2026-09-08T02:36:00Z"]) {
     const html = render("notice", {
       dataBlocked: false, updating: true, historyAvailable: Boolean(lastUpdated), lastUpdated, loading: true,
-      currentDataSummary: lastUpdated ? "当前数据截至 09/08 10:36。" : "",
+      currentDataSummary: "",
     });
     assert.match(html, /text-warning font-semibold/);
     assert.doesNotMatch(html, /暂无成功数据|text-danger/);
-    assert.ok(html.includes(lastUpdated ? "当前数据截至 09/08 10:36。" : "数据正在更新中，请稍候。"));
+    assert.ok(html.includes("数据正在更新中，请稍候。"));
+    assert.doesNotMatch(html, /当前数据截至 09\/08 10:36/);
   }
 });
 

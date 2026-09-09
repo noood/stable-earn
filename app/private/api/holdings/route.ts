@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { getDatabase, getUserId } from "@/lib/db";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
 import type { HoldingMap } from "@/lib/domain";
-import { productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, type ProductOverrideMap } from "@/lib/product-overrides";
+import { type ProductOverrideMap } from "@/lib/product-overrides";
+import { parseProductOverride } from "@/lib/product-override-input";
 import { loadUserProducts, prepareUserProductStatements, productToUserProduct, sanitizeUserProducts, userProductInputToProduct } from "@/lib/user-products";
 import { isLocalPreviewRequest, localPrivateHoldingsPreview } from "@/lib/local-preview";
 import { loadCatalogProducts } from "@/lib/product-catalog";
@@ -133,12 +134,7 @@ export async function PUT(request: Request) {
     const raw = typeof overrideCandidate[productId] === "object" && overrideCandidate[productId] !== null
       ? overrideCandidate[productId] as { apr?: unknown; firstTierLimit?: unknown; termDays?: unknown; purchaseDate?: unknown }
       : {};
-    const apr = productNeedsManualApr(product) ? optionalApr(raw.apr) : null;
-    const firstTierLimit = productNeedsManualLimit(product) ? optionalLimit(raw.firstTierLimit) : null;
-    const termDays = productNeedsManualTerm(product) ? optionalTerm(raw.termDays) : null;
-    const purchaseDate = productNeedsPurchaseDate(product) ? optionalDate(raw.purchaseDate) : null;
-    if (apr === undefined || firstTierLimit === undefined || termDays === undefined || purchaseDate === undefined) return null;
-    return { productId, apr, firstTierLimit, termDays, purchaseDate };
+    return parseProductOverride(product, raw);
   });
   if (overrideEntries.some((entry) => entry === null)) {
     return NextResponse.json({ error: "人工额度、APR、期限或买入日格式不正确。" }, { status: 400, headers: privateResponseHeaders });
@@ -205,30 +201,4 @@ function sanitizeHiddenProductIds(value: unknown, removableProductIds: Set<strin
   if (!Array.isArray(value) || value.length > removableProductIds.size) return null;
   const ids = [...new Set(value.filter((productId): productId is string => typeof productId === "string"))];
   return ids.length === value.length && ids.every((productId) => removableProductIds.has(productId)) ? ids : null;
-}
-
-function optionalApr(value: unknown) {
-  if (value === null || value === undefined || value === "") return null;
-  const apr = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(apr) && apr >= 0 && apr <= 10000 ? apr : undefined;
-}
-
-function optionalLimit(value: unknown) {
-  if (value === null || value === undefined || value === "") return null;
-  const limit = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(limit) && limit > 0 && limit <= 1e15 ? limit : undefined;
-}
-
-function optionalTerm(value: unknown) {
-  if (value === null || value === undefined || value === "") return null;
-  const termDays = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(termDays) && termDays > 0 && termDays <= 3650 ? termDays : undefined;
-}
-
-function optionalDate(value: unknown) {
-  if (value === null || value === undefined || value === "") return null;
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
-  const [year, month, day] = value.split("-").map(Number);
-  const parsed = new Date(Date.UTC(year, month - 1, day));
-  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day ? value : undefined;
 }
