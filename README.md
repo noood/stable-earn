@@ -7,6 +7,7 @@ Stable Earn 是一个用于查看加密资产理财持仓、比较 APR 和估算
 - 公开演示页：访问 `/` 查看固定的 USDT 示例数据。
 - 私人页面：访问 `/private/home`，通过 Cloudflare Access 查看自己的数据。
 - 支持 USDT、USDC、USDGO、BTC，以及 Binance、Bybit、Bitget、OKX、MEXC 的部分产品。
+- Binance 账户 API 同步 Simple Earn 活期（Flexible）和定期（Locked）产品、APR 与持仓。
 - 产品信息和持仓可以来自交易所 API，也可以手动维护。
 
 数据仅用于监控和比较，不构成投资建议；最终结果以平台账户为准。

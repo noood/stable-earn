@@ -17,6 +17,7 @@ export async function exchangeFetch(input: string, init?: RequestInit) {
 const knownHosts = new Set(["api-gcp.binance.com", "api.binance.com", "api.bybit.com", "api.bytick.com", "api.bybit.eu", "api.bitget.com", "openapi.okx.com", "www.okx.com"]);
 const knownPaths = new Set([
   "/sapi/v1/simple-earn/flexible/list", "/sapi/v1/simple-earn/flexible/position",
+  "/sapi/v1/simple-earn/locked/list", "/sapi/v1/simple-earn/locked/position",
   "/v5/earn/product", "/v5/earn/position", "/v5/earn/fixed-term/product", "/v5/earn/fixed-term/position",
   "/api/v2/earn/savings/product", "/api/v2/earn/savings/assets", "/api/v2/public/time",
   "/api/v5/finance/savings/balance",

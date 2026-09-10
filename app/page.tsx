@@ -571,7 +571,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const holdingProductCount = assetProducts.filter((product) => holdingIsKnown(product) && (activeHoldings[product.id] ?? 0) > 0).length;
   const manualRefreshCooling = Boolean(manualRefreshAvailableAt && Date.parse(manualRefreshAvailableAt) > clock);
   const pageReadFailed = syncFailures.includes("页面数据读取失败");
-  const { updating, historyAvailable, dataBlocked, initialLoading, canEdit } = dashboardReadState({
+  const { updating, dataBlocked, initialLoading, canEdit } = dashboardReadState({
     isDemo, opening: openingLoading, requesting: loading || refreshingExchange,
     backgroundUpdating: localPreview ? syncing : scheduledRefreshPending(clock, syncCache),
     personalReady: holdingsReady, personalError: personalDataError,
@@ -726,7 +726,7 @@ function ProductRow({ product, baseProduct, manualSettings, holding, holdingAvai
       <TableCell>
         {editing && manualProduct
           ? <ManualProductIdentityEditor product={baseProduct} account={account} disabled={saving} onChange={onManualProductChange} onDelete={onDelete} />
-          : <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div><div className="text-muted type-caption mt-0.5 max-w-[220px] whitespace-normal break-words">{standardProductName(product)}</div>{editing && <button type="button" className="manual-product-delete text-danger type-caption" disabled={saving} onClick={onDelete}>删除产品</button>}</div></div>}
+          : <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div><div className="text-muted type-caption mt-0.5 max-w-[220px] whitespace-normal break-words">{standardProductName(product)}</div></div></div>}
       </TableCell>
       <TableCell><ProductTierSummary product={product} baseProduct={baseProduct} manualSettings={manualSettings} holding={holding} editing={editing} saving={saving} manualProduct={manualProduct} rateFallbackAt={rateFallbackAt} onOverrideChange={onOverrideChange} onManualProductChange={onManualProductChange} /></TableCell>
       <TableCell><ProductHolding product={product} account={account} holding={holding} holdingAvailable={holdingAvailable} holdingSyncState={holdingSyncState} editing={editing} editable={editable} saving={saving} holdingFallbackAt={holdingFallbackAt} productInfoIssues={productInfoIssues} onHoldingChange={onHoldingChange} /></TableCell>

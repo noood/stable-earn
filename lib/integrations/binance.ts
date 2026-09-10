@@ -1,6 +1,7 @@
 import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import { buildProductIdentity } from "@/lib/product-identity";
 import type { LiveRate } from "@/lib/live-rates";
+import type { Product } from "@/lib/domain";
 
 type Credentials = {
   apiKey: string;
@@ -19,6 +20,43 @@ type FlexiblePositionRow = FlexibleProductRow & {
   totalAmount?: string;
 };
 
+type LockedProductDetail = {
+  asset?: string;
+  apr?: string | number;
+  apy?: string | number;
+  annualPercentageRate?: string | number;
+  interestRate?: string | number;
+  duration?: string | number;
+  status?: string;
+  isSoldOut?: boolean;
+  subscriptionStartTime?: string | number;
+};
+
+type LockedProductRow = {
+  projectId?: string;
+  detail?: LockedProductDetail;
+  quota?: {
+    minimum?: string | number;
+    totalPersonalQuota?: string | number;
+  };
+};
+
+type LockedPositionRow = {
+  positionId?: string | number;
+  projectId?: string;
+  asset?: string;
+  amount?: string | number;
+  principal?: string | number;
+  apy?: string | number;
+  apr?: string | number;
+  annualPercentageRate?: string | number;
+  interestRate?: string | number;
+  duration?: string | number;
+  purchaseTime?: string | number;
+  redeemDate?: string | number;
+  status?: string;
+};
+
 type PageResponse<Row> = {
   rows?: Row[];
   total?: number | string;
@@ -34,6 +72,8 @@ export type BinanceFlexibleSnapshot = {
   rates: LiveRate[];
   holdings: Record<string, number>;
 };
+
+export type BinanceLockedSnapshot = BinanceFlexibleSnapshot;
 
 const accounts = {
   global: {
@@ -111,6 +151,131 @@ export async function fetchBinanceFlexibleSnapshot(
   return {
     rates: results.map((result) => result.rate),
     holdings: Object.fromEntries(results.map((result) => [result.productId, result.holding])),
+  };
+}
+
+/**
+ * Fetches Binance Simple Earn Locked products and the user's locked positions.
+ * The list endpoint describes currently available products; positions are
+ * also converted to rates so an existing subscription remains visible after
+ * its product is no longer offered for new subscriptions.
+ */
+export async function fetchBinanceLockedSnapshot(
+  credentials: Credentials,
+  account: BinanceAccount = "global",
+  assets: readonly string[] = ["USDT", "USDC", "USDGO", "BTC"],
+): Promise<BinanceLockedSnapshot> {
+  const accountConfig = accounts[account];
+  const supported = new Set(assets.map((asset) => asset.toUpperCase()));
+  const [products, positions] = await Promise.all([
+    signedGet<PageResponse<LockedProductRow>>(
+      "/sapi/v1/simple-earn/locked/list",
+      { current: 1, size: 100 },
+      credentials,
+    ),
+    signedGet<PageResponse<LockedPositionRow>>(
+      "/sapi/v1/simple-earn/locked/position",
+      { current: 1, size: 100 },
+      credentials,
+    ),
+  ]);
+
+  const productRows = products.rows ?? [];
+  const positionRows = positions.rows ?? [];
+  const fetchedAt = new Date().toISOString();
+  const rates: LiveRate[] = [];
+  const rateByProject = new Map<string, LiveRate>();
+
+  for (const row of productRows) {
+    const projectId = String(row.projectId ?? "").trim();
+    const detail = row.detail;
+    const asset = String(detail?.asset ?? "").toUpperCase();
+    const duration = positiveNumber(detail?.duration);
+    const apr = parseBinanceApr(detail?.apr ?? detail?.apy ?? detail?.annualPercentageRate ?? detail?.interestRate);
+    if (!projectId || !supported.has(asset) || !duration || !Number.isFinite(apr)) continue;
+    const rate = lockedRate(accountConfig, account, asset, projectId, duration, apr, detail, row.quota, fetchedAt);
+    rates.push(rate);
+    rateByProject.set(`${asset}:${projectId}`, rate);
+  }
+
+  // A held project may disappear from the available-product list. Prefer the
+  // position's own APR/term in that case, when Binance supplies them.
+  for (const row of positionRows) {
+    const projectId = String(row.projectId ?? "").trim();
+    const asset = String(row.asset ?? "").toUpperCase();
+    const duration = positiveNumber(row.duration);
+    const apr = parseBinanceApr(row.apr ?? row.apy ?? row.annualPercentageRate ?? row.interestRate);
+    if (!projectId || !supported.has(asset) || rateByProject.has(`${asset}:${projectId}`) || !duration || !Number.isFinite(apr)) continue;
+    const rate = lockedRate(accountConfig, account, asset, projectId, duration, apr, undefined, undefined, fetchedAt);
+    rates.push(rate);
+    rateByProject.set(`${asset}:${projectId}`, rate);
+  }
+
+  const holdings: Record<string, number> = {};
+  for (const rate of rates) {
+    const projectId = rate.externalProductId;
+    const asset = rate.catalog?.asset;
+    if (!projectId || !asset) continue;
+    const amount = positionRows
+      .filter((row) => String(row.projectId ?? "") === projectId && String(row.asset ?? "").toUpperCase() === asset)
+      .reduce((sum, row) => sum + finiteNumber(row.amount ?? row.principal), 0);
+    holdings[rate.productId] = amount;
+    holdings[projectId] = amount;
+  }
+
+  // Preserve a position key even if its APR is currently unavailable. The
+  // catalogue can match it to an existing row, while new products remain
+  // blocked until a comparable APR is returned.
+  for (const row of positionRows) {
+    const projectId = String(row.projectId ?? "").trim();
+    const asset = String(row.asset ?? "").toUpperCase();
+    if (!projectId || !supported.has(asset)) continue;
+    const key = `${asset}:${projectId}`;
+    if (rateByProject.has(key)) continue;
+    holdings[projectId] = (holdings[projectId] ?? 0) + finiteNumber(row.amount ?? row.principal);
+  }
+
+  return { rates, holdings };
+}
+
+function lockedRate(
+  accountConfig: typeof accounts[BinanceAccount],
+  account: BinanceAccount,
+  asset: string,
+  projectId: string,
+  duration: number,
+  apr: number,
+  detail: LockedProductDetail | undefined,
+  quota: LockedProductRow["quota"],
+  fetchedAt: string,
+): LiveRate {
+  const canonical = `${account === "global" ? "bn-g" : "bn-bh"}-${asset.toLowerCase()}-locked`;
+  const identity = buildProductIdentity(canonical, { productType: "fixed", termDays: duration, subscriptionStartsAt: timestampIso(detail?.subscriptionStartTime) }, { externalProductId: projectId, includeExternalProductId: true });
+  const maximum = finiteOptional(quota?.totalPersonalQuota);
+  const minimum = finiteOptional(quota?.minimum);
+  return {
+    productId: identity.identityKey,
+    canonicalProductId: canonical,
+    ...identity,
+    name: `Simple Earn Locked · ${formatLockedDuration(duration)}`,
+    apr,
+    tiers: [{ min: 0, max: maximum && maximum > 0 ? maximum : null, apr }],
+    fetchedAt,
+    sourceLabel: accountConfig.sourceLabel.replace("账户 API", "定期账户 API"),
+    productType: "fixed",
+    termDays: duration,
+    minimumAmount: minimum && minimum > 0 ? minimum : undefined,
+    subscriptionStartsAt: timestampIso(detail?.subscriptionStartTime),
+    availability: detail?.isSoldOut || /sold.?out|unavailable|off.?line/i.test(detail?.status ?? "") ? "unavailable" : "available",
+    rateCoverage: "complete",
+    catalog: {
+      accountId: account === "global" ? "binance-global" : "binance-bahrain",
+      exchange: "binance",
+      region: account === "global" ? "global" : "bahrain",
+      asset: asset as Product["asset"],
+      holdingDataMode: "api",
+      apiAccess: "authenticated",
+    },
   };
 }
 
@@ -208,4 +373,32 @@ async function hmacHex(payload: string, secret: string) {
 function finiteNumber(value: string | number | undefined) {
   const parsed = typeof value === "number" ? value : Number.parseFloat(value ?? "0");
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function finiteOptional(value: string | number | undefined) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value));
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function positiveNumber(value: string | number | undefined) {
+  const parsed = finiteOptional(value);
+  return parsed !== undefined && parsed > 0 ? parsed : undefined;
+}
+
+function parseBinanceApr(value: string | number | undefined) {
+  const parsed = finiteOptional(value);
+  if (parsed === undefined || parsed < 0) return Number.NaN;
+  // Binance normally returns a decimal fraction (for example 0.0673), but
+  // tolerate percentage-form responses as well.
+  return parsed <= 1 ? parsed * 100 : parsed;
+}
+
+function timestampIso(value: string | number | undefined) {
+  const timestamp = finiteOptional(value);
+  return timestamp !== undefined && timestamp > 0 ? new Date(timestamp).toISOString() : undefined;
+}
+
+function formatLockedDuration(duration: number) {
+  return Number.isInteger(duration) ? `${duration} 天` : `${duration.toFixed(2).replace(/\.0+$|(?<=\.[0-9])0+$/, "")} 天`;
 }

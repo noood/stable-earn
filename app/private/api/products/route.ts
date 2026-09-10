@@ -1,6 +1,6 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { NextResponse } from "next/server";
-import { fetchBinanceFlexibleSnapshot, type BinanceFlexibleSnapshot } from "@/lib/integrations/binance";
+import { fetchBinanceFlexibleSnapshot, fetchBinanceLockedSnapshot, type BinanceFlexibleSnapshot } from "@/lib/integrations/binance";
 import { fetchBitgetSavingsSnapshot, type BitgetSavingsSnapshot } from "@/lib/integrations/bitget";
 import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, fetchBybitShortFixedSnapshots } from "@/lib/integrations/bybit";
 import { fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
@@ -33,6 +33,9 @@ import {
 
 type PrivateStatus = "not_configured" | "synced" | "partial" | "error";
 type PrivateResult<T> = { snapshot: T | null; status: PrivateStatus; diagnostic?: string };
+type BinanceAccountSnapshot = BinanceFlexibleSnapshot & {
+  sync: { flexible: boolean; locked: boolean };
+};
 type PrivateStatuses = {
   binanceGlobal: PrivateStatus;
   binanceBahrain: PrivateStatus;
@@ -208,7 +211,7 @@ async function buildPrivatePayload(
   const binanceGlobalJob = runPrivate(
     "binance-global",
     Boolean(binanceGlobalCredential),
-    () => fetchBinanceFlexibleSnapshot({
+    () => fetchBinanceAccountSnapshot({
       apiKey: binanceGlobalCredential!.apiKey,
       apiSecret: binanceGlobalCredential!.apiSecret,
     }, "global"),
@@ -217,7 +220,7 @@ async function buildPrivatePayload(
   const binanceBahrainJob = runPrivate(
     "binance-bahrain",
     Boolean(binanceBahrainCredential),
-    () => fetchBinanceFlexibleSnapshot({
+    () => fetchBinanceAccountSnapshot({
       apiKey: binanceBahrainCredential!.apiKey,
       apiSecret: binanceBahrainCredential!.apiSecret,
     }, "bahrain"),
@@ -282,8 +285,16 @@ async function buildPrivatePayload(
   ]);
   const publicRates = publicSnapshot.rates;
   const publicFailures = publicSnapshot.failures;
-  const binanceGlobal: BinanceFlexibleSnapshot | null = binanceGlobalResult.snapshot;
-  const binanceBahrain: BinanceFlexibleSnapshot | null = binanceBahrainResult.snapshot;
+  const binanceGlobal: BinanceAccountSnapshot | null = binanceGlobalResult.snapshot;
+  const binanceBahrain: BinanceAccountSnapshot | null = binanceBahrainResult.snapshot;
+  const binanceGlobalStatus: PrivateStatus = binanceGlobalResult.status !== "synced" || !binanceGlobal
+    ? binanceGlobalResult.status
+    : binanceGlobal.sync.flexible && binanceGlobal.sync.locked ? "synced" : "partial";
+  const binanceBahrainStatus: PrivateStatus = binanceBahrainResult.status !== "synced" || !binanceBahrain
+    ? binanceBahrainResult.status
+    : binanceBahrain.sync.flexible && binanceBahrain.sync.locked ? "synced" : "partial";
+  const binanceGlobalDiagnostic = binanceGlobal?.sync.flexible && binanceGlobal?.sync.locked ? binanceGlobalResult.diagnostic : binanceScopes(binanceGlobal);
+  const binanceBahrainDiagnostic = binanceBahrain?.sync.flexible && binanceBahrain?.sync.locked ? binanceBahrainResult.diagnostic : binanceScopes(binanceBahrain);
   const bybitGlobal = bybitGlobalResult.snapshot;
   const bybitGlobalStatus: PrivateStatus = bybitGlobalResult.status !== "synced" || !bybitGlobal
     ? bybitGlobalResult.status
@@ -325,8 +336,8 @@ async function buildPrivatePayload(
   };
   const fallbackRates = cached?.payload?.rates ?? [];
   const completeAccountIds = [
-    binanceGlobalResult.status === "synced" ? "binance-global" : null,
-    binanceBahrainResult.status === "synced" ? "binance-bahrain" : null,
+    binanceGlobalStatus === "synced" ? "binance-global" : null,
+    binanceBahrainStatus === "synced" ? "binance-bahrain" : null,
     bybitGlobalStatus === "synced" ? "bybit-global" : null,
     // Bitget's sparse holding response does not prove zero for absent rows.
     // Keep explicit values (including 0), but do not infer an empty account.
@@ -369,8 +380,8 @@ async function buildPrivatePayload(
     .filter(([productId]) => activeProductIds.has(productId)));
   const freshHoldingProductIds = new Set(Object.keys(normalizedFreshHoldings));
   const privateStatus: PrivateStatuses = {
-    binanceGlobal: binanceGlobalResult.status,
-    binanceBahrain: binanceBahrainResult.status,
+    binanceGlobal: binanceGlobalStatus,
+    binanceBahrain: binanceBahrainStatus,
     bybitGlobal: bybitGlobalStatus,
     bitget: bitgetStatus,
     okx: okxResult.status,
@@ -380,8 +391,8 @@ async function buildPrivatePayload(
     return state ? [[product.id, state] as const] : [];
   }));
   const privateDiagnostics: PrivateDiagnostics = {
-    binanceGlobal: binanceGlobalResult.diagnostic,
-    binanceBahrain: binanceBahrainResult.diagnostic,
+    binanceGlobal: binanceGlobalDiagnostic,
+    binanceBahrain: binanceBahrainDiagnostic,
     bybitGlobal: bybitGlobalDiagnostic,
     bitget: bitgetDiagnostic,
     okx: okxResult.diagnostic,
@@ -518,6 +529,39 @@ function runPrivate<T>(platform: string, configured: boolean, task: () => Promis
   });
 }
 
+async function fetchBinanceAccountSnapshot(
+  credentials: { apiKey: string; apiSecret: string },
+  account: "global" | "bahrain",
+): Promise<BinanceAccountSnapshot> {
+  const [flexible, locked] = await Promise.allSettled([
+    fetchBinanceFlexibleSnapshot(credentials, account),
+    fetchBinanceLockedSnapshot(credentials, account),
+  ]);
+  if (flexible.status === "rejected" && locked.status === "rejected") {
+    throw new Error("Binance flexible and locked APIs unavailable");
+  }
+  return {
+    rates: [
+      ...(flexible.status === "fulfilled" ? flexible.value.rates : []),
+      ...(locked.status === "fulfilled" ? locked.value.rates : []),
+    ],
+    holdings: {
+      ...(flexible.status === "fulfilled" ? flexible.value.holdings : {}),
+      ...(locked.status === "fulfilled" ? locked.value.holdings : {}),
+    },
+    sync: { flexible: flexible.status === "fulfilled", locked: locked.status === "fulfilled" },
+  };
+}
+
+function binanceScopes(snapshot: BinanceAccountSnapshot | null) {
+  if (!snapshot) return undefined;
+  const scopes = [
+    !snapshot.sync.flexible ? "活期产品与持仓" : null,
+    !snapshot.sync.locked ? "定期产品与持仓" : null,
+  ].filter((scope): scope is string => Boolean(scope));
+  return scopes.length ? `scopes:${scopes.join("|")}` : undefined;
+}
+
 function normalizeLegacyNote(note: string) {
   const messages: string[] = [];
   const publicFailure = note.match(/([^。]*公共 APR[^。]*本次获取失败)/)?.[1];
@@ -558,6 +602,8 @@ function buildFailures(status: PrivateStatuses, diagnostics: PrivateDiagnostics,
     ? [privateFailureLabel(key, label, diagnostics[key])]
     : []);
   const partialFailure = [
+    ...(status.binanceGlobal === "partial" ? scopedBinanceFailures("Binance.com", diagnostics.binanceGlobal) : []),
+    ...(status.binanceBahrain === "partial" ? scopedBinanceFailures("Binance Bahrain", diagnostics.binanceBahrain) : []),
     ...(status.bybitGlobal === "partial" ? scopedBybitFailures(diagnostics.bybitGlobal) : []),
     ...(status.bitget === "partial" ? [`Bitget（${diagnostics.bitget || "部分数据未返回"}）`] : []),
   ];
@@ -615,6 +661,13 @@ function scopedBybitFailures(diagnostic?: string) {
     ...(assets.length > 0 ? [`Bybit.com ${assets.join("/")}`] : []),
     ...areas.map((area) => `Bybit.com ${area}`),
   ];
+}
+
+function scopedBinanceFailures(label: string, diagnostic?: string) {
+  const scopes = diagnostic?.startsWith("scopes:")
+    ? diagnostic.slice("scopes:".length).split("|").filter(Boolean)
+    : [];
+  return scopes.length ? scopes.map((scope) => `${label} ${scope}`) : [`${label} 部分数据`];
 }
 
 function productHoldingSyncState(product: Product, statuses: PrivateStatuses): HoldingSyncState | null {

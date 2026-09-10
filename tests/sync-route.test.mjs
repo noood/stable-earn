@@ -45,6 +45,10 @@ function fixture() {
       if (pause) await pause;
       if (mode === "error") throw Error("timeout");
       return { rates: mode === "rate-missing" ? [] : [rate("bn-g-usdt")], holdings: { "bn-g-usdt": 0 } };
+    }, fetchBinanceLockedSnapshot: async () => {
+      if (pause) await pause;
+      if (mode === "error") throw Error("timeout");
+      return { rates: [], holdings: {} };
     } },
     "@/lib/integrations/bitget": { fetchBitgetSavingsSnapshot: async () => {
       if (mode === "error") throw Error("timeout");
