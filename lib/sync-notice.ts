@@ -1,4 +1,6 @@
-import { SYNC_ATTEMPT_WINDOW_MS } from "./sync-cache";
+import { nextScheduledRefreshAt, SYNC_ATTEMPT_WINDOW_MS, type ScheduledRefreshState } from "./sync-cache";
+
+export { nextScheduledRefreshAt } from "./sync-cache";
 
 export const serverReadFailureMessage = "服务器读取失败，数据无法显示，请刷新页面。";
 
@@ -36,18 +38,13 @@ function failureTarget(value: string) {
   return [platform, assets.join("/"), area?.replace("接口", "")].filter(Boolean).join(" ");
 }
 
-export function nextScheduledRefreshAt(now: number) {
-  const local = new Date(now + 8 * 60 * 60 * 1000);
-  const hour = local.getUTCHours();
-  if (hour >= 7) local.setUTCDate(local.getUTCDate() + 1);
-  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), 7 - 8)).toISOString();
-}
-
 type RefreshStatus = {
   state: string;
   updatedAt: string | null;
   lastAttemptAt: string | null;
   lastError: string | null;
+  scheduledAt?: string | null;
+  scheduledState?: ScheduledRefreshState;
 };
 
 /** Bridge the gap between a scheduled slot and the next cache poll. */

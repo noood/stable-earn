@@ -10,7 +10,7 @@ import { effectiveApr, formatAmount, remainingHighYield, type Account, type Asse
 import { applyProductOverride, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { holdingSyncNote, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
 import { freshHoldingIdsForSave } from "@/lib/holding-cache";
-import { dashboardReadState, nextScheduledRefreshAt, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
+import { dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
 import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
 import { accounts, seedProducts } from "@/lib/seed-data";
 import { highestProductApr, maximumShortTermDays, meetsOpportunityApr, minimumOpportunityApr, productHasComparableApr, productHasKnownCapacity } from "@/lib/opportunity-policy";
@@ -58,6 +58,8 @@ type ApiResult = {
     cooldownUntil: string | null;
     lastAttemptAt: string | null;
     lastError: string | null;
+    scheduledAt?: string | null;
+    scheduledState?: "scheduled" | "syncing" | "overdue";
   };
 };
 type HoldingsApiResult = { products?: Product[]; holdings: HoldingMap; overrides: ProductOverrideMap; manualProducts: Product[]; hiddenProductIds?: string[]; found: boolean };
@@ -577,7 +579,10 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     personalReady: holdingsReady, personalError: personalDataError,
     productReady: productSnapshotReady, productReadFailed: pageReadFailed, lastUpdated,
   });
-  const automaticRefreshSummary = updating ? null : formatSyncDateTime(nextScheduledRefreshAt(clock));
+  const scheduledState = syncCache?.scheduledState ?? (updating ? "syncing" : "scheduled");
+  const automaticRefreshSummary = updating || scheduledState !== "scheduled" || !syncCache?.scheduledAt
+    ? null
+    : formatSyncDateTime(syncCache.scheduledAt);
   const currentDataSummary = dataBlocked ? "" : updating
     ? ""
     : localPreview
@@ -587,7 +592,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     : isDemo
       ? "以下均为演示数据。"
       : lastUpdated
-        ? `当前数据截至 ${formatSyncDateTime(lastUpdated)}${automaticRefreshSummary ? `，预计 ${automaticRefreshSummary} 自动更新` : ""}。`
+        ? `当前数据截至 ${formatSyncDateTime(lastUpdated)}${scheduledState === "overdue" ? "；本轮自动更新尚未完成" : automaticRefreshSummary ? `，预计 ${automaticRefreshSummary} 自动更新` : ""}。`
         : "暂无成功数据。";
   const failureSummary = syncFailureSummary(syncFailures);
 

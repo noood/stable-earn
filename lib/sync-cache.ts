@@ -3,6 +3,8 @@ import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types"
 const DEFAULT_MANUAL_REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
 export const SYNC_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
 
+export type ScheduledRefreshState = "scheduled" | "syncing" | "overdue";
+
 export type SyncCacheState = "fresh" | "updated" | "stale" | "syncing" | "cooldown" | "error";
 
 type SyncCacheMetadata = {
@@ -12,6 +14,8 @@ type SyncCacheMetadata = {
   cooldownUntil: string | null;
   lastAttemptAt: string | null;
   lastError: string | null;
+  scheduledAt: string;
+  scheduledState: ScheduledRefreshState;
 };
 
 export type SyncCacheRecord<T> = {
@@ -78,6 +82,7 @@ export function syncCacheMetadata(
   manualCooldownMs = DEFAULT_MANUAL_REFRESH_COOLDOWN_MS,
 ): SyncCacheMetadata {
   const updatedAt = record?.updatedAt ?? null;
+  const schedule = scheduledRefreshMetadata(record, now);
   return {
     state,
     updatedAt,
@@ -85,7 +90,47 @@ export function syncCacheMetadata(
     cooldownUntil: manualCooldownUntil(record, now, manualCooldownMs),
     lastAttemptAt: record?.lastAttemptAt ?? null,
     lastError: record?.lastError ?? null,
+    ...schedule,
   };
+}
+
+/**
+ * Return the server-authoritative scheduled slot. The client must not derive
+ * this from its own clock because a past, unresolved slot must remain visible
+ * until the server records a success or final failure.
+ */
+export function scheduledRefreshMetadata(record: SyncCacheRecord<unknown> | null, now = Date.now()) {
+  const nextSlot = Date.parse(nextScheduledRefreshAt(now));
+  const localHour = new Date(now + 8 * 60 * 60 * 1000).getUTCHours();
+  const day = 24 * 60 * 60 * 1000;
+  const currentSlot = nextSlot - (localHour >= 7 ? day : 2 * day);
+  const updatedAt = timestamp(record?.updatedAt);
+  const attemptedAt = timestamp(record?.lastAttemptAt);
+  const lastError = Boolean(record?.lastError);
+
+  // A successful commit or a final failure resolves the active slot. The
+  // next slot is then authoritative, even though the browser clock advances.
+  if ((updatedAt !== null && updatedAt >= currentSlot)
+    || (attemptedAt !== null && attemptedAt >= currentSlot && lastError)) {
+    return { scheduledAt: new Date(nextSlot).toISOString(), scheduledState: "scheduled" as const };
+  }
+  if (now >= currentSlot && now - currentSlot <= SYNC_ATTEMPT_WINDOW_MS) {
+    return { scheduledAt: new Date(currentSlot).toISOString(), scheduledState: "syncing" as const };
+  }
+  if (attemptedAt !== null && attemptedAt >= currentSlot && now - attemptedAt <= SYNC_ATTEMPT_WINDOW_MS) {
+    return { scheduledAt: new Date(currentSlot).toISOString(), scheduledState: "syncing" as const };
+  }
+  if (now >= currentSlot) {
+    return { scheduledAt: new Date(currentSlot).toISOString(), scheduledState: "overdue" as const };
+  }
+  return { scheduledAt: new Date(nextSlot).toISOString(), scheduledState: "scheduled" as const };
+}
+
+export function nextScheduledRefreshAt(now: number) {
+  const local = new Date(now + 8 * 60 * 60 * 1000);
+  const hour = local.getUTCHours();
+  if (hour >= 7) local.setUTCDate(local.getUTCDate() + 1);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), 7 - 8)).toISOString();
 }
 
 export async function recordSyncAttempt(

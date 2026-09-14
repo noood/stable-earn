@@ -1,6 +1,7 @@
 import type { HoldingMap, Product } from "./domain";
 import type { ProductOverrideMap } from "./product-overrides";
 import { seedProducts } from "./seed-data";
+import { nextScheduledRefreshAt } from "./sync-cache";
 
 export function localPrivateProductsPreview(now = new Date()) {
   const freshAt = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
@@ -145,6 +146,8 @@ export function localPrivateProductsPreview(now = new Date()) {
       cooldownUntil: null,
       lastAttemptAt: freshAt,
       lastError: null,
+      scheduledAt: nextScheduledRefreshAt(now.getTime()),
+      scheduledState: "scheduled" as const,
     },
   };
 }
@@ -217,6 +220,8 @@ export function localSyncScenarioPreview(scenario: string | null, now = new Date
       lastAttemptAt: now.toISOString(),
       lastError: scenario.endsWith("error") ? "产品和持仓数据更新失败" : null,
       expiresAt: null, cooldownUntil: null,
+      scheduledAt: nextScheduledRefreshAt(now.getTime()),
+      scheduledState: scenario.endsWith("syncing") ? "syncing" as const : "scheduled" as const,
     },
   };
 }

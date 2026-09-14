@@ -7,6 +7,7 @@ const { productInformationIssues, productParticipatesInInterest, holdingSyncNote
 const { productHasComparableApr, productHasKnownCapacity, productShouldBeActive } = load("@/lib/opportunity-policy");
 const { applyProductOverride, productTermStatus } = load("@/lib/product-overrides");
 const { syncFailureSummary, nextScheduledRefreshAt, scheduledRefreshPending } = load("@/lib/sync-notice");
+const { scheduledRefreshMetadata } = load("@/lib/sync-cache");
 const { localPrivateProductsPreview, localSyncScenarioPreview } = load("@/lib/local-preview");
 const base = localPrivateProductsPreview().products.find((p) => p.id === "bn-g-usdt");
 
@@ -57,6 +58,25 @@ test("next refresh uses Shanghai 07:00 across day and month boundaries", () => {
   assert.equal(nextScheduledRefreshAt(Date.parse("2026-09-05T23:00:00Z")), "2026-09-06T23:00:00.000Z");
   assert.equal(nextScheduledRefreshAt(Date.parse("2026-09-06T10:00:00Z")), "2026-09-06T23:00:00.000Z");
   assert.equal(nextScheduledRefreshAt(Date.parse("2026-09-30T23:00:00Z")), "2026-10-01T23:00:00.000Z");
+});
+
+test("scheduled metadata keeps an unresolved slot instead of rolling to tomorrow", () => {
+  const beforeSlot = Date.parse("2026-09-05T22:59:00Z");
+  const duringSlot = Date.parse("2026-09-05T23:01:00Z");
+  const afterSuccess = Date.parse("2026-09-05T23:02:00Z");
+  const oldData = { updatedAt: "2026-09-05T06:23:00Z", lastAttemptAt: "2026-09-05T06:23:00Z", lastError: null };
+  assert.deepEqual(scheduledRefreshMetadata(oldData, beforeSlot), {
+    scheduledAt: "2026-09-05T23:00:00.000Z", scheduledState: "scheduled",
+  });
+  assert.deepEqual(scheduledRefreshMetadata(oldData, duringSlot), {
+    scheduledAt: "2026-09-05T23:00:00.000Z", scheduledState: "syncing",
+  });
+  assert.deepEqual(scheduledRefreshMetadata({ ...oldData, updatedAt: new Date(afterSuccess).toISOString() }, afterSuccess), {
+    scheduledAt: "2026-09-06T23:00:00.000Z", scheduledState: "scheduled",
+  });
+  assert.deepEqual(scheduledRefreshMetadata({ ...oldData, lastAttemptAt: new Date(duringSlot).toISOString(), lastError: "failed" }, afterSuccess), {
+    scheduledAt: "2026-09-06T23:00:00.000Z", scheduledState: "scheduled",
+  });
 });
 
 test("repeated local preview requests keep the failed holding timestamp fixed", () => {
