@@ -21,7 +21,11 @@ CREATE INDEX IF NOT EXISTS idx_holding_positions_user_id
 -- changed. Keep the best row (active + held + dated, then oldest), move user
 -- data to it, and archive the duplicate. This is deliberately identity-key
 -- based and therefore applies to every exchange, not only Binance.
-CREATE TEMP TABLE catalog_identity_merge AS
+--
+-- D1 does not authorize TEMP tables, so use a regular migration-only helper
+-- table and remove it at the end of the migration.
+DROP TABLE IF EXISTS catalog_identity_merge;
+CREATE TABLE catalog_identity_merge AS
 WITH ranked AS (
   SELECT catalog.owner_id,
          catalog.product_id,
