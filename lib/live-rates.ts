@@ -21,6 +21,8 @@ export type LiveRate = {
   eligibilityLabel?: string;
   eligibilityStatus?: EligibilityStatus;
   rateCoverage?: RateCoverage;
+  capacitySource?: "live" | "cache";
+  capacityFetchedAt?: string;
   externalProductId?: string;
   identityKey?: string;
   identityFingerprint?: string;

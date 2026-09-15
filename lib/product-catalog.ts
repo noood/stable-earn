@@ -2,15 +2,16 @@ import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types"
 import type { Product } from "./domain";
 import type { LiveRate } from "./live-rates";
 import { productHasComparableApr, productShouldBeActive } from "./opportunity-policy";
-import { productIdentityFingerprint } from "./product-identity";
 import { resolveProductWithoutApiData } from "./product-status";
 import { catalogProductTemplates } from "./seed-data";
 
 /**
  * The catalogue is user-scoped because authenticated APIs may expose a
- * different product set for every account. Identity changes create a new row;
- * old verified rows are retained for history and normally archived only when
- * their holding is explicitly known to be zero.
+ * different product set for every account. A stable identity is matched by
+ * exchange/account/asset and the upstream external ID (or adapter fallback);
+ * mutable APR, quota and subscription-window fields update the same row.
+ * Old verified rows are retained for history and archived only when their
+ * holding is explicitly known to be zero.
  */
 type CatalogRow = {
   owner_id: string;
@@ -26,6 +27,7 @@ type CatalogRow = {
 };
 
 type HoldingRow = { product_id: string; amount: number };
+type OverrideRow = { product_id: string; purchase_date: string | null };
 type HoldingEvidence = { known: boolean; amount: number };
 
 export type ProductCatalogSync = {
@@ -60,10 +62,17 @@ export async function prepareProductCatalogSync(
     loadCatalogRows(db, ownerId),
     db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ?").bind(ownerId).all<HoldingRow>(),
   ]);
+  const overrideResult = await db.prepare("SELECT product_id, purchase_date FROM product_overrides WHERE user_id = ?").bind(ownerId).all<OverrideRow>();
   const now = new Date().toISOString();
   const completeAccounts = new Set(completeAccountIds);
   const persistedHoldings = new Map(holdingResult.results.map((row) => [row.product_id, Number(row.amount)]));
-  const byIdentity = new Map(rows.map((row) => [identityLookupKey(row.identity_key, row.identity_fingerprint), row]));
+  const purchaseDates = new Map(overrideResult.results.map((row) => [row.product_id, row.purchase_date]));
+  const byIdentity = new Map<string, CatalogRow[]>();
+  for (const row of rows) {
+    const candidates = byIdentity.get(row.identity_key) ?? [];
+    candidates.push(row);
+    byIdentity.set(row.identity_key, candidates);
+  }
   const planned = new Map<string, { product: Product | undefined; status: "active" | "archived" }>(rows.map((row) => [row.product_id, {
     product: parseProduct(row.payload)[0],
     status: row.status,
@@ -78,32 +87,31 @@ export async function prepareProductCatalogSync(
     const identityKey = rate.identityKey ?? canonicalProductId;
     const fingerprint = normalizeFingerprint(rate.identityFingerprint);
     const seed = catalogProductTemplates.find((product) => product.id === canonicalProductId);
-    const exact = byIdentity.get(identityLookupKey(identityKey, fingerprint));
-    const compatible = !exact ? rows.find((row) => {
-      if (row.identity_key !== identityKey) return false;
-      const product = parseProduct(row.payload)[0];
-      return product && productIdentityFingerprint(product) === fingerprint;
-    }) : undefined;
-    const baseline = !exact && !compatible && seed
+    // Fingerprints are retained for diagnostics, but are not product identity.
+    // Product-list and position endpoints may omit different mutable fields.
+    const identityCandidates = byIdentity.get(identityKey) ?? [];
+    const current = preferredCatalogRow(identityCandidates, persistedHoldings, purchaseDates)
+      ?? (seed ? rows.find((row) => row.product_id === seed.id && row.identity_key === seed.identityKey) : undefined);
+    const baseline = !current && seed
       ? rows.find((row) => row.product_id === seed.id && row.identity_key === seed.identityKey && !normalizeFingerprint(row.identity_fingerprint))
       : undefined;
-    const current = exact ?? compatible ?? baseline;
-    const id = current?.product_id ?? catalogProductId(canonicalProductId, identityKey, fingerprint);
-    const base = seed ?? (current ? parseProduct(current.payload)[0] : undefined) ?? productTemplateFromRate(rate, id, identityKey);
+    const selectedCurrent = current ?? baseline;
+    const id = selectedCurrent?.product_id ?? catalogProductId(canonicalProductId, identityKey, fingerprint);
+    const base = seed ?? (selectedCurrent ? parseProduct(selectedCurrent.payload)[0] : undefined) ?? productTemplateFromRate(rate, id, identityKey);
     if (!base) continue;
 
     const product = productFromRate(base, rate, id, identityKey);
     const evidence = holdingEvidence(product, rate, id, freshHoldings, persistedHoldings, completeAccounts);
-    const active = productShouldBeActive(product, evidence, current?.status === "active");
+    const active = productShouldBeActive(product, evidence, selectedCurrent?.status === "active");
     mapProductIds(productIds, rate, canonicalProductId, identityKey, id);
 
     const selected = selectedByCanonical.get(canonicalProductId) ?? new Set<string>();
     selected.add(id);
     selectedByCanonical.set(canonicalProductId, selected);
 
-    if (current) {
+    if (selectedCurrent) {
       planned.set(id, { product, status: active ? "active" : "archived" });
-      statements.push(updateCatalogStatement(db, ownerId, current, product, canonicalProductId, active, now));
+      statements.push(updateCatalogStatement(db, ownerId, selectedCurrent, product, canonicalProductId, active, now));
     } else if (active) {
       planned.set(id, { product, status: "active" });
       statements.push(insertCatalogStatement(db, ownerId, product, canonicalProductId, identityKey, now));
@@ -111,14 +119,27 @@ export async function prepareProductCatalogSync(
     if (active) transformedRates.push({ ...rate, productId: id, canonicalProductId });
   }
 
-  // A new subscription window is a new identity. The previous cycle is only
-  // archived when a complete holding snapshot proves that it is empty.
+  // A product omitted from the latest list is not a new identity. Existing
+  // rows are archived only when a complete holding snapshot proves they are
+  // empty and another row now represents the same stable identity.
   for (const [canonicalProductId, selectedIds] of selectedByCanonical) {
     for (const row of rows.filter((candidate) => candidate.status === "active"
       && candidate.canonical_product_id === canonicalProductId
       && !selectedIds.has(candidate.product_id))) {
       const product = parseProduct(row.payload)[0];
       if (!product) continue;
+      const selectedForIdentity = selectedIds.has(row.product_id)
+        ? row
+        : preferredCatalogRow(byIdentity.get(row.identity_key) ?? [], persistedHoldings, purchaseDates);
+      // Once a stable identity has a selected active row, duplicate active
+      // rows created by an older fingerprint must not remain visible.
+      if (selectedForIdentity && selectedForIdentity.product_id !== row.product_id
+        && selectedForIdentity.status === "active"
+        && (persistedHoldings.get(row.product_id) ?? 0) <= 0) {
+        planned.set(row.product_id, { product, status: "archived" });
+        statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
+        continue;
+      }
       const evidence = existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeAccounts);
       if (!evidence.known || evidence.amount > 0) continue;
       planned.set(row.product_id, { product, status: "archived" });
@@ -167,15 +188,30 @@ export async function prepareProductCatalogSync(
 }
 
 export async function resolveCatalogProductIds(db: D1Database, ownerId: string) {
-  const rows = await loadCatalogRows(db, ownerId);
-  const map: Record<string, string> = {};
+  const [rows, holdingResult, overrideResult] = await Promise.all([
+    loadCatalogRows(db, ownerId),
+    db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ?").bind(ownerId).all<HoldingRow>(),
+    db.prepare("SELECT product_id, purchase_date FROM product_overrides WHERE user_id = ?").bind(ownerId).all<OverrideRow>(),
+  ]);
+  const persistedHoldings = new Map(holdingResult.results.map((row) => [row.product_id, Number(row.amount)]));
+  const purchaseDates = new Map(overrideResult.results.map((row) => [row.product_id, row.purchase_date]));
+  const byIdentity = new Map<string, CatalogRow[]>();
   for (const row of rows) {
-    if (row.status !== "active") continue;
-    map[row.product_id] = row.product_id;
-    map[row.canonical_product_id] = row.product_id;
-    map[row.identity_key] = row.product_id;
-    const product = parseProduct(row.payload)[0];
-    if (product?.externalProductId) map[product.externalProductId] = row.product_id;
+    const candidates = byIdentity.get(row.identity_key) ?? [];
+    candidates.push(row);
+    byIdentity.set(row.identity_key, candidates);
+  }
+  const map: Record<string, string> = {};
+  for (const candidates of byIdentity.values()) {
+    const preferred = preferredCatalogRow(candidates, persistedHoldings, purchaseDates);
+    if (!preferred) continue;
+    for (const row of candidates) {
+      if (row.status === "active") map[row.product_id] = preferred.product_id;
+    }
+    map[preferred.canonical_product_id] = preferred.product_id;
+    map[preferred.identity_key] = preferred.product_id;
+    const product = parseProduct(preferred.payload)[0];
+    if (product?.externalProductId) map[product.externalProductId] = preferred.product_id;
   }
   return map;
 }
@@ -248,6 +284,25 @@ function firstHolding(values: Record<string, number>, ids: Array<string | undefi
   return undefined;
 }
 
+function preferredCatalogRow(
+  rows: CatalogRow[],
+  persistedHoldings: Map<string, number>,
+  purchaseDates: Map<string, string | null>,
+) {
+  return [...rows].sort((left, right) => {
+    const leftActive = left.status === "active" ? 1 : 0;
+    const rightActive = right.status === "active" ? 1 : 0;
+    if (leftActive !== rightActive) return rightActive - leftActive;
+    const leftHolding = (persistedHoldings.get(left.product_id) ?? 0) > 0 ? 1 : 0;
+    const rightHolding = (persistedHoldings.get(right.product_id) ?? 0) > 0 ? 1 : 0;
+    if (leftHolding !== rightHolding) return rightHolding - leftHolding;
+    const leftPurchased = purchaseDates.get(left.product_id) ? 1 : 0;
+    const rightPurchased = purchaseDates.get(right.product_id) ? 1 : 0;
+    if (leftPurchased !== rightPurchased) return rightPurchased - leftPurchased;
+    return left.first_seen_at.localeCompare(right.first_seen_at) || left.product_id.localeCompare(right.product_id);
+  })[0];
+}
+
 function resolveExistingRow(rows: CatalogRow[], sourceId: string) {
   return rows.find((row) => row.product_id === sourceId)
     ?? rows.find((row) => row.identity_key === sourceId)
@@ -266,9 +321,19 @@ function deduplicateRates(rates: LiveRate[]) {
   for (const rate of rates) {
     const canonical = rate.canonicalProductId ?? rate.productId;
     const identity = rate.identityKey ?? canonical;
-    byIdentity.set(identityLookupKey(identity, normalizeFingerprint(rate.identityFingerprint)), rate);
+    const previous = byIdentity.get(identity);
+    // Prefer the richer product-list response over a position-only fallback.
+    // Both responses describe the same stable product identity.
+    if (!previous || liveRateScore(rate) > liveRateScore(previous)) byIdentity.set(identity, rate);
   }
   return [...byIdentity.values()];
+}
+
+function liveRateScore(rate: LiveRate) {
+  return Number(Boolean(rate.tiers?.some((tier) => tier.max !== null)))
+    + Number(Boolean(rate.minimumAmount !== undefined))
+    + Number(rate.rateCoverage === "complete")
+    + Number(Boolean(rate.subscriptionStartsAt || rate.subscriptionEndsAt));
 }
 
 function rateHasKnownApr(rate: LiveRate) {
@@ -326,10 +391,18 @@ function reactivateCatalogStatement(db: D1Database, ownerId: string, productId: 
 
 function productFromRate(base: Product, rate: LiveRate, id: string, identityKey: string): Product {
   const tiers = rate.tiers
-    ? rate.tiers.map((tier, index) => ({ ...tier, id: `${id}-tier-${index}` }))
+    ? rate.tiers.map((tier, index) => {
+      const previous = base.tiers[index];
+      const preserveKnownCapacity = rate.capacitySource === "cache"
+        && tier.max === null
+        && previous?.max !== null
+        && previous?.max !== undefined;
+      return { ...tier, max: preserveKnownCapacity ? previous.max : tier.max, id: `${id}-tier-${index}` };
+    })
     : base.tiers.map((tier, index) => rate.tierAprs?.[index] !== undefined
       ? { ...tier, id: `${id}-tier-${index}`, apr: rate.tierAprs[index] }
       : index === 0 ? { ...tier, id: `${id}-tier-${index}`, apr: rate.apr } : { ...tier, id: `${id}-tier-${index}` });
+  const capacityKnown = tiers[0]?.max !== null && tiers[0]?.max !== undefined;
   return {
     ...base,
     id,
@@ -347,7 +420,11 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
     identityKey,
     identityFingerprint: rate.identityFingerprint ?? base.identityFingerprint,
     tiers,
-    rateCoverage: rate.rateCoverage ?? (rate.tiers ? "complete" : base.rateCoverage),
+    rateCoverage: rate.rateCoverage === "base_only" && capacityKnown
+      ? "complete"
+      : rate.rateCoverage ?? (rate.tiers ? "complete" : base.rateCoverage),
+    capacitySource: rate.capacitySource ?? base.capacitySource,
+    capacityFetchedAt: rate.capacitySource === "cache" ? base.capacityFetchedAt ?? base.source.fetchedAt : rate.capacityFetchedAt,
     source: { kind: "live", label: rate.sourceLabel, fetchedAt: rate.fetchedAt },
   };
 }
@@ -379,6 +456,8 @@ function productTemplateFromRate(rate: LiveRate, id: string, identityKey: string
     tiers,
     source: { kind: "live", label: rate.sourceLabel, fetchedAt: rate.fetchedAt },
     rateCoverage: rate.rateCoverage ?? (rate.tiers ? "complete" : "base_only"),
+    capacitySource: rate.capacitySource ?? (rate.tiers?.some((tier) => tier.max !== null) ? "live" : undefined),
+    capacityFetchedAt: rate.capacityFetchedAt,
     externalProductId: rate.externalProductId,
     identityKey,
     identityFingerprint: rate.identityFingerprint,
@@ -407,8 +486,4 @@ function catalogProductId(canonicalProductId: string, identityKey: string, finge
 
 function normalizeFingerprint(value: string | null | undefined) {
   return value?.trim() || null;
-}
-
-function identityLookupKey(identityKey: string, fingerprint: string | null) {
-  return `${identityKey}\u0000${normalizeFingerprint(fingerprint) ?? ""}`;
 }

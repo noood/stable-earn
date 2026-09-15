@@ -42,7 +42,7 @@ npm run check
    - `POLICY_AUD`
 3. 设置 Worker Secret：`CREDENTIAL_ENCRYPTION_KEY`。
 4. 在 Cloudflare Queues 中创建队列 `stable-earn-sync`（首次部署或升级时只需创建一次）。生产者、消费者及重试配置由部署写入；若改名，请同步修改 `wrangler.jsonc` 中的两处队列名。
-5. 按顺序执行 `drizzle/` 中尚未执行的 D1 migration。
+5. 按顺序执行 `drizzle/` 中尚未执行的 D1 migration。`0008_stable_catalog_identity.sql` 会创建 API 持仓时间表，并把历史上因可变字段产生的重复目录行合并到一条记录；这一步需要在 D1 控制台或 Wrangler 中由维护者手动执行一次，例如：`npx wrangler d1 execute stablecoin-earn-monitor --remote --file=drizzle/0008_stable_catalog_identity.sql`。
 6. 运行 `npm run deploy`，或使用 Cloudflare Workers Builds 自动部署。
 
 `wrangler.jsonc` 只包含占位值。不要把真实账号、数据库 ID、Access 配置或密钥提交到 Git。部署后需要在应用中配置只读权限的交易所 API Key，并关闭交易、转账、申购、赎回和提现权限。公开演示不需要这些 Cloudflare 配置；私人页面需要使用者自己的 Workers、D1、Access 和 API Key。

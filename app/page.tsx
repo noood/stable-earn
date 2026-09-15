@@ -6,7 +6,7 @@ import Image from "next/image";
 import { ApiSettings } from "@/app/components/api-settings";
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
 import { AccountBadge, ActionButton, HoldingSummary, Metric, MetricSkeleton, ModalFrame, TableCell } from "@/app/components/ui";
-import { effectiveApr, formatAmount, remainingHighYield, type Account, type Asset, type HoldingMap, type HoldingSyncState, type Product } from "@/lib/domain";
+import { effectiveApr, formatAmount, remainingHighYield, type Account, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product } from "@/lib/domain";
 import { applyProductOverride, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { holdingSyncNote, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
 import { freshHoldingIdsForSave } from "@/lib/holding-cache";
@@ -36,6 +36,8 @@ type ApiResult = {
     eligibilityLabel?: string;
     eligibilityStatus?: Product["eligibilityStatus"];
     rateCoverage?: Product["rateCoverage"];
+    capacitySource?: Product["capacitySource"];
+    capacityFetchedAt?: string;
     externalProductId?: string;
     identityKey?: string;
     identityFingerprint?: string;
@@ -45,6 +47,7 @@ type ApiResult = {
   holdingSourceIds?: string[];
   holdingFallbacks?: Record<string, string>;
   holdingSyncStates?: Record<string, HoldingSyncState>;
+  holdingPositions?: HoldingPosition[];
   partial: boolean;
   note: string;
   fetchedAt?: string;
@@ -105,6 +108,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const [apiHoldingProductIds, setApiHoldingProductIds] = useState<Set<string>>(() => new Set());
   const [holdingFallbacks, setHoldingFallbacks] = useState<Record<string, string>>({});
   const [holdingSyncStates, setHoldingSyncStates] = useState<ApiResult["holdingSyncStates"]>({});
+  const [holdingPositions, setHoldingPositions] = useState<HoldingPosition[]>([]);
   const [showApiSettings, setShowApiSettings] = useState(false);
   const [loading, setLoading] = useState(false);
   const [hasSyncFailure, setHasSyncFailure] = useState(false);
@@ -296,6 +300,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       setApiHoldingProductIds(new Set(data.holdingSourceIds ?? Object.keys(data.holdingUpdates ?? {})));
       setHoldingFallbacks(data.holdingFallbacks ?? {});
       setHoldingSyncStates(data.holdingSyncStates ?? {});
+      setHoldingPositions(data.holdingPositions ?? []);
       // The API response is authoritative. An empty list means this account
       // has no discovered products yet; do not repopulate the old global seed
       // directory on the client.
@@ -556,8 +561,16 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
       || left.name.localeCompare(right.name, "en", { sensitivity: "base" });
     }), [asset, editing, manualProducts, resolvedProducts]);
   const tableProducts = assetProducts;
+  const holdingPositionByProduct = useMemo(() => {
+    const map = new Map<string, HoldingPosition>();
+    for (const position of holdingPositions) {
+      const current = map.get(position.productId);
+      if (!current || position.updatedAt > current.updatedAt) map.set(position.productId, position);
+    }
+    return map;
+  }, [holdingPositions]);
   const totalHolding = assetProducts.reduce((sum, product) => holdingIsKnown(product) ? sum + (activeHoldings[product.id] ?? 0) : sum, 0);
-  const calculableProducts = assetProducts.filter((product) => holdingIsKnown(product) && productParticipatesInInterest(product, activeHoldings[product.id] ?? 0, activeOverrides[product.id]));
+  const calculableProducts = assetProducts.filter((product) => holdingIsKnown(product) && productParticipatesInInterest(product, activeHoldings[product.id] ?? 0, activeOverrides[product.id], Boolean(holdingPositionByProduct.get(product.id))));
   const comparableOpportunityProducts = assetProducts.filter(productHasComparableApr);
   const highYieldCapacityProducts = assetProducts.filter((product) => holdingIsKnown(product)
     && productHasKnownCapacity(product)
@@ -657,7 +670,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
             const isManualProduct = listedProduct.id.startsWith("manual-");
             const apiHoldingSource = !isDemo && apiHoldingProductIds.has(baseProduct.id);
             const holdingFromApi = baseProduct.holdingDataMode === "api" || apiHoldingSource;
-            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
+            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingPosition={holdingPositionByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
           }) : <tr><td colSpan={4}><EmptyProductState /></td></tr>}</tbody></table></div>
         </section>
 
@@ -666,7 +679,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
 
       {!isDemo && showApiSettings && <ApiSettings onClose={() => setShowApiSettings(false)} onCooldownChange={() => setManualRefreshAvailableAt(null)} />}
       {showAssetSwitchWarning && <ModalFrame ariaLabel="请先完成编辑" title="请先完成编辑" onClose={() => setShowAssetSwitchWarning(false)}><p className="text-secondary type-body">请先保存或取消当前修改，再切换币种。</p><div className="mt-5 flex justify-end"><ActionButton onClick={() => setShowAssetSwitchWarning(false)}>知道了</ActionButton></div></ModalFrame>}
-      {pendingDeleteProductId && <ModalFrame ariaLabel="删除产品" title="删除产品" onClose={() => setPendingDeleteProductId(null)}><p className="text-secondary type-body">删除后将不再记录该产品的持仓和收益，是否删除？</p><div className="mt-5 flex justify-end gap-2"><ActionButton variant="secondary" onClick={() => setPendingDeleteProductId(null)}>取消</ActionButton><ActionButton variant="danger" onClick={() => deleteDraftProduct(pendingDeleteProductId)}>删除产品</ActionButton></div></ModalFrame>}
+      {pendingDeleteProductId && <ModalFrame ariaLabel="删除产品" title="删除产品" onClose={() => setPendingDeleteProductId(null)}><p className="text-secondary type-body">删除后暂不在列表中展示；已有持仓和产品资料会保留，是否继续？</p><div className="mt-5 flex justify-end gap-2"><ActionButton variant="secondary" onClick={() => setPendingDeleteProductId(null)}>取消</ActionButton><ActionButton variant="danger" onClick={() => deleteDraftProduct(pendingDeleteProductId)}>删除产品</ActionButton></div></ModalFrame>}
     </main>
   );
 }
@@ -723,9 +736,10 @@ function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUn
   return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><span aria-hidden="true">⋯</span></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}{!demo && <button type="button" disabled={loading || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-refresh">{refreshLabel}</button>}<button type="button" onClick={(event) => closeMenu(event, onApiSettings)} className="menu-item menu-item-leading">API 设置</button>{!demo && <a href="/logout" className="menu-item menu-item-danger">退出登录</a>}</div></details></div>;
 }
 
-function ProductRow({ product, baseProduct, manualSettings, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, rateFallbackAt, holdingFallbackAt, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; rateFallbackAt?: string; holdingFallbackAt?: string; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
+function ProductRow({ product, baseProduct, manualSettings, holdingPosition, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, rateFallbackAt, holdingFallbackAt, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingPosition?: HoldingPosition; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; rateFallbackAt?: string; holdingFallbackAt?: string; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
   const account = accounts.find((item) => item.id === product.accountId)!;
-  const productInfoIssues = productInformationIssues(product, manualSettings);
+  const hasApiTiming = Boolean(holdingPosition?.purchaseAt || holdingPosition?.redeemAt);
+  const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming);
   return (
     <tr className={`product-row ${!editing && holdingAvailable && holding <= 0 ? "product-row-empty" : ""}`}>
       <TableCell>
@@ -733,7 +747,7 @@ function ProductRow({ product, baseProduct, manualSettings, holding, holdingAvai
           ? <ManualProductIdentityEditor product={baseProduct} account={account} disabled={saving} onChange={onManualProductChange} onDelete={onDelete} />
           : <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div><div className="text-muted type-caption mt-0.5 max-w-[220px] whitespace-normal break-words">{standardProductName(product)}</div></div></div>}
       </TableCell>
-      <TableCell><ProductTierSummary product={product} baseProduct={baseProduct} manualSettings={manualSettings} holding={holding} editing={editing} saving={saving} manualProduct={manualProduct} rateFallbackAt={rateFallbackAt} onOverrideChange={onOverrideChange} onManualProductChange={onManualProductChange} /></TableCell>
+      <TableCell><ProductTierSummary product={product} baseProduct={baseProduct} manualSettings={manualSettings} holdingPosition={holdingPosition} holding={holding} editing={editing} saving={saving} manualProduct={manualProduct} rateFallbackAt={rateFallbackAt} onOverrideChange={onOverrideChange} onManualProductChange={onManualProductChange} /></TableCell>
       <TableCell><ProductHolding product={product} account={account} holding={holding} holdingAvailable={holdingAvailable} holdingSyncState={holdingSyncState} editing={editing} editable={editable} saving={saving} holdingFallbackAt={holdingFallbackAt} productInfoIssues={productInfoIssues} onHoldingChange={onHoldingChange} /></TableCell>
       <TableCell className="type-body font-semibold tabular-nums">{holdingAvailable && productInfoIssues.length === 0 && holding > 0
         ? `${effectiveApr(product, holding).toFixed(2)}%`
@@ -775,24 +789,29 @@ function ProductTableSkeleton() {
   return <>{Array.from({ length: 3 }, (_, row) => <tr key={row} className="product-row" aria-hidden="true">{widths.map((width, column) => <TableCell key={column}><span className="skeleton-block skeleton-table-line" style={{ width }} /></TableCell>)}</tr>)}</>;
 }
 
-function ProductTierSummary({ product, baseProduct, manualSettings, holding, editing, saving, manualProduct, rateFallbackAt, onOverrideChange, onManualProductChange }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holding: number; editing: boolean; saving: boolean; manualProduct: boolean; rateFallbackAt?: string; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void }) {
+function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosition, holding, editing, saving, manualProduct, rateFallbackAt, onOverrideChange, onManualProductChange }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingPosition?: HoldingPosition; holding: number; editing: boolean; saving: boolean; manualProduct: boolean; rateFallbackAt?: string; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void }) {
   const manualApr = productNeedsManualApr(baseProduct);
   const manualLimit = productNeedsManualLimit(baseProduct);
   const manualTerm = productNeedsManualTerm(baseProduct);
   const fixedFacts = product.productType === "fixed" || product.manualKind === "limited" ? fixedProductFacts(product) : [];
   const durationDays = productTermDays(product);
+  const apiTiming = holdingPosition?.source === "api" && (holdingPosition.purchaseAt || holdingPosition.redeemAt) ? holdingPosition : undefined;
   const termStatus = productTermStatus(product, manualSettings?.purchaseDate);
-  const productInfoIssues = productInformationIssues(product, manualSettings);
+  const productInfoIssues = productInformationIssues(product, manualSettings, Boolean(apiTiming));
   const apiManaged = baseProduct.productDataMode === "api";
   const rateHeadline = rateHeadlineFor(product, apiManaged);
   const sourceText = rateFallbackAt && product.rateCoverage !== "unavailable"
     ? `产品信息沿用 ${formatSyncDateTime(rateFallbackAt)} 的缓存数据`
-    : productInfoIssues.length === 0 && apiManaged && editing ? "来自 API" : "";
-  const termStatusText: ReactNode = termStatus
-    ? termStatus.remainingDays > 0
-      ? <>买入 {formatShortDate(manualSettings?.purchaseDate)} · 已进行 {termStatus.elapsedDays}/{termStatus.durationDays} 天 · 还有 <span className="font-semibold tabular-nums">{termStatus.remainingDays} 天到期</span></>
-      : <>买入 {formatShortDate(manualSettings?.purchaseDate)} · 已到期 <span className="font-semibold tabular-nums">{Math.abs(termStatus.remainingDays)} 天</span></>
-    : "";
+    : product.capacitySource === "cache" && product.capacityFetchedAt
+      ? `额度沿用 ${formatSyncDateTime(product.capacityFetchedAt)} 的缓存数据`
+      : productInfoIssues.length === 0 && apiManaged && editing ? "来自 API" : "";
+  const termStatusText: ReactNode = apiTiming
+    ? apiTermLifecycleText(product, apiTiming)
+    : termStatus
+      ? termStatus.remainingDays > 0
+        ? <>预计 {formatShortDate(termStatus.maturityDate)} 到期</>
+        : <>已于 {formatShortDate(termStatus.maturityDate)} 到期</>
+      : "";
   const incompleteText = productInfoIssues.length > 0 ? productInformationNote(productInfoIssues) : "";
 
   return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
@@ -806,7 +825,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holding, edi
       {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
       {manualTerm && <ManualTermInput label="活动期限" value={manualSettings?.termDays ?? null} disabled={saving} onChange={(termDays) => onOverrideChange({ termDays })} />}
       {manualProduct && baseProduct.manualKind !== "flexible" && <ManualTermInput value={baseProduct.termDays ?? null} disabled={saving} onChange={(termDays) => onManualProductChange({ termDays: termDays ?? undefined })} />}
-      {productNeedsPurchaseDate(product) && durationDays && <PurchaseDateInput value={manualSettings?.purchaseDate ?? null} durationDays={durationDays} disabled={saving} onChange={(purchaseDate) => onOverrideChange({ purchaseDate })} />}
+      {productNeedsPurchaseDate(product) && durationDays && !apiTiming && <PurchaseDateInput value={manualSettings?.purchaseDate ?? null} durationDays={durationDays} disabled={saving} onChange={(purchaseDate) => onOverrideChange({ purchaseDate })} />}
     </div>}
   </div>;
 }
@@ -814,6 +833,17 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holding, edi
 function ProductMeta({ text, title, warning = false }: { text: ReactNode; title?: string; warning?: boolean }) {
   const resolvedTitle = title ?? (typeof text === "string" ? text : undefined);
   return <p className={`product-meta ${warning ? "product-meta-warning" : "text-muted"}`} title={resolvedTitle}>{text}</p>;
+}
+
+function apiTermLifecycleText(product: Product, position: HoldingPosition): ReactNode {
+  const maturity = position.redeemAt
+    ?? (position.purchaseAt && productTermDays(product)
+      ? new Date(Date.parse(position.purchaseAt) + productTermDays(product)! * 24 * 60 * 60 * 1000).toISOString()
+      : undefined);
+  if (!maturity || !Number.isFinite(Date.parse(maturity))) return "到期日待获取";
+  return Date.parse(maturity) > Date.now()
+    ? <>预计 {formatShortDate(maturity)} 到期</>
+    : <>已于 {formatShortDate(maturity)} 到期</>;
 }
 
 function ProductRateHeadline({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {

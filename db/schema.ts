@@ -15,6 +15,19 @@ export const schemaStatements = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_holdings_user_id
     ON holdings (user_id)`,
+  `CREATE TABLE IF NOT EXISTS holding_positions (
+    user_id TEXT NOT NULL,
+    product_id TEXT NOT NULL,
+    position_key TEXT NOT NULL,
+    amount REAL NOT NULL DEFAULT 0 CHECK (amount >= 0),
+    purchase_at TEXT,
+    redeem_at TEXT,
+    source TEXT NOT NULL CHECK (source IN ('api', 'manual')),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, product_id, position_key)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_holding_positions_user_id
+    ON holding_positions (user_id)`,
   `CREATE TABLE IF NOT EXISTS product_overrides (
     user_id TEXT NOT NULL,
     product_id TEXT NOT NULL,

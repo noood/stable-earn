@@ -44,10 +44,14 @@ export async function GET(request: Request) {
     db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
   ]);
   const removableProducts = new Set([...catalogProducts, ...manualProducts].map((product) => product.id));
-  const hiddenProductIds = [...new Set([
+  const storedHiddenProductIds = [...new Set([
     ...hiddenResult.results.map((row) => row.product_id),
     ...hiddenCatalogResult.results.map((row) => row.product_id),
   ])].filter((productId) => removableProducts.has(productId));
+  const holdingAmounts = new Map(holdingResult.results.map((row) => [row.product_id, Number(row.amount)]));
+  // Hiding an opportunity must never hide a positive position. The position
+  // remains visible until it is genuinely zero, even if the user hid the row.
+  const hiddenProductIds = storedHiddenProductIds.filter((productId) => (holdingAmounts.get(productId) ?? 0) <= 0);
   const hiddenProductIdSet = new Set(hiddenProductIds);
   const productIds = new Set([...catalogProducts.filter((product) => !hiddenProductIdSet.has(product.id)), ...manualProducts].map((product) => product.id));
   const limits = new Map(limitResult.results.map((row) => [row.product_id, row.first_tier_limit]));
@@ -153,12 +157,6 @@ export async function PUT(request: Request) {
         VALUES (?, ?, ?)`)
         .bind(userId, productId, updatedAt)),
     ] : []),
-    ...(hiddenProductsProvided ? hiddenProductIds.flatMap((productId) => [
-      db.prepare("DELETE FROM holdings WHERE user_id = ? AND product_id = ?").bind(userId, productId),
-      db.prepare("DELETE FROM product_overrides WHERE user_id = ? AND product_id = ?").bind(userId, productId),
-      db.prepare("DELETE FROM product_override_limits WHERE user_id = ? AND product_id = ?").bind(userId, productId),
-      db.prepare("DELETE FROM product_override_terms WHERE user_id = ? AND product_id = ?").bind(userId, productId),
-    ]) : []),
     ...entries.map(([productId, amount]) => db.prepare(`INSERT INTO holdings (user_id, product_id, amount, updated_at)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(user_id, product_id)
@@ -188,7 +186,7 @@ export async function PUT(request: Request) {
       .bind(userId, entry.productId, entry.termDays, updatedAt)] : []),
   ];
   if (statements.length > 0) await db.batch(statements);
-  return NextResponse.json({ saved: entries.length, manualUpdated: overrideEntries.length, productUpdated: manualProductUpdates.length, productDeleted: deletedManualProductIds.length + (hiddenProductsProvided ? hiddenProductIds.length : 0), updatedAt }, { headers: privateResponseHeaders });
+  return NextResponse.json({ saved: entries.length, manualUpdated: overrideEntries.length, productUpdated: manualProductUpdates.length, productDeleted: deletedManualProductIds.length, productHidden: hiddenProductsProvided ? hiddenProductIds.length : 0, updatedAt }, { headers: privateResponseHeaders });
 }
 
 function sanitizeChangedProductIds(value: unknown, productIds: Set<string>) {

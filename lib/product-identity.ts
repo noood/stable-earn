@@ -22,11 +22,12 @@ export type ProductIdentityChange = {
 };
 
 export function productIdentityFingerprint(snapshot: IdentitySnapshot) {
+  // Identity describes the offer, not a mutable availability window. APR,
+  // quota and subscription timestamps may be omitted or change between the
+  // product-list and position endpoints; they must not create a new product.
   return JSON.stringify({
     productType: snapshot.productType ?? null,
     termDays: snapshot.termDays ?? null,
-    subscriptionStartsAt: snapshot.subscriptionStartsAt ?? null,
-    subscriptionEndsAt: snapshot.subscriptionEndsAt ?? null,
   });
 }
 

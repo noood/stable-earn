@@ -1,6 +1,6 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { NextResponse } from "next/server";
-import { fetchBinanceFlexibleSnapshot, fetchBinanceLockedSnapshot, type BinanceFlexibleSnapshot } from "@/lib/integrations/binance";
+import { fetchBinanceFlexibleSnapshot, fetchBinanceLockedSnapshot, type BinanceFlexibleSnapshot, type BinanceLockedSnapshot } from "@/lib/integrations/binance";
 import { fetchBitgetSavingsSnapshot, type BitgetSavingsSnapshot } from "@/lib/integrations/bitget";
 import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, fetchBybitShortFixedSnapshots } from "@/lib/integrations/bybit";
 import { fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
@@ -14,7 +14,7 @@ import { isLocalPreviewRequest, localPrivateProductsPreview, localSyncScenarioPr
 import { cachedHoldingTimes } from "@/lib/holding-cache";
 import { compareProductIdentity, type ProductIdentityChange } from "@/lib/product-identity";
 import { prepareProductCatalogSync, resolveCatalogProductIds, type ProductCatalogSync } from "@/lib/product-catalog";
-import type { HoldingSyncState, Product } from "@/lib/domain";
+import type { HoldingPosition, HoldingSyncState, Product } from "@/lib/domain";
 import { diagnosticErrorKind, syncDiagnostic, withSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
 import { acquireRefresh, claimDailyRefresh, refreshIsLocked, releaseRefresh, renewRefresh } from "@/lib/refresh-control";
 import { scheduledRefreshPending } from "@/lib/sync-notice";
@@ -35,6 +35,7 @@ type PrivateStatus = "not_configured" | "synced" | "partial" | "error";
 type PrivateResult<T> = { snapshot: T | null; status: PrivateStatus; diagnostic?: string };
 type BinanceAccountSnapshot = BinanceFlexibleSnapshot & {
   sync: { flexible: boolean; locked: boolean };
+  positions: BinanceLockedSnapshot["positions"];
 };
 type PrivateStatuses = {
   binanceGlobal: PrivateStatus;
@@ -52,6 +53,7 @@ type PrivateProductsPayload = {
   holdingSourceIds: string[];
   holdingFallbacks: Record<string, string>;
   holdingSyncStates: Record<string, HoldingSyncState>;
+  holdingPositions: HoldingPosition[];
   fetchedAt: string;
   partial: boolean;
   note: string;
@@ -178,6 +180,7 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
     if (retryable && !acceptPartial) throw new Error("已配置平台未完整同步");
     await db.batch([
       ...catalog.statements,
+      ...prepareHoldingPositionStatements(db, userId, payload.holdingPositions),
       prepareSyncCacheSave(db, userId, privateCacheKey, payload, payload.fetchedAt),
     ]);
     progress.committed = true;
@@ -193,11 +196,27 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
 export async function listPrivateSyncUserIds(db: D1Database) {
   const result = await db.prepare(`SELECT user_id FROM exchange_credentials
       UNION SELECT user_id FROM holdings
+      UNION SELECT user_id FROM holding_positions
       UNION SELECT user_id FROM user_products
       UNION SELECT owner_id AS user_id FROM sync_snapshots
       UNION SELECT owner_id AS user_id FROM product_catalog
       ORDER BY user_id`).all<{ user_id: string }>();
   return result.results.map((row) => row.user_id);
+}
+
+function prepareHoldingPositionStatements(db: D1Database, userId: string, positions: HoldingPosition[]) {
+  const statements = [db.prepare("DELETE FROM holding_positions WHERE user_id = ?").bind(userId)];
+  for (const position of positions) {
+    statements.push(db.prepare(`INSERT INTO holding_positions
+        (user_id, product_id, position_key, amount, purchase_at, redeem_at, source, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, product_id, position_key)
+        DO UPDATE SET amount = excluded.amount, purchase_at = excluded.purchase_at,
+          redeem_at = excluded.redeem_at, source = excluded.source, updated_at = excluded.updated_at`)
+      .bind(userId, position.productId, holdingPositionKey(position), position.amount,
+        position.purchaseAt ?? null, position.redeemAt ?? null, position.source, position.updatedAt));
+  }
+  return statements;
 }
 
 async function buildPrivatePayload(
@@ -334,6 +353,10 @@ async function buildPrivatePayload(
     ...(bitget?.holdings ?? {}),
     ...(okxResult.snapshot?.holdings ?? {}),
   };
+  const freshHoldingPositions = [
+    ...(binanceGlobal?.positions ?? []).map((position) => ({ ...position, accountId: "binance-global" })),
+    ...(binanceBahrain?.positions ?? []).map((position) => ({ ...position, accountId: "binance-bahrain" })),
+  ];
   const fallbackRates = cached?.payload?.rates ?? [];
   const completeAccountIds = [
     binanceGlobalStatus === "synced" ? "binance-global" : null,
@@ -378,6 +401,25 @@ async function buildPrivatePayload(
     ...normalizedFreshHoldings,
   }).map(([productId, amount]) => [catalogProductIds[productId] ?? productId, amount] as const)
     .filter(([productId]) => activeProductIds.has(productId)));
+  const positionUpdatedAt = new Date().toISOString();
+  const normalizedHoldingPositions: HoldingPosition[] = freshHoldingPositions.flatMap((position) => {
+    const productId = catalogProductIds[position.sourceProductId];
+    if (!productId || !activeProductIds.has(productId)) return [];
+    return [{
+      productId,
+      positionId: position.positionId,
+      amount: position.amount,
+      purchaseAt: position.purchaseAt,
+      redeemAt: position.redeemAt,
+      source: "api" as const,
+      updatedAt: positionUpdatedAt,
+    }];
+  });
+  const positionByKey = new Map<string, HoldingPosition>(
+    (cached?.payload?.holdingPositions ?? []).map((position) => [holdingPositionKey(position), position]),
+  );
+  for (const position of normalizedHoldingPositions) positionByKey.set(holdingPositionKey(position), position);
+  const holdingPositions = [...positionByKey.values()].filter((position) => activeProductIds.has(position.productId));
   const freshHoldingProductIds = new Set(Object.keys(normalizedFreshHoldings));
   const privateStatus: PrivateStatuses = {
     binanceGlobal: binanceGlobalStatus,
@@ -437,6 +479,7 @@ async function buildPrivatePayload(
       ])].filter((productId) => activeProductIds.has(productId)),
       holdingFallbacks,
       holdingSyncStates,
+      holdingPositions,
       fetchedAt: updatedAt,
       partial,
       note: `${buildNote(failures)} ${fallbackNote}`.trim(),
@@ -470,6 +513,7 @@ function cachedResponse(
     holdingSyncStates: failed
       ? Object.fromEntries(Object.entries(payload.holdingSyncStates ?? {}).map(([id, status]) => [id, status === "not_configured" ? status : "error"]))
       : payload.holdingSyncStates,
+    holdingPositions: payload.holdingPositions ?? [],
     fetchedAt: record.updatedAt ?? payload.fetchedAt,
     cache: syncCacheMetadata(record, state, now, manualCooldownDuration),
     note: state === "syncing" ? statusText : `${statusText} ${normalizeLegacyNote(payload.note)}`.trim(),
@@ -493,6 +537,7 @@ function initialSyncingResponse(
     holdingSourceIds: [],
     holdingFallbacks: {},
     holdingSyncStates: {},
+    holdingPositions: [],
     partial: false,
     note: state === "syncing" ? "正在更新数据中，请稍候。" : "尚无成功数据。",
     failures: [],
@@ -514,6 +559,10 @@ function initialErrorResponse(
 
 function updatedFallbackTime(value: string | undefined) {
   return value ?? new Date(0).toISOString();
+}
+
+function holdingPositionKey(position: Pick<HoldingPosition, "productId" | "positionId" | "purchaseAt" | "redeemAt">) {
+  return [position.productId, position.positionId ?? "", position.purchaseAt ?? "", position.redeemAt ?? ""].join("\u0000");
 }
 
 function runPrivate<T>(platform: string, configured: boolean, task: () => Promise<T>): Promise<PrivateResult<T>> {
@@ -549,6 +598,7 @@ async function fetchBinanceAccountSnapshot(
       ...(flexible.status === "fulfilled" ? flexible.value.holdings : {}),
       ...(locked.status === "fulfilled" ? locked.value.holdings : {}),
     },
+    positions: locked.status === "fulfilled" ? locked.value.positions : [],
     sync: { flexible: flexible.status === "fulfilled", locked: locked.status === "fulfilled" },
   };
 }

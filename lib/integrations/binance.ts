@@ -1,7 +1,7 @@
 import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import { buildProductIdentity } from "@/lib/product-identity";
 import type { LiveRate } from "@/lib/live-rates";
-import type { Product } from "@/lib/domain";
+import type { HoldingPosition, Product } from "@/lib/domain";
 
 type Credentials = {
   apiKey: string;
@@ -73,7 +73,12 @@ export type BinanceFlexibleSnapshot = {
   holdings: Record<string, number>;
 };
 
-export type BinanceLockedSnapshot = BinanceFlexibleSnapshot;
+export type BinanceLockedSnapshot = BinanceFlexibleSnapshot & {
+  positions: Array<Omit<HoldingPosition, "productId" | "updatedAt" | "source"> & {
+    sourceProductId: string;
+    asset: Product["asset"];
+  }>;
+};
 
 const accounts = {
   global: {
@@ -167,7 +172,7 @@ export async function fetchBinanceLockedSnapshot(
 ): Promise<BinanceLockedSnapshot> {
   const accountConfig = accounts[account];
   const supported = new Set(assets.map((asset) => asset.toUpperCase()));
-  const [products, positions] = await Promise.all([
+  const [products, positionsResponse] = await Promise.all([
     signedGet<PageResponse<LockedProductRow>>(
       "/sapi/v1/simple-earn/locked/list",
       { current: 1, size: 100 },
@@ -181,7 +186,7 @@ export async function fetchBinanceLockedSnapshot(
   ]);
 
   const productRows = products.rows ?? [];
-  const positionRows = positions.rows ?? [];
+  const positionRows = positionsResponse.rows ?? [];
   const fetchedAt = new Date().toISOString();
   const rates: LiveRate[] = [];
   const rateByProject = new Map<string, LiveRate>();
@@ -235,7 +240,22 @@ export async function fetchBinanceLockedSnapshot(
     holdings[projectId] = (holdings[projectId] ?? 0) + finiteNumber(row.amount ?? row.principal);
   }
 
-  return { rates, holdings };
+  const positions = positionRows.flatMap((row) => {
+    const projectId = String(row.projectId ?? "").trim();
+    const asset = String(row.asset ?? "").toUpperCase() as Product["asset"];
+    const amount = finiteNumber(row.amount ?? row.principal);
+    if (!projectId || !supported.has(asset) || amount <= 0) return [];
+    return [{
+      sourceProductId: projectId,
+      asset,
+      positionId: row.positionId === undefined ? undefined : String(row.positionId),
+      amount,
+      purchaseAt: timestampIso(row.purchaseTime),
+      redeemAt: timestampIso(row.redeemDate),
+    }];
+  });
+
+  return { rates, holdings, positions };
 }
 
 function lockedRate(
@@ -267,7 +287,8 @@ function lockedRate(
     minimumAmount: minimum && minimum > 0 ? minimum : undefined,
     subscriptionStartsAt: timestampIso(detail?.subscriptionStartTime),
     availability: detail?.isSoldOut || /sold.?out|unavailable|off.?line/i.test(detail?.status ?? "") ? "unavailable" : "available",
-    rateCoverage: "complete",
+    rateCoverage: maximum === undefined ? "base_only" : "complete",
+    capacitySource: maximum === undefined ? "cache" : "live",
     catalog: {
       accountId: account === "global" ? "binance-global" : "binance-bahrain",
       exchange: "binance",

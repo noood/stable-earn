@@ -61,6 +61,9 @@ export type Product = {
   tiers: Tier[];
   source: RateSource;
   rateCoverage: RateCoverage;
+  /** Whether the displayed quota came from the latest response or a known cache. */
+  capacitySource?: "live" | "cache";
+  capacityFetchedAt?: string;
   externalProductId?: string;
   identityKey: string;
   identityFingerprint?: string;
@@ -70,6 +73,17 @@ export type Product = {
 } & ProductDataSource;
 
 export type HoldingMap = Record<string, number>;
+
+/** A user position normalized from an authenticated exchange response. */
+export type HoldingPosition = {
+  productId: string;
+  positionId?: string;
+  amount: number;
+  purchaseAt?: string;
+  redeemAt?: string;
+  source: "api" | "manual";
+  updatedAt: string;
+};
 
 type Allocation = Tier & { amount: number };
 

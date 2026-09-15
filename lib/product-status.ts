@@ -27,6 +27,7 @@ export function productInformationNote(issues: ProductInformationIssue[]) {
 export function productInformationIssues(
   product: Product,
   override?: ProductOverride,
+  hasExternalPurchaseTiming = false,
 ): ProductInformationIssue[] {
   const issues: ProductInformationIssue[] = [];
   const apiManaged = product.productDataMode === "api";
@@ -44,7 +45,7 @@ export function productInformationIssues(
     issues.push(activity
       ? apiManaged ? "活动期限待获取" : "活动期限待填写"
       : apiManaged ? "锁定期限待获取" : "锁定期限待填写");
-  } else if (productNeedsPurchaseDate(product) && !productTermStatus(product, override?.purchaseDate)) {
+  } else if (productNeedsPurchaseDate(product) && !hasExternalPurchaseTiming && !productTermStatus(product, override?.purchaseDate)) {
     issues.push("买入日待填写");
   }
 
@@ -55,8 +56,9 @@ export function productParticipatesInInterest(
   product: Product,
   holding: number,
   override?: ProductOverride,
+  hasExternalPurchaseTiming = false,
 ) {
-  return holding > 0 && productInformationIssues(product, override).length === 0;
+  return holding > 0 && productInformationIssues(product, override, hasExternalPurchaseTiming).length === 0;
 }
 
 /**
