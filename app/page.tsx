@@ -7,8 +7,9 @@ import { ApiSettings } from "@/app/components/api-settings";
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
 import { AccountBadge, ActionButton, HoldingSummary, Metric, MetricSkeleton, ModalFrame, TableCell } from "@/app/components/ui";
 import { effectiveApr, formatAmount, remainingHighYield, type Account, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product } from "@/lib/domain";
-import { applyProductOverride, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
+import { applyProductOverride, dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { holdingSyncNote, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
+import { apiFieldCapability } from "@/lib/api-capabilities";
 import { freshHoldingIdsForSave } from "@/lib/holding-cache";
 import { dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
 import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
@@ -795,10 +796,12 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
   const manualTerm = productNeedsManualTerm(baseProduct);
   const fixedFacts = product.productType === "fixed" || product.manualKind === "limited" ? fixedProductFacts(product) : [];
   const durationDays = productTermDays(product);
+  const apiManaged = baseProduct.productDataMode === "api";
   const apiTiming = holdingPosition?.source === "api" && (holdingPosition.purchaseAt || holdingPosition.redeemAt) ? holdingPosition : undefined;
+  const apiPurchaseDate = apiTiming?.purchaseAt ? dateOnlyFromTimestamp(apiTiming.purchaseAt) : null;
+  const purchaseDateFromApi = apiManaged && apiFieldCapability(product, "purchaseAt") === "supported";
   const termStatus = productTermStatus(product, manualSettings?.purchaseDate);
   const productInfoIssues = productInformationIssues(product, manualSettings, Boolean(apiTiming));
-  const apiManaged = baseProduct.productDataMode === "api";
   const rateHeadline = rateHeadlineFor(product, apiManaged);
   const sourceText = rateFallbackAt && product.rateCoverage !== "unavailable"
     ? `产品信息沿用 ${formatSyncDateTime(rateFallbackAt)} 的缓存数据`
@@ -825,7 +828,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
       {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
       {manualTerm && <ManualTermInput label="活动期限" value={manualSettings?.termDays ?? null} disabled={saving} onChange={(termDays) => onOverrideChange({ termDays })} />}
       {manualProduct && baseProduct.manualKind !== "flexible" && <ManualTermInput value={baseProduct.termDays ?? null} disabled={saving} onChange={(termDays) => onManualProductChange({ termDays: termDays ?? undefined })} />}
-      {productNeedsPurchaseDate(product) && durationDays && !apiTiming && <PurchaseDateInput value={manualSettings?.purchaseDate ?? null} durationDays={durationDays} disabled={saving} onChange={(purchaseDate) => onOverrideChange({ purchaseDate })} />}
+      {productNeedsPurchaseDate(product) && durationDays && <PurchaseDateInput value={purchaseDateFromApi ? apiPurchaseDate : manualSettings?.purchaseDate ?? null} durationDays={durationDays} disabled={saving || purchaseDateFromApi} source={purchaseDateFromApi ? "api" : undefined} onChange={(purchaseDate) => { if (!purchaseDateFromApi) onOverrideChange({ purchaseDate }); }} />}
     </div>}
   </div>;
 }
@@ -940,7 +943,7 @@ function ManualNumberInput({ label, value, placeholder, suffix, note, disabled, 
   return <label className="manual-field"><span className="manual-field-label">{label}</span><span className="manual-field-control"><input type="text" inputMode="decimal" placeholder={placeholderText} value={displayValue} onFocus={(event) => event.currentTarget.select()} onChange={(event) => updateValue(event.target.value)} onBlur={() => setDisplayValue(value === null ? "" : String(value))} disabled={disabled} aria-label={label} /><span>{suffix}</span></span>{note && <span className="manual-field-note manual-field-note-control">{note}</span>}</label>;
 }
 
-function PurchaseDateInput({ value, durationDays, disabled, onChange }: { value: string | null; durationDays: number; disabled: boolean; onChange: (value: string | null) => void }) {
+function PurchaseDateInput({ value, durationDays, disabled, source, onChange }: { value: string | null; durationDays: number; disabled: boolean; source?: "api"; onChange: (value: string | null) => void }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const selectedDate = parseCalendarDate(value);
@@ -974,7 +977,7 @@ function PurchaseDateInput({ value, durationDays, disabled, onChange }: { value:
   const todayValue = calendarDateValue(todayCalendarDate());
   const visibleMonthIndex = visibleMonth.getUTCMonth();
 
-  return <div className="manual-field"><span className="manual-field-label">买入日</span><button ref={buttonRef} type="button" className={`manual-date-trigger ${value ? "" : "manual-date-trigger-empty"}`} aria-label="买入日" aria-haspopup="dialog" aria-expanded={open} disabled={disabled} onClick={toggleCalendar}><span>{selectedDate ? calendarDateLabel(selectedDate) : "选择日期"}</span><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="2" /><path d="M6.5 2.8v3.4M13.5 2.8v3.4M3 8h14" /></svg></button><span className="manual-field-note">{maturity && Number.isFinite(maturity.getTime()) ? `按 ${durationDays} 天自动计算：${formatShortDate(maturity.toISOString())} 到期` : `填写后按 ${durationDays} 天自动计算到期日`}</span>{open && createPortal(<div ref={menuRef} className="surface-popover calendar-popover" role="dialog" aria-label="选择买入日" style={{ top: position.top, left: position.left }}><div className="calendar-header"><button type="button" className="icon-button calendar-header-button" aria-label="上个月" onClick={() => setVisibleMonth((current) => shiftCalendarMonth(current, -1))}>‹</button><p>{visibleMonth.getUTCFullYear()} 年 {visibleMonthIndex + 1} 月</p><button type="button" className="icon-button calendar-header-button" aria-label="下个月" onClick={() => setVisibleMonth((current) => shiftCalendarMonth(current, 1))}>›</button></div><div className="calendar-weekdays" aria-hidden="true">{["一", "二", "三", "四", "五", "六", "日"].map((day) => <span key={day}>{day}</span>)}</div><div className="calendar-days" role="grid">{calendarDays.map((day) => { const dayValue = calendarDateValue(day); const outside = day.getUTCMonth() !== visibleMonthIndex; return <button key={dayValue} type="button" role="gridcell" aria-label={calendarDayAriaLabel(day)} aria-selected={dayValue === selectedValue} aria-current={dayValue === todayValue ? "date" : undefined} data-outside={outside ? "true" : undefined} onClick={() => { onChange(dayValue); setOpen(false); }}>{day.getUTCDate()}</button>; })}</div><div className="calendar-footer"><button type="button" disabled={!value} onClick={() => { onChange(null); setOpen(false); }}>清除</button><button type="button" onClick={() => { onChange(todayValue); setOpen(false); }}>今天</button></div></div>, document.body)}</div>;
+  return <div className="manual-field"><span className="manual-field-label">买入日</span><button ref={buttonRef} type="button" className={`manual-date-trigger ${value ? "" : "manual-date-trigger-empty"}`} aria-label="买入日" aria-haspopup="dialog" aria-expanded={open} disabled={disabled} onClick={toggleCalendar}><span>{selectedDate ? calendarDateLabel(selectedDate) : "选择日期"}</span><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="2" /><path d="M6.5 2.8v3.4M13.5 2.8v3.4M3 8h14" /></svg></button><span className="manual-field-note">{source === "api" ? (value ? "来自 API，不可手动修改" : "来自 API，买入日待获取") : maturity && Number.isFinite(maturity.getTime()) ? `按 ${durationDays} 天自动计算：${formatShortDate(maturity.toISOString())} 到期` : `填写后按 ${durationDays} 天自动计算到期日`}</span>{open && createPortal(<div ref={menuRef} className="surface-popover calendar-popover" role="dialog" aria-label="选择买入日" style={{ top: position.top, left: position.left }}><div className="calendar-header"><button type="button" className="icon-button calendar-header-button" aria-label="上个月" onClick={() => setVisibleMonth((current) => shiftCalendarMonth(current, -1))}>‹</button><p>{visibleMonth.getUTCFullYear()} 年 {visibleMonthIndex + 1} 月</p><button type="button" className="icon-button calendar-header-button" aria-label="下个月" onClick={() => setVisibleMonth((current) => shiftCalendarMonth(current, 1))}>›</button></div><div className="calendar-weekdays" aria-hidden="true">{["一", "二", "三", "四", "五", "六", "日"].map((day) => <span key={day}>{day}</span>)}</div><div className="calendar-days" role="grid">{calendarDays.map((day) => { const dayValue = calendarDateValue(day); const outside = day.getUTCMonth() !== visibleMonthIndex; return <button key={dayValue} type="button" role="gridcell" aria-label={calendarDayAriaLabel(day)} aria-selected={dayValue === selectedValue} aria-current={dayValue === todayValue ? "date" : undefined} data-outside={outside ? "true" : undefined} onClick={() => { onChange(dayValue); setOpen(false); }}>{day.getUTCDate()}</button>; })}</div><div className="calendar-footer"><button type="button" disabled={!value} onClick={() => { onChange(null); setOpen(false); }}>清除</button><button type="button" onClick={() => { onChange(todayValue); setOpen(false); }}>今天</button></div></div>, document.body)}</div>;
 }
 
 function parseCalendarDate(value: string | null) {

@@ -1,4 +1,5 @@
 import type { HoldingSyncState, Product } from "./domain";
+import { apiFieldCapability } from "./api-capabilities";
 import {
   productNeedsManualLimit,
   productNeedsManualTerm,
@@ -18,6 +19,7 @@ export type ProductInformationIssue =
   | "活动期限待获取"
   | "锁定期限待填写"
   | "锁定期限待获取"
+  | "买入日待获取"
   | "买入日待填写";
 
 export function productInformationNote(issues: ProductInformationIssue[]) {
@@ -46,7 +48,7 @@ export function productInformationIssues(
       ? apiManaged ? "活动期限待获取" : "活动期限待填写"
       : apiManaged ? "锁定期限待获取" : "锁定期限待填写");
   } else if (productNeedsPurchaseDate(product) && !hasExternalPurchaseTiming && !productTermStatus(product, override?.purchaseDate)) {
-    issues.push("买入日待填写");
+    issues.push(apiManaged && apiFieldCapability(product, "purchaseAt") === "supported" ? "买入日待获取" : "买入日待填写");
   }
 
   return issues;

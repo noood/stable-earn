@@ -97,7 +97,8 @@ export async function prepareProductCatalogSync(
       : undefined;
     const selectedCurrent = current ?? baseline;
     const id = selectedCurrent?.product_id ?? catalogProductId(canonicalProductId, identityKey, fingerprint);
-    const base = seed ?? (selectedCurrent ? parseProduct(selectedCurrent.payload)[0] : undefined) ?? productTemplateFromRate(rate, id, identityKey);
+    const selectedBase = seed ?? (selectedCurrent ? parseProduct(selectedCurrent.payload)[0] : undefined);
+    const base = restoreCachedCapacity(selectedBase, identityCandidates) ?? productTemplateFromRate(rate, id, identityKey);
     if (!base) continue;
 
     const product = productFromRate(base, rate, id, identityKey);
@@ -303,6 +304,33 @@ function preferredCatalogRow(
   })[0];
 }
 
+/**
+ * A one-time identity merge may keep the row carrying the user's holding,
+ * while an archived duplicate still has the last known quota. Reuse that
+ * finite quota as cache data instead of exposing a false "limit pending" state.
+ */
+function restoreCachedCapacity(base: Product | undefined, candidates: CatalogRow[]) {
+  if (!base) return undefined;
+  const currentMax = base.tiers[0]?.max;
+  if (currentMax !== null && currentMax !== undefined && Number.isFinite(currentMax)) return base;
+  const cached = candidates
+    .map((row) => parseProduct(row.payload)[0])
+    .filter((product): product is Product => Boolean(product))
+    .map((product) => ({ product, max: product.tiers[0]?.max }))
+    .filter(({ max }) => max !== null && max !== undefined && Number.isFinite(max) && max > 0)
+    .sort((left, right) => Number(right.max) - Number(left.max))[0];
+  if (!cached) return base;
+  return {
+    ...base,
+    tiers: base.tiers.map((tier, index) => index === 0 && tier.max === null
+      ? { ...tier, max: cached.max! }
+      : tier),
+    rateCoverage: base.rateCoverage === "base_only" ? "complete" : base.rateCoverage,
+    capacitySource: "cache" as const,
+    capacityFetchedAt: cached.product.capacityFetchedAt ?? cached.product.source.fetchedAt,
+  };
+}
+
 function resolveExistingRow(rows: CatalogRow[], sourceId: string) {
   return rows.find((row) => row.product_id === sourceId)
     ?? rows.find((row) => row.identity_key === sourceId)
@@ -403,6 +431,11 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
       ? { ...tier, id: `${id}-tier-${index}`, apr: rate.tierAprs[index] }
       : index === 0 ? { ...tier, id: `${id}-tier-${index}`, apr: rate.apr } : { ...tier, id: `${id}-tier-${index}` });
   const capacityKnown = tiers[0]?.max !== null && tiers[0]?.max !== undefined;
+  const capacitySource = rate.capacitySource === "cache"
+    ? capacityKnown ? "cache" : undefined
+    : rate.capacitySource === "live"
+      ? "live"
+      : capacityKnown ? base.capacitySource : undefined;
   return {
     ...base,
     id,
@@ -423,8 +456,11 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
     rateCoverage: rate.rateCoverage === "base_only" && capacityKnown
       ? "complete"
       : rate.rateCoverage ?? (rate.tiers ? "complete" : base.rateCoverage),
-    capacitySource: rate.capacitySource ?? base.capacitySource,
-    capacityFetchedAt: rate.capacitySource === "cache" ? base.capacityFetchedAt ?? base.source.fetchedAt : rate.capacityFetchedAt,
+    // A cache source is truthful only when the cached tier actually supplied
+    // a finite limit. If both the live response and cache lack the limit,
+    // keep the product as base_only without claiming that a quota was cached.
+    capacitySource,
+    capacityFetchedAt: capacitySource === "cache" ? base.capacityFetchedAt ?? base.source.fetchedAt : rate.capacityFetchedAt,
     source: { kind: "live", label: rate.sourceLabel, fetchedAt: rate.fetchedAt },
   };
 }
