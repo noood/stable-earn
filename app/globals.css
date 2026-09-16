@@ -324,6 +324,7 @@ input:focus-visible,
   align-items: baseline;
 }
 .product-fact span:first-child { font-weight: 650; }
+.product-fact-separator { margin: 0 .35rem; color: var(--text-muted); font-weight: 400; }
 .product-fact-note { color: var(--text-muted); font-weight: 500; }
 .product-fact-warning { color: var(--danger-text); font-weight: 700; }
 .manual-field {

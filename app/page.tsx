@@ -828,7 +828,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
   const lifecycleStatusWarning = apiMaturity
     ? apiMaturityIsPast(apiMaturity)
     : Boolean(termStatus && termStatus.remainingDays <= 0);
-  const lifecycleValue = <>{lifecycleDateLabel}{termStatusText && <span className={lifecycleStatusWarning ? "product-fact-warning" : "product-fact-note"}>（{termStatusText}）</span>}</>;
+  const lifecycleValue = <>{lifecycleDateLabel}{termStatusText && <><span className="product-fact-separator">｜</span><span className={lifecycleStatusWarning ? "product-fact-warning" : "product-fact-note"}>{termStatusText}</span></>}</>;
 
   return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
     {fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
