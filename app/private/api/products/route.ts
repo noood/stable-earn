@@ -194,14 +194,18 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
 }
 
 export async function listPrivateSyncUserIds(db: D1Database) {
-  const result = await db.prepare(`SELECT user_id FROM exchange_credentials
-      UNION SELECT user_id FROM holdings
-      UNION SELECT user_id FROM holding_positions
-      UNION SELECT user_id FROM user_products
-      UNION SELECT owner_id AS user_id FROM sync_snapshots
-      UNION SELECT owner_id AS user_id FROM product_catalog
-      ORDER BY user_id`).all<{ user_id: string }>();
-  return result.results.map((row) => row.user_id);
+  // Keep each read as a simple SELECT. D1 can reject a compound UNION query
+  // with SQLITE_ERROR even when it only contains a handful of branches.
+  const statements = [
+    "SELECT user_id FROM exchange_credentials",
+    "SELECT user_id FROM holdings",
+    "SELECT user_id FROM holding_positions",
+    "SELECT user_id FROM user_products",
+    "SELECT owner_id AS user_id FROM sync_snapshots",
+    "SELECT owner_id AS user_id FROM product_catalog",
+  ].map((query) => db.prepare(query));
+  const results = await Promise.all(statements.map((statement) => statement.all<{ user_id: string }>()));
+  return [...new Set(results.flatMap((result) => result.results.map((row) => row.user_id)))].sort();
 }
 
 function prepareHoldingPositionStatements(db: D1Database, userId: string, positions: HoldingPosition[]) {

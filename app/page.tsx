@@ -597,6 +597,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   const automaticRefreshSummary = updating || scheduledState !== "scheduled" || !syncCache?.scheduledAt
     ? null
     : formatSyncDateTime(syncCache.scheduledAt);
+  const scheduledRefreshFailed = !isDemo && !updating && scheduledState === "overdue";
   const currentDataSummary = dataBlocked ? "" : updating
     ? ""
     : localPreview
@@ -606,8 +607,8 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     : isDemo
       ? "以下均为演示数据。"
       : lastUpdated
-        ? `当前数据截至 ${formatSyncDateTime(lastUpdated)}${scheduledState === "overdue" ? "；本轮自动更新尚未完成" : automaticRefreshSummary ? `，预计 ${automaticRefreshSummary} 自动更新` : ""}。`
-        : "暂无成功数据。";
+        ? `当前数据截至 ${formatSyncDateTime(lastUpdated)}${scheduledRefreshFailed ? "；" : automaticRefreshSummary ? `，预计 ${automaticRefreshSummary} 自动更新` : ""}${scheduledRefreshFailed ? "" : "。"}`
+        : scheduledRefreshFailed ? "" : "暂无成功数据。";
   const failureSummary = syncFailureSummary(syncFailures);
 
   return (
@@ -634,7 +635,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
             {dataBlocked
               ? <p className="text-danger font-semibold">{serverReadFailureMessage}</p>
-            : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-warning font-semibold">数据正在更新中，请稍候。</span>}{!isDemo && !updating && hasSyncFailure && <span className="text-warning font-semibold"> {failureSummary}</span>}</p>}
+            : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-warning font-semibold">数据正在更新中，请稍候。</span>}{scheduledRefreshFailed && <span className="text-danger font-semibold">本轮自动更新失败，下次更新将重试。</span>}{!isDemo && !updating && !scheduledRefreshFailed && hasSyncFailure && <span className="text-warning font-semibold"> {failureSummary}</span>}</p>}
           </div>
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
         </div>
