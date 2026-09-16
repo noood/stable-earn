@@ -598,6 +598,9 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
     ? null
     : formatSyncDateTime(syncCache.scheduledAt);
   const scheduledRefreshFailed = !isDemo && !updating && scheduledState === "overdue";
+  const scheduledFailureLabel = syncCache?.scheduledAt
+    ? `${formatSyncDateTime(syncCache.scheduledAt)} 定时更新失败，下次更新将重试。`
+    : "定时更新失败，下次更新将重试。";
   const currentDataSummary = dataBlocked ? "" : updating
     ? ""
     : localPreview
@@ -635,7 +638,7 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
             {dataBlocked
               ? <p className="text-danger font-semibold">{serverReadFailureMessage}</p>
-            : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-secondary font-normal">数据正在更新中，请稍候。</span>}{scheduledRefreshFailed && <span className="text-danger font-semibold">本轮自动更新失败，下次更新将重试。</span>}{!isDemo && !updating && !scheduledRefreshFailed && hasSyncFailure && <span className="text-danger font-semibold"> {failureSummary}</span>}</p>}
+            : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-secondary font-normal">数据正在更新中，请稍候。</span>}{scheduledRefreshFailed && <span className="text-danger font-semibold">{scheduledFailureLabel}</span>}{!isDemo && !updating && !scheduledRefreshFailed && hasSyncFailure && <span className="text-danger font-semibold"> {failureSummary}</span>}</p>}
           </div>
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
         </div>
