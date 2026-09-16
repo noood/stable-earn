@@ -739,7 +739,7 @@ function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUn
 
 function ProductRow({ product, baseProduct, manualSettings, holdingPosition, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, rateFallbackAt, holdingFallbackAt, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingPosition?: HoldingPosition; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; rateFallbackAt?: string; holdingFallbackAt?: string; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
   const account = accounts.find((item) => item.id === product.accountId)!;
-  const hasApiTiming = Boolean(holdingPosition?.purchaseAt || holdingPosition?.redeemAt);
+  const hasApiTiming = Boolean(holdingPosition?.purchaseAt);
   const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming);
   return (
     <tr className={`product-row ${!editing && holdingAvailable && holding <= 0 ? "product-row-empty" : ""}`}>
@@ -778,7 +778,7 @@ function InlineSelect({ ariaLabel, value, options, disabled, className = "", onC
     setOpen((current) => !current);
   }
 
-  return <><button ref={buttonRef} type="button" className={`inline-select-trigger ${className}`} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={toggleMenu}><span>{selectedLabel}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></button>{open && createPortal(<div ref={menuRef} className="inline-select-menu" role="listbox" aria-label={ariaLabel} style={{ top: position.top, left: position.left, maxHeight: position.maxHeight }}>{options.map((option) => <button key={option.value} type="button" role="option" aria-selected={option.value === value} onClick={() => { onChange(option.value); setOpen(false); }}><span>{option.label}</span>{option.value === value && <span aria-hidden="true">✓</span>}</button>)}</div>, document.body)}</>;
+  return <><button ref={buttonRef} type="button" className={`inline-select-trigger ${className}`} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={toggleMenu}><span>{selectedLabel}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></button>{open && createPortal(<div ref={menuRef} className="inline-select-menu" role="listbox" aria-label={ariaLabel} style={{ top: position.top, left: position.left, maxHeight: position.maxHeight }}>{options.map((option) => <button key={option.value} type="button" role="option" aria-selected={option.value === value} disabled={disabled} onClick={() => { onChange(option.value); setOpen(false); }}><span>{option.label}</span>{option.value === value && <span aria-hidden="true">✓</span>}</button>)}</div>, document.body)}</>;
 }
 
 function EmptyProductState({ message = "吸引人的稳定理财尚未出现！" }: { message?: string }) {
@@ -799,9 +799,9 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
   const apiManaged = baseProduct.productDataMode === "api";
   const apiTiming = holdingPosition?.source === "api" && (holdingPosition.purchaseAt || holdingPosition.redeemAt) ? holdingPosition : undefined;
   const apiPurchaseDate = apiTiming?.purchaseAt ? dateOnlyFromTimestamp(apiTiming.purchaseAt) : null;
-  const purchaseDateFromApi = apiManaged && apiFieldCapability(product, "purchaseAt") === "supported";
+  const apiDateSupported = apiManaged && apiFieldCapability(product, "purchaseAt") === "supported";
   const termStatus = productTermStatus(product, manualSettings?.purchaseDate);
-  const productInfoIssues = productInformationIssues(product, manualSettings, Boolean(apiTiming));
+  const productInfoIssues = productInformationIssues(product, manualSettings, Boolean(apiPurchaseDate));
   const rateHeadline = rateHeadlineFor(product, apiManaged);
   const sourceText = rateFallbackAt && product.rateCoverage !== "unavailable"
     ? `产品信息沿用 ${formatSyncDateTime(rateFallbackAt)} 的缓存数据`
@@ -816,19 +816,32 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
         : <>已于 {formatShortDate(termStatus.maturityDate)} 到期</>
       : "";
   const incompleteText = productInfoIssues.length > 0 ? productInformationNote(productInfoIssues) : "";
+  const lifecycleDate = apiDateSupported ? apiPurchaseDate : manualSettings?.purchaseDate ?? null;
+  const lifecycleDateLabel = lifecycleDate
+    ? formatFactDate(lifecycleDate)
+    : apiDateSupported ? "待获取" : "待填写";
+  const showLifecycleFact = Boolean(durationDays) && (!editing || (apiManaged && apiDateSupported));
+  const apiMaturity = apiTiming
+    ? apiTiming.redeemAt
+      ?? (apiTiming.purchaseAt && durationDays ? new Date(Date.parse(apiTiming.purchaseAt) + durationDays * 24 * 60 * 60 * 1000).toISOString() : undefined)
+    : undefined;
+  const lifecycleStatusWarning = apiMaturity
+    ? apiMaturityIsPast(apiMaturity)
+    : Boolean(termStatus && termStatus.remainingDays <= 0);
+  const lifecycleValue = <>{lifecycleDateLabel}{termStatusText && <span className={lifecycleStatusWarning ? "product-fact-warning" : "product-fact-note"}>（{termStatusText}）</span>}</>;
 
   return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
     {fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
+    {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
     {!editing && manualTerm && <ProductFact label="活动期限" value={durationDays ? formatTerm(durationDays) : "待填写"} />}
     {sourceText && <ProductMeta text={sourceText} warning={Boolean(rateFallbackAt)} />}
     {incompleteText && <ProductMeta text={incompleteText} warning={holding > 0} />}
-    {!editing && termStatusText && <ProductMeta text={termStatusText} warning={Boolean(termStatus && termStatus.remainingDays <= 0)} />}
     {editing && (manualApr || manualLimit || manualTerm || (manualProduct && baseProduct.manualKind !== "flexible") || (productNeedsPurchaseDate(product) && Boolean(durationDays))) && <div className="manual-fields">
       {manualLimit && <ManualLimitInput value={manualSettings?.firstTierLimit ?? null} asset={product.asset} disabled={saving} onChange={(firstTierLimitValue) => onOverrideChange({ firstTierLimit: firstTierLimitValue })} />}
       {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
       {manualTerm && <ManualTermInput label="活动期限" value={manualSettings?.termDays ?? null} disabled={saving} onChange={(termDays) => onOverrideChange({ termDays })} />}
       {manualProduct && baseProduct.manualKind !== "flexible" && <ManualTermInput value={baseProduct.termDays ?? null} disabled={saving} onChange={(termDays) => onManualProductChange({ termDays: termDays ?? undefined })} />}
-      {productNeedsPurchaseDate(product) && durationDays && <PurchaseDateInput value={purchaseDateFromApi ? apiPurchaseDate : manualSettings?.purchaseDate ?? null} durationDays={durationDays} disabled={saving || purchaseDateFromApi} source={purchaseDateFromApi ? "api" : undefined} onChange={(purchaseDate) => { if (!purchaseDateFromApi) onOverrideChange({ purchaseDate }); }} />}
+      {!apiDateSupported && productNeedsPurchaseDate(product) && durationDays && <PurchaseDateInput value={manualSettings?.purchaseDate ?? null} durationDays={durationDays} disabled={saving} onChange={(purchaseDate) => onOverrideChange({ purchaseDate })} />}
     </div>}
   </div>;
 }
@@ -847,6 +860,10 @@ function apiTermLifecycleText(product: Product, position: HoldingPosition): Reac
   return Date.parse(maturity) > Date.now()
     ? <>预计 {formatShortDate(maturity)} 到期</>
     : <>已于 {formatShortDate(maturity)} 到期</>;
+}
+
+function apiMaturityIsPast(value: string) {
+  return Date.parse(value) <= Date.now();
 }
 
 function ProductRateHeadline({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
@@ -876,8 +893,13 @@ function rateHeadlineFor(product: Product, apiManaged: boolean) {
   };
 }
 
-function ProductFact({ label, value }: { label: string; value: string }) {
+function ProductFact({ label, value }: { label: string; value: ReactNode }) {
   return <div className="product-fact"><span>{label}</span><span className="tabular-nums">{value}</span></div>;
+}
+
+function formatFactDate(value: string) {
+  const parsed = parseCalendarDate(value);
+  return parsed ? `${parsed.getUTCFullYear()}/${String(parsed.getUTCMonth() + 1).padStart(2, "0")}/${String(parsed.getUTCDate()).padStart(2, "0")}` : "待获取";
 }
 
 function ProductHolding({ product, account, holding, holdingAvailable, holdingSyncState, editing, editable, saving, holdingFallbackAt, productInfoIssues, onHoldingChange }: { product: Product; account: Account; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; holdingFallbackAt?: string; productInfoIssues: string[]; onHoldingChange: (value: number) => void }) {
@@ -940,10 +962,10 @@ function ManualNumberInput({ label, value, placeholder, suffix, note, disabled, 
   }
 
   const placeholderText = typeof placeholder === "number" ? placeholder.toFixed(2) : placeholder ?? "0.00";
-  return <label className="manual-field"><span className="manual-field-label">{label}</span><span className="manual-field-control"><input type="text" inputMode="decimal" placeholder={placeholderText} value={displayValue} onFocus={(event) => event.currentTarget.select()} onChange={(event) => updateValue(event.target.value)} onBlur={() => setDisplayValue(value === null ? "" : String(value))} disabled={disabled} aria-label={label} /><span>{suffix}</span></span>{note && <span className="manual-field-note manual-field-note-control">{note}</span>}</label>;
+  return <label className="manual-field"><span className="manual-field-label">{label}</span><span className={`manual-field-control ${disabled ? "manual-field-control-disabled" : ""}`}><input type="text" inputMode="decimal" placeholder={placeholderText} value={displayValue} onFocus={(event) => event.currentTarget.select()} onChange={(event) => updateValue(event.target.value)} onBlur={() => setDisplayValue(value === null ? "" : String(value))} disabled={disabled} aria-label={label} /><span>{suffix}</span></span>{note && <span className="manual-field-note manual-field-note-control">{note}</span>}</label>;
 }
 
-function PurchaseDateInput({ value, durationDays, disabled, source, onChange }: { value: string | null; durationDays: number; disabled: boolean; source?: "api"; onChange: (value: string | null) => void }) {
+function PurchaseDateInput({ value, durationDays, disabled, onChange }: { value: string | null; durationDays: number; disabled: boolean; onChange: (value: string | null) => void }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const selectedDate = parseCalendarDate(value);
@@ -977,7 +999,7 @@ function PurchaseDateInput({ value, durationDays, disabled, source, onChange }: 
   const todayValue = calendarDateValue(todayCalendarDate());
   const visibleMonthIndex = visibleMonth.getUTCMonth();
 
-  return <div className="manual-field"><span className="manual-field-label">买入日</span><button ref={buttonRef} type="button" className={`manual-date-trigger ${value ? "" : "manual-date-trigger-empty"}`} aria-label="买入日" aria-haspopup="dialog" aria-expanded={open} disabled={disabled} onClick={toggleCalendar}><span>{selectedDate ? calendarDateLabel(selectedDate) : "选择日期"}</span><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="2" /><path d="M6.5 2.8v3.4M13.5 2.8v3.4M3 8h14" /></svg></button><span className="manual-field-note">{source === "api" ? (value ? "来自 API，不可手动修改" : "来自 API，买入日待获取") : maturity && Number.isFinite(maturity.getTime()) ? `按 ${durationDays} 天自动计算：${formatShortDate(maturity.toISOString())} 到期` : `填写后按 ${durationDays} 天自动计算到期日`}</span>{open && createPortal(<div ref={menuRef} className="surface-popover calendar-popover" role="dialog" aria-label="选择买入日" style={{ top: position.top, left: position.left }}><div className="calendar-header"><button type="button" className="icon-button calendar-header-button" aria-label="上个月" onClick={() => setVisibleMonth((current) => shiftCalendarMonth(current, -1))}>‹</button><p>{visibleMonth.getUTCFullYear()} 年 {visibleMonthIndex + 1} 月</p><button type="button" className="icon-button calendar-header-button" aria-label="下个月" onClick={() => setVisibleMonth((current) => shiftCalendarMonth(current, 1))}>›</button></div><div className="calendar-weekdays" aria-hidden="true">{["一", "二", "三", "四", "五", "六", "日"].map((day) => <span key={day}>{day}</span>)}</div><div className="calendar-days" role="grid">{calendarDays.map((day) => { const dayValue = calendarDateValue(day); const outside = day.getUTCMonth() !== visibleMonthIndex; return <button key={dayValue} type="button" role="gridcell" aria-label={calendarDayAriaLabel(day)} aria-selected={dayValue === selectedValue} aria-current={dayValue === todayValue ? "date" : undefined} data-outside={outside ? "true" : undefined} onClick={() => { onChange(dayValue); setOpen(false); }}>{day.getUTCDate()}</button>; })}</div><div className="calendar-footer"><button type="button" disabled={!value} onClick={() => { onChange(null); setOpen(false); }}>清除</button><button type="button" onClick={() => { onChange(todayValue); setOpen(false); }}>今天</button></div></div>, document.body)}</div>;
+  return <div className="manual-field"><span className="manual-field-label">买入日</span><button ref={buttonRef} type="button" className={`manual-date-trigger ${value ? "" : "manual-date-trigger-empty"}`} aria-label="买入日" aria-haspopup="dialog" aria-expanded={open} disabled={disabled} onClick={toggleCalendar}><span>{selectedDate ? calendarDateLabel(selectedDate) : "选择日期"}</span><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="2" /><path d="M6.5 2.8v3.4M13.5 2.8v3.4M3 8h14" /></svg></button><span className="manual-field-note">{maturity && Number.isFinite(maturity.getTime()) ? `按 ${durationDays} 天自动计算：${formatShortDate(maturity.toISOString())} 到期` : `填写后按 ${durationDays} 天自动计算到期日`}</span>{open && createPortal(<div ref={menuRef} className="surface-popover calendar-popover" role="dialog" aria-label="选择买入日" style={{ top: position.top, left: position.left }}><div className="calendar-header"><button type="button" className="icon-button calendar-header-button" aria-label="上个月" disabled={disabled} onClick={() => setVisibleMonth((current) => shiftCalendarMonth(current, -1))}>‹</button><p>{visibleMonth.getUTCFullYear()} 年 {visibleMonthIndex + 1} 月</p><button type="button" className="icon-button calendar-header-button" aria-label="下个月" disabled={disabled} onClick={() => setVisibleMonth((current) => shiftCalendarMonth(current, 1))}>›</button></div><div className="calendar-weekdays" aria-hidden="true">{["一", "二", "三", "四", "五", "六", "日"].map((day) => <span key={day}>{day}</span>)}</div><div className="calendar-days" role="grid">{calendarDays.map((day) => { const dayValue = calendarDateValue(day); const outside = day.getUTCMonth() !== visibleMonthIndex; return <button key={dayValue} type="button" role="gridcell" aria-label={calendarDayAriaLabel(day)} aria-selected={dayValue === selectedValue} aria-current={dayValue === todayValue ? "date" : undefined} data-outside={outside ? "true" : undefined} disabled={disabled} onClick={() => { onChange(dayValue); setOpen(false); }}>{day.getUTCDate()}</button>; })}</div><div className="calendar-footer"><button type="button" disabled={disabled || !value} onClick={() => { onChange(null); setOpen(false); }}>清除</button><button type="button" disabled={disabled} onClick={() => { onChange(todayValue); setOpen(false); }}>今天</button></div></div>, document.body)}</div>;
 }
 
 function parseCalendarDate(value: string | null) {
@@ -1013,7 +1035,7 @@ function HoldingInput({ value, asset, disabled, onChange }: { value: number; ass
     onChange(Math.max(0, Number(normalized) || 0));
   }
 
-  return <label className="holding-editor holding-editor-editable"><span className="text-muted type-micro pointer-events-none font-medium">{asset}</span><input type="text" inputMode="decimal" placeholder="0.00" value={displayValue} onFocus={(event) => event.currentTarget.select()} onChange={(event) => updateValue(event.target.value)} onBlur={() => setDisplayValue(value > 0 ? String(value) : "")} disabled={disabled} aria-label={`${asset} 产品持仓`} className="type-body min-w-0 flex-1 bg-transparent text-left font-semibold tabular-nums outline-none disabled:opacity-60" /></label>;
+  return <label className={`holding-editor holding-editor-editable ${disabled ? "holding-editor-disabled" : ""}`}><span className="text-muted type-micro pointer-events-none font-medium">{asset}</span><input type="text" inputMode="decimal" placeholder="0.00" value={displayValue} onFocus={(event) => event.currentTarget.select()} onChange={(event) => updateValue(event.target.value)} onBlur={() => setDisplayValue(value > 0 ? String(value) : "")} disabled={disabled} aria-label={`${asset} 产品持仓`} className="type-body min-w-0 flex-1 bg-transparent text-left font-semibold tabular-nums outline-none" /></label>;
 }
 
 function tierLabel(min: number, max: number | null) { return max === null ? `${formatAmount(min)} 以上` : `${formatAmount(min)}–${formatAmount(max)}`; }
