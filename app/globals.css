@@ -573,7 +573,7 @@ input:focus-visible,
   white-space: normal;
 }
 .product-meta-warning,
-.holding-summary-note-warning { color: var(--warning-text); font-weight: 650; }
+.holding-summary-note-warning { color: var(--danger-text); font-weight: 650; }
 .product-row-empty {
   background: var(--surface-row-muted);
   color: var(--text-secondary);

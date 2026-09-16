@@ -17,7 +17,7 @@ export function AccountBadge({ account }: { account: Account }) {
 }
 
 export function Metric({ label, value, note, highlight = false, valueTone = "default" }: { label: string; value: string; note: string; highlight?: boolean; valueTone?: "default" | "warning" }) {
-  return <div className={`metric-item ${highlight ? "metric-item-highlight" : ""}`}><p className="text-muted type-caption">{label}</p><p className={`metric-value type-metric ${valueTone === "warning" ? "text-warning" : ""}`}>{value}</p><p className="metric-note text-muted type-micro">{note}</p></div>;
+  return <div className={`metric-item ${highlight ? "metric-item-highlight" : ""}`}><p className="text-muted type-caption">{label}</p><p className={`metric-value type-metric ${valueTone === "warning" ? "text-danger" : ""}`}>{value}</p><p className="metric-note text-muted type-micro">{note}</p></div>;
 }
 
 export function MetricSkeleton({ highlight = false }: { highlight?: boolean }) {
