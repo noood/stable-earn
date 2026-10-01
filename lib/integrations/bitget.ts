@@ -98,6 +98,23 @@ export async function fetchBitgetSavingsSnapshot(
   const productRows = productResults.flatMap((result) => result.status === "fulfilled" ? result.value.data ?? [] : []);
   const assetRows = assetsResult.status === "fulfilled" ? assetsResult.value.data?.resultList ?? [] : [];
 
+  // Temporary, sanitized trace for comparing Bitget's product-list IDs with
+  // the IDs returned by the assets/holdings endpoint. Keep only controlled
+  // product fields; never include credentials or the raw upstream payload.
+  syncDiagnostic("bitget_product_rows", {
+    fetchedAt,
+    rows: productRows
+      .filter((row) => ["USDT", "USDC", "USDGO"].includes(row.coin ?? ""))
+      .map((row) => ({
+        productId: normalizeExternalProductId(row.productId) ?? null,
+        coin: row.coin ?? null,
+        periodType: row.periodType ?? null,
+        status: row.status ?? null,
+        productLevel: row.productLevel ?? null,
+        apy: normalizeTiers(row.apyList),
+      })),
+  });
+
   // Temporary, sanitized trace for reconciling Bitget's upstream product ID
   // with the product that receives the holding in our catalog. Never include
   // credentials, signatures, request headers, or the full upstream payload.
