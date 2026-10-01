@@ -1,8 +1,3 @@
--- Remove the one-time stale Bitget holding created under the legacy catalog ID.
--- Keep the catalog row itself: the current product response may reuse it for
--- the live 10% offer. Only the erroneous cached holding and its cache markers
--- are removed. The live 0–300 holding is stored under its own catalog ID.
-
 DELETE FROM holdings
 WHERE product_id = 'api-bg-usdt-simple-1gd23qx';
 

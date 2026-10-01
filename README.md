@@ -42,8 +42,17 @@ npm run check
    - `POLICY_AUD`
 3. 设置 Worker Secret：`CREDENTIAL_ENCRYPTION_KEY`。
 4. 在 Cloudflare Queues 中创建队列 `stable-earn-sync`（首次部署或升级时只需创建一次）。生产者、消费者及重试配置由部署写入；若改名，请同步修改 `wrangler.jsonc` 中的两处队列名。
-5. 按顺序执行 `drizzle/` 中尚未执行的 D1 migration。`0008_stable_catalog_identity.sql` 会创建 API 持仓时间表，并把历史上因可变字段产生的重复目录行合并到一条记录；`0009_cleanup_bitget_duplicate_holding.sql` 是针对旧 Bitget USDT 持仓缓存的一次性清理。两者都需要在 D1 控制台或 Wrangler 中由维护者手动执行一次，例如：`npx wrangler d1 execute stablecoin-earn-monitor --remote --file=drizzle/0008_stable_catalog_identity.sql`，然后执行 `0009_cleanup_bitget_duplicate_holding.sql`。
+5. 按版本说明执行尚未执行且确实需要的 D1 migration。每个 migration 只针对目标数据库执行一次；不要因为重新部署 Worker 就重复执行历史 migration。
 6. 运行 `npm run deploy`，或使用 Cloudflare Workers Builds 自动部署。
+
+### D1 migration 的执行位置
+
+D1 migration 针对远程生产数据库，不在 `localhost:3000` 的本地开发数据库执行。Worker 部署不会自动执行 `drizzle/` 文件；部署和 D1 migration 是两个独立步骤。
+
+- 终端执行时使用 Wrangler 的 `--remote --file=...` 命令；
+- Cloudflare D1 Console 里只粘贴 SQL 内容，不要粘贴 `npx wrangler ...`；
+- 如果 Console 把注释和 SQL 压成一行，`--` 会把后面的内容全部当成注释，应删除注释并按语句分别执行；
+- 执行后必须在同一个远程 D1 Console 用 `SELECT` 验证，再刷新线上网址；本地页面不会反映远程 D1 的修改。
 
 `wrangler.jsonc` 只包含占位值。不要把真实账号、数据库 ID、Access 配置或密钥提交到 Git。部署后需要在应用中配置只读权限的交易所 API Key，并关闭交易、转账、申购、赎回和提现权限。公开演示不需要这些 Cloudflare 配置；私人页面需要使用者自己的 Workers、D1、Access 和 API Key。
 
