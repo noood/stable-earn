@@ -365,7 +365,10 @@ async function buildPrivatePayload(
   const completeAccountIds = [
     binanceGlobalStatus === "synced" ? "binance-global" : null,
     binanceBahrainStatus === "synced" ? "binance-bahrain" : null,
-    bybitGlobalStatus === "synced" ? "bybit-global" : null,
+    // Bybit's public product rows share this account id with private rows, so
+    // only treat the account as complete when both private and public reads
+    // succeeded. A public endpoint failure must not archive a cached product.
+    bybitGlobalStatus === "synced" && publicFailures.length === 0 ? "bybit-global" : null,
     // Bitget's sparse holding response does not prove zero for absent rows.
     // Keep explicit values (including 0), but do not infer an empty account.
     okxResult.status === "synced" ? "okx-global" : null,
@@ -405,6 +408,7 @@ async function buildPrivatePayload(
     ...normalizedFreshHoldings,
   }).map(([productId, amount]) => [catalogProductIds[productId] ?? productId, amount] as const)
     .filter(([productId]) => activeProductIds.has(productId)));
+
   const positionUpdatedAt = new Date().toISOString();
   const normalizedHoldingPositions: HoldingPosition[] = freshHoldingPositions.flatMap((position) => {
     const productId = catalogProductIds[position.sourceProductId];
@@ -451,6 +455,25 @@ async function buildPrivatePayload(
   ))
     .map(([productId, time]) => [catalogProductIds[productId] ?? productId, time])
     .filter(([productId]) => activeProductIds.has(productId) && !freshHoldingProductIds.has(productId)));
+  // Temporary, sanitized trace used to distinguish a live Bitget holding
+  // from a cached value and to show exactly which catalog ID received it.
+  const bitgetProductIds = new Set(catalog.products
+    .filter((product) => product.accountId === "bitget-global")
+    .map((product) => product.id));
+  const bitgetRelevant = (values: Record<string, number>) => Object.fromEntries(
+    Object.entries(values).filter(([productId]) => bitgetProductIds.has(productId)),
+  );
+  syncDiagnostic("bitget_holding_mapping", {
+    adapterHoldings: bitget?.holdings ?? {},
+    adapterToCatalog: Object.fromEntries(Object.keys(bitget?.holdings ?? {}).map((sourceId) => [
+      sourceId,
+      catalogProductIds[sourceId] ?? sourceId,
+    ])),
+    freshCatalogHoldings: bitgetRelevant(normalizedFreshHoldings),
+    cachedCatalogHoldings: bitgetRelevant(cached?.payload?.holdingUpdates ?? {}),
+    finalCatalogHoldings: bitgetRelevant(holdingUpdates),
+    finalFallbacks: bitgetRelevant(holdingFallbacks),
+  });
   const successfulPrivateJobs = Object.values(privateStatus).filter((status) => status === "synced" || status === "partial").length;
   // Log before the all-failed throw, which deliberately preserves the old cache.
   syncDiagnostic("sync_platforms", {
@@ -669,7 +692,13 @@ function buildFailures(status: PrivateStatuses, diagnostics: PrivateDiagnostics,
 }
 
 function buildNote(failures: string[]) {
-  return failures.length ? `${failures.join("、")} API 获取失败。` : "";
+  if (failures.length === 0) return "";
+  const incomplete = failures.filter((failure) => failure.includes("未返回"));
+  const actualFailures = failures.filter((failure) => !failure.includes("未返回"));
+  return [
+    actualFailures.length ? `${actualFailures.join("、")} API 获取失败。` : "",
+    incomplete.length ? `${incomplete.join("、")}；相关缓存数据仍在使用。` : "",
+  ].filter(Boolean).join(" ");
 }
 
 function legacyFailures(note: string) {
@@ -738,7 +767,7 @@ function productHoldingSyncState(product: Product, statuses: PrivateStatuses): H
 
 function friendlyBitgetDiagnostic(area: "产品" | "持仓", diagnostic?: string) {
   if (diagnostic?.startsWith("missing_")) {
-    return `${diagnostic.slice("missing_".length).replaceAll("_", "、")} 产品未返回`;
+    return `${diagnostic.slice("missing_".length).replaceAll("_", "、")} ${area}未返回`;
   }
   if (diagnostic === "timeout") return `${area}接口请求超时`;
   if (diagnostic?.startsWith("401/") || diagnostic?.startsWith("403/")) return `${area}接口拒绝访问`;

@@ -73,6 +73,7 @@ export function holdingSyncNote(state?: HoldingSyncState) {
     case "not_configured":
       return "未配置 API；配置后可同步持仓";
     case "partial":
+      return "持仓接口未完整返回";
     case "error":
       return "API 同步失败";
     case "synced":

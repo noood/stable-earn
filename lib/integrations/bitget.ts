@@ -1,5 +1,6 @@
 import { exchangeFetch, logExchangePayload, readExchangeJson, readExchangeText } from "@/lib/exchange-fetch";
 import { buildProductIdentity } from "@/lib/product-identity";
+import { syncDiagnostic } from "@/lib/sync-diagnostics";
 import type { LiveRate } from "@/lib/live-rates";
 
 type BitgetCredentials = {
@@ -55,13 +56,16 @@ export type BitgetSavingsSnapshot = {
   };
 };
 
-const slots = {
+// These are legacy family IDs used as the adapter-side canonical ID. The
+// catalog adds the upstream offer ID to the identity, so one family can have
+// multiple durable products (for example Bitget's 0–300 and 0–100000 offers).
+const baseProductIds = {
   USDT: ["bg-usdt-simple"],
   USDC: ["bg-usdc"],
   USDGO: ["bg-usdgo"],
 } as const;
 
-type SupportedAsset = keyof typeof slots;
+type SupportedAsset = keyof typeof baseProductIds;
 
 export async function fetchBitgetSavingsSnapshot(
   credentials: BitgetCredentials,
@@ -94,30 +98,45 @@ export async function fetchBitgetSavingsSnapshot(
   const productRows = productResults.flatMap((result) => result.status === "fulfilled" ? result.value.data ?? [] : []);
   const assetRows = assetsResult.status === "fulfilled" ? assetsResult.value.data?.resultList ?? [] : [];
 
+  // Temporary, sanitized trace for reconciling Bitget's upstream product ID
+  // with the product that receives the holding in our catalog. Never include
+  // credentials, signatures, request headers, or the full upstream payload.
+  syncDiagnostic("bitget_assets_rows", {
+    fetchedAt,
+    rows: assetRows
+      .filter((row) => ["USDT", "USDC", "USDGO"].includes(row.productCoin ?? ""))
+      .map((row) => ({
+        productId: normalizeExternalProductId(row.productId) ?? null,
+        productCoin: row.productCoin ?? null,
+        periodType: row.periodType ?? null,
+        productLevel: row.productLevel ?? null,
+        holdAmount: finiteNumber(row.holdAmount),
+        apy: normalizeAssetTiers(row.apy),
+      })),
+  });
+
   for (const asset of assets) {
-    const availableRows = productRows
-      .filter((row) => row.coin === asset && row.periodType === "flexible" && row.status !== "off_line")
-      .map((row) => ({ row, tiers: normalizeTiers(row.apyList) }))
-      .filter((item) => item.row.productId && item.tiers.length > 0)
-      .sort((left, right) => (right.tiers[0]?.apr ?? 0) - (left.tiers[0]?.apr ?? 0));
-
-    const heldFallback = assetRows
-      .filter((row) => row.productCoin === asset && row.periodType === "flexible" && row.productLevel !== "VIP")
-      .map((row) => ({ row, tiers: normalizeAssetTiers(row.apy) }))
-      .filter((item) => item.tiers.length > 0)
-      .sort((left, right) => finiteNumber(right.row.holdAmount) - finiteNumber(left.row.holdAmount));
-    const selectedRows = availableRows.length > 0 ? availableRows : heldFallback;
-
-    selectedRows.slice(0, slots[asset].length).forEach((item, index) => {
-      const targetId = slots[asset][index];
+    // The product endpoint can contain several offers for one coin (for
+    // example 0–300 and 0–100000). The old code selected only the highest APR
+    // row and then assigned every position for that coin to it. Merge the two
+    // endpoints by upstream productId, preserving held-only rows when an offer
+    // has disappeared from the current product list.
+    const selectedRows = mergeBitgetRows(asset, productRows, assetRows);
+    selectedRows.forEach((item, index) => {
+      const targetId = baseProductIds[asset][0];
+      const externalProductId = item.externalProductId ?? bitgetFallbackExternalId(item.tiers, item.row.productLevel, index);
       rates.push({
         productId: targetId,
-        ...buildProductIdentity(targetId, { productType: "flexible", tiers: item.tiers }, { externalProductId: item.row.productId, includeExternalProductId: true }),
+        canonicalProductId: targetId,
+        // Keep the family ID as the adapter ID, and put the upstream offer ID
+        // in the identity key. The catalog turns distinct identities in the
+        // same family into distinct durable rows without collapsing them.
+        ...buildProductIdentity(targetId, { productType: "flexible" }, { externalProductId, includeExternalProductId: true }),
         name: bitgetProductName(item.row, index),
         apr: item.tiers[0]?.apr ?? 0,
         tiers: item.tiers,
         fetchedAt,
-        sourceLabel: availableRows.length > 0 ? "Bitget 官方账户产品 API" : "Bitget 官方账户持仓 API",
+        sourceLabel: item.hasProductRow ? "Bitget 官方账户产品 API" : "Bitget 官方账户持仓 API",
         catalog: {
           accountId: "bitget-global",
           exchange: "bitget" as const,
@@ -131,34 +150,50 @@ export async function fetchBitgetSavingsSnapshot(
   }
 
   const holdings: Record<string, number> = {};
+  const missingHoldingAssets: string[] = [];
   if (assetsResult.status === "fulfilled") {
     for (const asset of assets) {
-      const targetId = slots[asset][0];
       const matchingRows = assetRows
         .filter((row) => row.productCoin === asset && row.periodType === "flexible" && row.productLevel !== "VIP");
+      const assetRates = rates.filter((rate) => rate.catalog?.asset === asset);
+      if (matchingRows.length > 0) {
+        matchingRows.forEach((row, index) => {
+          const tiers = normalizeAssetTiers(row.apy);
+          const externalProductId = normalizeExternalProductId(row.productId)
+            ?? bitgetFallbackExternalId(tiers, row.productLevel, index);
+          holdings[externalProductId] = (holdings[externalProductId] ?? 0) + finiteNumber(row.holdAmount);
+        });
+      }
       // An absent position row is not proof of a zero balance. Leave that
       // product out so the dashboard can keep the last successful API cache
-      // instead of presenting an API-synced 0.
-      if (matchingRows.length > 0) {
-        holdings[targetId] = matchingRows.reduce((sum, row) => sum + finiteNumber(row.holdAmount), 0);
+      // instead of presenting an API-synced 0. This is per offer, not per
+      // coin, so a missing 0–300 row cannot consume the 0–100000 row.
+      for (const rate of assetRates) {
+        if (!matchingRows.some((row, index) => bitgetRowExternalId(row, index) === rate.externalProductId)) {
+          missingHoldingAssets.push(`${asset}:${rate.externalProductId ?? "unknown"}`);
+        }
       }
     }
   }
+
+  syncDiagnostic("bitget_holdings_normalized", { holdings });
 
   // USDGO is still queried for diagnostics, but its current absence is a known
   // manually maintained product and not a failure of the USDT/USDC connector.
   const requiredProductResults = productResults.filter((_, index) => assets[index] !== "USDGO");
   const failedRequiredProduct = requiredProductResults.find((result) => result.status === "rejected");
-  const missingRequiredAssets = assets.filter((asset) => asset !== "USDGO" && !rates.some((rate) => rate.productId === slots[asset][0]));
+  const missingRequiredAssets = assets.filter((asset) => asset !== "USDGO" && !rates.some((rate) => rate.catalog?.asset === asset));
 
   return {
     rates,
     holdings,
     sync: {
       products: requiredProductResults.every((result) => result.status === "fulfilled") && missingRequiredAssets.length === 0,
-      holdings: assetsResult.status === "fulfilled",
+      holdings: assetsResult.status === "fulfilled" && missingHoldingAssets.length === 0,
       productDiagnostic: failedRequiredProduct ? endpointDiagnostic(failedRequiredProduct.reason) : missingRequiredAssets.length > 0 ? `missing_${missingRequiredAssets.join("_")}` : undefined,
-      holdingsDiagnostic: assetsResult.status === "rejected" ? endpointDiagnostic(assetsResult.reason) : undefined,
+      holdingsDiagnostic: assetsResult.status === "rejected"
+        ? endpointDiagnostic(assetsResult.reason)
+        : missingHoldingAssets.length > 0 ? `missing_${missingHoldingAssets.join("_")}` : undefined,
     },
   };
 }
@@ -172,6 +207,102 @@ function normalizeTiers(rows: BitgetApyRow[] | undefined) {
     return Number.isFinite(apr) ? [{ min, max, apr }] : [];
   }).sort((left, right) => left.min - right.min);
   return tiers;
+}
+
+type BitgetMergedRow = {
+  row: BitgetProductRow & Partial<BitgetAssetRow>;
+  tiers: Array<{ min: number; max: number | null; apr: number }>;
+  externalProductId?: string;
+  hasProductRow: boolean;
+};
+
+function mergeBitgetRows(asset: SupportedAsset, productRows: BitgetProductRow[], assetRows: BitgetAssetRow[]) {
+  const merged = new Map<string, BitgetMergedRow>();
+  const productCandidates = productRows
+    .filter((row) => row.coin === asset && row.periodType === "flexible" && row.status !== "off_line" && row.productLevel !== "VIP")
+    .map((row, index) => ({
+      key: bitgetRowKey(row.productId, normalizeTiers(row.apyList), row.productLevel, index),
+      row,
+      tiers: normalizeTiers(row.apyList),
+    }));
+  for (const candidate of productCandidates) {
+    const current = merged.get(candidate.key);
+    merged.set(candidate.key, {
+      row: { ...current?.row, ...candidate.row },
+      tiers: candidate.tiers.length > 0 ? mergeTiers(current?.tiers ?? [], candidate.tiers) : current?.tiers ?? [],
+      externalProductId: normalizeExternalProductId(candidate.row.productId) ?? current?.externalProductId,
+      hasProductRow: true,
+    });
+  }
+
+  assetRows
+    .filter((row) => row.productCoin === asset && row.periodType === "flexible" && row.productLevel !== "VIP")
+    .forEach((row, index) => {
+      const tiers = normalizeAssetTiers(row.apy);
+      const key = bitgetRowKey(row.productId, tiers, row.productLevel, index);
+      const current = merged.get(key);
+      // A held-only row is still a real product. If the product endpoint no
+      // longer lists it, retain it rather than manufacturing a second row for
+      // the same account position.
+      merged.set(key, {
+        row: { ...current?.row, ...row },
+        // Once the product endpoint has supplied a row, its APY ladder is
+        // authoritative. The assets endpoint is only a fallback for a held
+        // product that disappeared from the product list.
+        tiers: current?.hasProductRow
+          ? current.tiers
+          : current?.tiers.length ? mergeTiers(current.tiers, tiers) : tiers,
+        externalProductId: normalizeExternalProductId(row.productId) ?? current?.externalProductId,
+        hasProductRow: current?.hasProductRow ?? false,
+      });
+    });
+
+  return [...merged.values()]
+    .filter((item) => item.tiers.length > 0)
+    .sort((left, right) => (left.externalProductId ?? "").localeCompare(right.externalProductId ?? ""));
+}
+
+function bitgetRowKey(productId: string | undefined, tiers: Array<{ min: number; max: number | null; apr: number }>, productLevel: string | undefined, index: number) {
+  return normalizeExternalProductId(productId)
+    ?? `fallback:${productLevel ?? "normal"}:${tiers.map((tier) => `${tier.min}-${tier.max ?? "inf"}`).join(",") || index}`;
+}
+
+function bitgetRowExternalId(row: BitgetAssetRow, index: number) {
+  return normalizeExternalProductId(row.productId)
+    ?? bitgetFallbackExternalId(normalizeAssetTiers(row.apy), row.productLevel, index);
+}
+
+function bitgetFallbackExternalId(tiers: Array<{ min: number; max: number | null; apr: number }>, productLevel: string | undefined, index: number) {
+  return `fallback:${productLevel ?? "normal"}:${tiers.map((tier) => `${tier.min}-${tier.max ?? "inf"}`).join(",") || index}`;
+}
+
+function normalizeExternalProductId(value: string | undefined) {
+  const normalized = value?.trim();
+  return normalized || undefined;
+}
+
+function mergeTiers(
+  left: Array<{ min: number; max: number | null; apr: number }>,
+  right: Array<{ min: number; max: number | null; apr: number }>,
+) {
+  // Adjacent ranges can form one ladder. Overlapping ranges cannot: they are
+  // alternative offers, and combining them would make allocation count the
+  // same holding twice. Keep the richer representation in that case.
+  if (left.some((a) => right.some((b) => tierRangesOverlap(a, b)))) {
+    return right.length >= left.length ? right : left;
+  }
+  const merged = new Map(left.map((tier) => [`${tier.min}:${tier.max ?? "inf"}`, tier]));
+  for (const tier of right) merged.set(`${tier.min}:${tier.max ?? "inf"}`, tier);
+  return [...merged.values()].sort((a, b) => a.min - b.min || (a.max ?? Number.POSITIVE_INFINITY) - (b.max ?? Number.POSITIVE_INFINITY));
+}
+
+function tierRangesOverlap(
+  left: { min: number; max: number | null },
+  right: { min: number; max: number | null },
+) {
+  const leftMax = left.max ?? Number.POSITIVE_INFINITY;
+  const rightMax = right.max ?? Number.POSITIVE_INFINITY;
+  return left.min < rightMax && right.min < leftMax;
 }
 
 function normalizeAssetTiers(rows: BitgetAssetRow["apy"]) {

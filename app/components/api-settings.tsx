@@ -160,7 +160,7 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
           ))}
         </div>
       </section>
-      {message && <div className="muted-panel type-caption px-3 py-2.5 font-medium">{message}</div>}
+      {message && <div className="muted-panel type-caption px-3 py-2.5 font-normal">{message}</div>}
       <section>
         <SectionIntro title="平台连接" />
         {statusError && <div className="error-panel type-caption mb-3 px-3 py-2.5" role="alert">配置状态读取失败，请重试。<ActionButton variant="text" size="small" onClick={() => { setStatusError(false); void loadStatus(); }}>重试</ActionButton></div>}
@@ -214,5 +214,5 @@ function ApiRowMenu({ label, disabled, onUpdate, onRemove }: { label: string; di
 }
 
 function SecretField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  return <label className="block"><span className="text-secondary type-caption mb-1.5 block font-medium">{label}</span><input type="password" value={value} onChange={(event) => onChange(event.target.value)} autoComplete="new-password" autoCapitalize="none" spellCheck={false} className="secret-input type-body" /></label>;
+  return <label className="block"><span className="text-secondary type-caption mb-1.5 block font-normal">{label}</span><input type="password" value={value} onChange={(event) => onChange(event.target.value)} autoComplete="new-password" autoCapitalize="none" spellCheck={false} className="secret-input type-body" /></label>;
 }

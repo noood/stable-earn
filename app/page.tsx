@@ -77,11 +77,41 @@ type PortfolioChanges = {
 };
 const emptyHoldings = Object.fromEntries(seedProducts.map((product) => [product.id, 0])) as HoldingMap;
 
-export default function Home() { return <Dashboard mode="demo" />; }
+export default function Home() {
+  const [publicPage, setPublicPage] = useState(process.env.NODE_ENV === "development");
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "development") return;
+    let active = true;
+    void fetch("/private/api/session", { cache: "no-store", redirect: "manual" })
+      .then((response) => {
+        if (!active) return;
+        const contentType = response.headers.get("content-type") ?? "";
+        if (response.ok && contentType.includes("application/json")) {
+          const url = new URL(window.location.href);
+          url.pathname = "/private";
+          window.location.replace(`${url.pathname}${url.search}${url.hash}`);
+          return;
+        }
+        setPublicPage(true);
+      })
+      .catch(() => {
+        if (active) setPublicPage(true);
+      });
+    return () => { active = false; };
+  }, []);
+
+  if (!publicPage) return <main className="min-h-screen" aria-busy="true" />;
+  return <Dashboard mode="demo" />;
+}
 
 export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "private"; localPreview?: boolean }) {
   const isDemo = mode === "demo";
-  const [asset, setAsset] = useState<Asset>("USDT");
+  const [asset, setAsset] = useState<Asset>(() => {
+    if (typeof window === "undefined") return "USDT";
+    const value = new URLSearchParams(window.location.search).get("asset")?.toUpperCase();
+    return value === "USDT" || value === "USDC" || value === "USDGO" || value === "BTC" ? value : "USDT";
+  });
   // Private products come from the account-scoped catalogue. Keep the initial
   // state empty so a new account never briefly falls back to the global seed
   // directory while its catalogue is loading.
@@ -140,12 +170,19 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
   }
 
   function openPrivateDashboard() {
-    window.location.assign("/private/home");
+    window.location.assign(`/private?asset=${encodeURIComponent(asset)}`);
   }
 
   function openPrivateApiSettings() {
-    window.location.assign("/private/home?settings=api");
+    window.location.assign(`/private?asset=${encodeURIComponent(asset)}&settings=api`);
   }
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (asset === "USDT") url.searchParams.delete("asset");
+    else url.searchParams.set("asset", asset);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [asset]);
 
   useEffect(() => {
     if (isDemo) return;
@@ -638,11 +675,11 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
             {dataBlocked
               ? <p className="text-danger font-semibold">{serverReadFailureMessage}</p>
-            : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-secondary font-normal">数据正在更新中，请稍候。</span>}{scheduledRefreshFailed && <span className="text-danger font-semibold">{scheduledFailureLabel}</span>}{!isDemo && !updating && !scheduledRefreshFailed && hasSyncFailure && <span className="text-danger font-semibold"> {failureSummary}</span>}</p>}
+            : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-secondary font-normal">数据正在更新中，请稍候。</span>}{typeof scheduledRefreshFailed !== "undefined" && scheduledRefreshFailed && <span className="text-danger font-semibold">{scheduledFailureLabel}</span>}{!isDemo && !updating && !(typeof scheduledRefreshFailed !== "undefined" && scheduledRefreshFailed) && hasSyncFailure && <span className="text-danger font-semibold"> {failureSummary}</span>}</p>}
           </div>
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
         </div>
-        <section className="metrics-panel card mb-7 grid overflow-hidden sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6" aria-busy={initialLoading}>
+        <section className="metrics-panel card mb-5 grid overflow-hidden sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6" aria-busy={initialLoading}>
           {initialLoading ? <>{Array.from({ length: 6 }, (_, index) => <MetricSkeleton key={index} highlight={index === 0} />)}</> : <>
             <Metric highlight label={`总持仓 · ${asset}`} value={dataBlocked ? "—" : formatAmount(totalHolding)} note={dataBlocked ? "— 个持仓产品" : `${holdingProductCount} 个持仓产品`} />
             <Metric label="组合有效 APR" value={dataBlocked ? "—" : `${portfolioApr.toFixed(2)}%`} note="按各阶梯实际占用加权" />
@@ -667,12 +704,14 @@ export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "priv
               ? <div key="editing-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant="secondary" onClick={cancelEditing} disabled={savingHoldings}>取消</ActionButton><ActionButton variant="secondary" onClick={addManualProduct} disabled={savingHoldings}>添加产品</ActionButton><ActionButton onClick={() => void finishEditing()} disabled={savingHoldings}>{savingHoldings ? "保存中…" : "保存持仓"}</ActionButton></div>
               : <div key="view-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant={isDemo ? "secondary" : "primary"} onClick={beginEditing} disabled={!canEdit}>编辑持仓</ActionButton></div>}
           </div>
-          {holdingSaveError && <div className="table-error-panel error-panel type-caption font-medium">保存失败，请检查网络后重试；表格中的修改仍然保留。</div>}
+          {holdingSaveError && <div className="table-error-panel error-panel type-caption font-normal">保存失败，请检查网络后重试；表格中的修改仍然保留。</div>}
           <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={initialLoading}><colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /></colgroup><thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th></tr></thead><tbody>{dataBlocked ? <tr><td colSpan={4}><EmptyProductState message={serverReadFailureMessage} /></td></tr> : initialLoading ? <ProductTableSkeleton /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
             const baseProduct = activeBaseProducts.find((product) => product.id === listedProduct.id) ?? listedProduct;
             const manualSettings = activeOverrides[listedProduct.id];
             const displayProduct = applyProductOverride(baseProduct, manualSettings);
-            const isManualProduct = listedProduct.id.startsWith("manual-");
+            // Manual/API is a product property, not an ID naming convention.
+            // This keeps migrated manual catalog rows removable as well.
+            const isManualProduct = baseProduct.productDataMode === "manual";
             const apiHoldingSource = !isDemo && apiHoldingProductIds.has(baseProduct.id);
             const holdingFromApi = baseProduct.holdingDataMode === "api" || apiHoldingSource;
             return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingPosition={holdingPositionByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
@@ -698,9 +737,9 @@ function AssetIcon({ asset }: { asset: Asset }) {
   if (asset === "USDT") return <svg className="asset-icon" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="#009393" /><path fill="#fff" d="M8 7h16v4h-6v2.2c5 .3 8.4 1.3 8.4 2.7s-3.4 2.5-8.4 2.8V25h-4v-6.3c-5-.3-8.4-1.4-8.4-2.8s3.4-2.4 8.4-2.7V11H8V7Zm8 9.1c3.4 0 6-.3 7.1-.7-1.1-.4-3.7-.7-7.1-.7s-6 .3-7.1.7c1.1.4 3.7.7 7.1.7Z" /></svg>;
   if (asset === "USDC") return <svg className="asset-icon" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="#2775CA" /><path fill="#fff" d="M17.2 7.2v2c2 .3 3.4 1.5 3.8 3.3l-2.6.6c-.3-1.1-1.1-1.7-2.4-1.7-1.4 0-2.2.6-2.2 1.5 0 .8.6 1.2 2.7 1.7 3.2.7 4.7 1.9 4.7 4.3 0 2.2-1.5 3.7-4 4.1v2h-2.3v-2c-2.4-.4-3.9-1.8-4.2-4l2.7-.5c.2 1.4 1.2 2.2 2.7 2.2 1.5 0 2.4-.6 2.4-1.6 0-.9-.7-1.3-2.8-1.8-3.1-.7-4.6-1.9-4.6-4.2 0-2 1.4-3.5 3.8-3.9v-2h2.3Z" /><path d="M9.1 8.7a10 10 0 0 0 0 14.6M22.9 8.7a10 10 0 0 1 0 14.6" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" /></svg>;
   if (asset === "USDGO") {
-    // This icon intentionally stays on the source CDN so it matches the current USDGO artwork.
+    // Keep the icon local so the asset switcher does not depend on a remote CDN.
     // eslint-disable-next-line @next/next/no-img-element
-    return <img className="asset-icon asset-icon-image" src="https://pbs.twimg.com/profile_images/2019714133122580480/IE6UKNPl_400x400.jpg" alt="" aria-hidden="true" referrerPolicy="no-referrer" />;
+    return <img className="asset-icon asset-icon-image" src="/usdgo.svg" alt="" aria-hidden="true" />;
   }
   // eslint-disable-next-line @next/next/no-img-element
   return <img className="asset-icon asset-icon-image" src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/46/Bitcoin.svg/1920px-Bitcoin.svg.png" alt="" aria-hidden="true" referrerPolicy="no-referrer" />;
@@ -940,7 +979,7 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
 
   return <div className="holding-column">{editing && (editable
     ? <HoldingInput value={holding} asset={product.asset} disabled={saving} onChange={onHoldingChange} />
-    : <div className="holding-editor holding-editor-readonly"><span className="text-muted flex items-baseline gap-2"><span className="type-micro font-medium">{product.asset}</span><span className="type-body font-medium tabular-nums">{holdingAvailable ? formatAmount(holding) : "未获取"}</span></span>{holdingAvailable && !holdingFallbackAt && <span className="text-muted type-micro">来自 API</span>}</div>)}{summary}</div>;
+    : <div className="holding-editor holding-editor-readonly"><span className="text-muted flex items-baseline gap-2"><span className="type-micro font-normal">{product.asset}</span><span className="type-body font-normal tabular-nums">{holdingAvailable ? formatAmount(holding) : "未获取"}</span></span>{holdingAvailable && !holdingFallbackAt && <span className="text-muted type-micro">来自 API</span>}</div>)}{summary}</div>;
 }
 
 function ManualLimitInput({ value, placeholder, asset, disabled, onChange }: { value: number | null; placeholder?: number; asset: Asset; disabled: boolean; onChange: (value: number | null) => void }) {
@@ -1039,7 +1078,7 @@ function HoldingInput({ value, asset, disabled, onChange }: { value: number; ass
     onChange(Math.max(0, Number(normalized) || 0));
   }
 
-  return <label className={`holding-editor holding-editor-editable ${disabled ? "holding-editor-disabled" : ""}`}><span className="text-muted type-micro pointer-events-none font-medium">{asset}</span><input type="text" inputMode="decimal" placeholder="0.00" value={displayValue} onFocus={(event) => event.currentTarget.select()} onChange={(event) => updateValue(event.target.value)} onBlur={() => setDisplayValue(value > 0 ? String(value) : "")} disabled={disabled} aria-label={`${asset} 产品持仓`} className="type-body min-w-0 flex-1 bg-transparent text-left font-semibold tabular-nums outline-none" /></label>;
+  return <label className={`holding-editor holding-editor-editable ${disabled ? "holding-editor-disabled" : ""}`}><span className="text-muted type-micro pointer-events-none font-normal">{asset}</span><input type="text" inputMode="decimal" placeholder="0.00" value={displayValue} onFocus={(event) => event.currentTarget.select()} onChange={(event) => updateValue(event.target.value)} onBlur={() => setDisplayValue(value > 0 ? String(value) : "")} disabled={disabled} aria-label={`${asset} 产品持仓`} className="type-body min-w-0 flex-1 bg-transparent text-left font-semibold tabular-nums outline-none" /></label>;
 }
 
 function tierLabel(min: number, max: number | null) { return max === null ? `${formatAmount(min)} 以上` : `${formatAmount(min)}–${formatAmount(max)}`; }

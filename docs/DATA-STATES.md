@@ -84,7 +84,7 @@ Cron 只向 `SYNC_QUEUE` 投递每个用户的任务，队列每次仅消费一�
 
 页面每分钟轮询，编辑和首次加载流程中暂停；每日刷新被后台任务延后时继续申请，完成后只读缓存，跨天保持打开也不再刷。个人保存数据失败时，仅完成尚待执行的每日刷新，不继续普通轮询或回写持仓。手动刷新保留个人数据未加载时的重新读取分支。
 
-本地预览可用 `/private/home?syncScenario=personal-error`、`product-read-error`、`both-read-error` 分别模拟个人、交易所缓存、两份数据读取失败；这些参数不会在生产环境启用。
+本地预览可用 `/private?syncScenario=personal-error`、`product-read-error`、`both-read-error` 分别模拟个人、交易所缓存、两份数据读取失败；这些参数不会在生产环境启用。
 
 **时间按数据自身来源保留：**产品使用原始 `rate.fetchedAt`；持仓连续失败继承原 `holdingFallbacks`，不能替换成整轮 `updatedAt`。缓存提示不根据错误文案猜测。页面读缓存不写持仓表；只有新刷新结果中实际取得的持仓（包括零）才保存，平台整体成功/失败不能替代单条持仓的新旧判断。
 
@@ -108,6 +108,6 @@ Cron 只向 `SYNC_QUEUE` 投递每个用户的任务，队列每次仅消费一�
 
 `npm test` 运行离线测试，`npm run check` 另包含静态检查与构建。测试用内存数据库和模拟交易所响应驱动真实同步路由，不访问线上账号；覆盖连续失败、恢复、首次同步、冷却、字段完整性及机会门槛。
 
-启动本地开发后，`/private/home` 包含产品与持仓的完整状态样本。可加 `?syncScenario=partial`，切到 **USDC** 查看专项模拟：Bitget 持仓沿用固定时间 `09/05 08:56`，整轮更新时间变化也不会改写它。
+启动本地开发后，`/private` 包含产品与持仓的完整状态样本。可加 `?syncScenario=partial`，切到 **USDC** 查看专项模拟：Bitget 持仓沿用固定时间 `09/05 08:56`，整轮更新时间变化也不会改写它。
 
 其他 `syncScenario` 值：`error`（全部失败）、`success`（恢复成功）、`syncing`（有缓存更新中）、`initial-syncing`（首次更新中）、`initial-error`（首次失败）。这些参数只在本地开发预览生效，不写数据库；静态页面场景用于观察样式，连续状态变化由自动化测试验证。

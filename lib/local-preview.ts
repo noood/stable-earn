@@ -17,6 +17,11 @@ export function localPrivateProductsPreview(now = new Date()) {
     previewRate("by-eu-usdt", [[0, null, 5.2]], freshAt, "Bybit EU 官方公开 API"),
     previewRate("by-g-usdt-short-fixed", [[0, null, 8.8]], freshAt, "Bybit.com 官方固定期限 API", { productType: "fixed", termDays: 7, rateCoverage: "max_only" }),
     previewRate("by-g-btc-3d", [[0, 1, 6.4]], freshAt, "Bybit.com 官方固定期限 API", { productType: "fixed", termDays: 3 }),
+    // Bitget returns two distinct flexible offers for the same coin. This
+    // preview keeps the 300 USDT position on the 0–300 offer and leaves the
+    // 0–100000 promotion empty, matching the production regression case.
+    previewRate("bg-usdt-simple", [[0, 300, 8.06], [300, null, 1.3]], freshAt, "Bitget 官方账户产品 API"),
+    previewRate("bg-usdt-promo", [[0, 100000, 10]], freshAt, "Bitget 官方账户产品 API"),
     previewRate("bg-usdc", [[0, 300, 5.8], [300, null, 1.75]], cachedAt, "Bitget 官方账户 API"),
   ];
   // Two identical Bybit products exercise the same missing purchase-date rule
@@ -71,8 +76,14 @@ export function localPrivateProductsPreview(now = new Date()) {
     termDays: 7,
     tiers: [{ id: "preview-cycle-new-tier-0", min: 0, max: 100, apr: 6.9 }],
   });
+  const expiredBinanceHolding = previewBinanceFixedProduct("preview-binance-fixed-expired-held", {
+    name: "Simple Earn Locked · 5 天 · 已到期（仍有持仓）",
+  }, now);
+  const expiredBinanceEmpty = previewBinanceFixedProduct("preview-binance-fixed-expired-zero", {
+    name: "Simple Earn Locked · 5 天 · 已到期（持仓为 0）",
+  }, now);
   const products = [
-    ...rates.map((rate) => previewProduct(rate.productId, rate)),
+    ...rates.map((rate) => rate.productId === "bg-usdt-promo" ? previewBitgetPromoProduct(rate) : previewProduct(rate.productId, rate)),
     bybitEligibilityApi,
     bybitEligibilityManual,
     boundaryOpportunity,
@@ -82,6 +93,8 @@ export function localPrivateProductsPreview(now = new Date()) {
     heldIneligible,
     previousCycle,
     currentCycle,
+    expiredBinanceHolding,
+    expiredBinanceEmpty,
     previewProduct("bn-bh-usdc", undefined, { rateCoverage: "unavailable" }),
     previewProduct("bg-usdgo"),
     previewProduct("mexc-ph-usdt"),
@@ -100,6 +113,8 @@ export function localPrivateProductsPreview(now = new Date()) {
     // from the product-rate cache above.
     "by-g-btc-3d": 0.2,
     "bg-usdc": 200,
+    "bg-usdt-simple": 300,
+    "bg-usdt-promo": 0,
     "preview-bybit-fixed-api": 0,
     "preview-bybit-fixed-manual": 80,
     "preview-apr-six": 0,
@@ -109,6 +124,8 @@ export function localPrivateProductsPreview(now = new Date()) {
     "preview-ineligible-held": 20,
     "preview-cycle-old": 10,
     "preview-cycle-new": 0,
+    "preview-binance-fixed-expired-held": 300,
+    "preview-binance-fixed-expired-zero": 0,
     "okx-usdt": 500,
     "okx-usdc": 500,
     "okx-btc": 0,
@@ -135,7 +152,31 @@ export function localPrivateProductsPreview(now = new Date()) {
       "preview-ineligible-held": "synced",
       "preview-cycle-old": "synced",
       "preview-cycle-new": "synced",
+      "preview-binance-fixed-expired-held": "synced",
+      "preview-binance-fixed-expired-zero": "synced",
+      "bg-usdt-simple": "synced",
+      "bg-usdt-promo": "synced",
     },
+    holdingPositions: [
+      {
+        productId: "preview-binance-fixed-expired-held",
+        positionId: "preview-binance-position-expired-held",
+        amount: 300,
+        purchaseAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+        redeemAt: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+        source: "api" as const,
+        updatedAt: freshAt,
+      },
+      {
+        productId: "preview-binance-fixed-expired-zero",
+        positionId: "preview-binance-position-expired-zero",
+        amount: 0,
+        purchaseAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+        redeemAt: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+        source: "api" as const,
+        updatedAt: freshAt,
+      },
+    ],
     note: "本地测试数据：包含完整、缓存、字段缺失、资格待确认、未获取、同步失败、部分同步和两种 Bybit 持仓来源。",
     failures: ["Bybit.com 定期产品"],
     fallbackUpdatedAt: cachedAt,
@@ -160,6 +201,8 @@ export function localPrivateHoldingsPreview(now = new Date()) {
     "bg-usdgo": 200,
     "mexc-ph-usdt": 100,
     "preview-bybit-fixed-manual": 80,
+    "preview-binance-fixed-expired-held": 300,
+    "preview-binance-fixed-expired-zero": 0,
   };
   const overrides: ProductOverrideMap = {
     "bg-usdgo": manualOverride(5.5, 1000, updatedAt),
@@ -264,6 +307,30 @@ function previewBybitFixedProduct(
   };
 }
 
+function previewBinanceFixedProduct(id: string, patch: Partial<Product> = {}, now = new Date()): Product {
+  const account = seedProducts.find((product) => product.id === "bn-g-usdt")!;
+  const purchaseDate = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
+  return {
+    ...account,
+    id,
+    name: "Simple Earn Locked · 5 天",
+    productType: "fixed",
+    termDays: 5,
+    tiers: [{ id: `${id}-tier-0`, min: 0, max: 300, apr: 20 }],
+    source: { kind: "live", label: "Binance.com 定期账户 API", fetchedAt: now.toISOString() },
+    rateCoverage: "complete",
+    availability: "unavailable",
+    externalProductId: "Usdt*5*FS_Apac",
+    identityKey: id,
+    subscriptionStartsAt: purchaseDate.toISOString(),
+    subscriptionEndsAt: now.toISOString(),
+    ...patch,
+    productDataMode: "api",
+    apiAccess: "authenticated",
+    holdingDataMode: "api",
+  };
+}
+
 export function isLocalPreviewRequest(request: Request) {
   return process.env.NODE_ENV === "development"
     && new URL(request.url).searchParams.get("preview") === "1";
@@ -299,6 +366,23 @@ function previewProduct(id: string, rate?: ReturnType<typeof previewRate>, patch
       productType: rate.productType ?? base.productType,
       termDays: rate.termDays ?? base.termDays,
     } : {}),
+  };
+}
+
+function previewBitgetPromoProduct(rate: ReturnType<typeof previewRate>) {
+  const base = seedProducts.find((product) => product.id === "bg-usdt-simple")!;
+  return {
+    ...base,
+    id: "bg-usdt-promo",
+    name: "Simple Earn Flexible · 限时活动",
+    externalProductId: "bg-usdt-promo",
+    identityKey: "bg-usdt-simple:bg-usdt-promo",
+    tiers: rate.tiers?.map((tier, index) => ({ ...tier, id: `bg-usdt-promo-tier-${index}` })) ?? base.tiers,
+    source: { kind: "live" as const, label: rate.sourceLabel, fetchedAt: rate.fetchedAt },
+    rateCoverage: "complete" as const,
+    productDataMode: "api" as const,
+    apiAccess: "authenticated" as const,
+    holdingDataMode: "api" as const,
   };
 }
 

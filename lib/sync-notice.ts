@@ -19,13 +19,25 @@ export function dashboardReadState(input: {
     canEdit: input.isDemo || (complete && !updating) };
 }
 
-export function syncFailureSummary(failures: string[]) {
+export function syncFailureSummary(failures: string[]): string {
   if (failures.includes("页面数据读取失败")) return serverReadFailureMessage;
+  const incomplete = failures.filter((value) => value.includes("未返回"));
+  const actualFailures = failures.filter((value) => !value.includes("未返回"));
+  if (incomplete.length > 0) {
+    const prefix = `${incomplete.map(formatIncompleteFailure).join("、")}；相关缓存数据仍在使用。`;
+    if (actualFailures.length === 0) return prefix;
+    return `${prefix}${syncFailureSummary(actualFailures)}`;
+  }
   if (failures.some((value) => value === "公开交易所" || value.includes("数据更新失败"))) {
     return "本次产品和持仓数据更新失败；下次更新将重试。";
   }
   const targets = [...new Set(failures.map(failureTarget).filter(Boolean))];
   return `${targets.length ? targets.join("、") : "交易所"} API 暂不可用；下次更新将重试。`;
+}
+
+function formatIncompleteFailure(value: string) {
+  const bitget = value.match(/^Bitget（(.+)）$/);
+  return bitget ? `Bitget ${bitget[1]}` : value;
 }
 
 function failureTarget(value: string) {

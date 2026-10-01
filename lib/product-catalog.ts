@@ -81,18 +81,42 @@ export async function prepareProductCatalogSync(
   const transformedRates: LiveRate[] = [];
   const statements: D1PreparedStatement[] = [];
   const selectedByCanonical = new Map<string, Set<string>>();
+  const normalizedIncomingRates = deduplicateRates(incomingRates);
+  const incomingIdentityKeys = new Set(normalizedIncomingRates
+    .map((rate) => rate.identityKey ?? rate.canonicalProductId ?? rate.productId));
+  const incomingCanonicalIds = new Set(normalizedIncomingRates
+    .map((rate) => rate.canonicalProductId ?? rate.productId));
 
-  for (const rate of deduplicateRates(incomingRates).filter(rateHasKnownApr)) {
+  for (const rate of normalizedIncomingRates.filter(rateHasKnownApr)) {
     const canonicalProductId = rate.canonicalProductId ?? rate.productId;
     const identityKey = rate.identityKey ?? canonicalProductId;
     const fingerprint = normalizeFingerprint(rate.identityFingerprint);
     const seed = catalogProductTemplates.find((product) => product.id === canonicalProductId);
     // Fingerprints are retained for diagnostics, but are not product identity.
     // Product-list and position endpoints may omit different mutable fields.
-    const identityCandidates = byIdentity.get(identityKey) ?? [];
+    const selectedForCanonical = selectedByCanonical.get(canonicalProductId) ?? new Set<string>();
+    const identityCandidates = (byIdentity.get(identityKey) ?? [])
+      .filter((row) => !selectedForCanonical.has(row.product_id));
+    // Adapters may tighten an identity from a historical upstream ID to a
+    // stable slot. Reuse the existing canonical row during that transition so
+    // the first refresh repairs the row instead of creating another product.
+    const canonicalCandidates = rows.filter((row) => row.canonical_product_id === canonicalProductId
+      && !selectedForCanonical.has(row.product_id));
+    const incomingForCanonical = normalizedIncomingRates.filter((candidate) => (
+      (candidate.canonicalProductId ?? candidate.productId) === canonicalProductId
+    ));
+    const holdingMatchedLegacyCandidates = incomingForCanonical.length > 1
+      ? canonicalCandidates.filter((row) => {
+        const persistedAmount = persistedHoldings.get(row.product_id);
+        const freshAmount = firstHolding(freshHoldings, [rate.externalProductId, rate.productId, rate.identityKey]);
+        return persistedAmount !== undefined && freshAmount !== undefined
+          && Math.abs(persistedAmount - freshAmount) < 1e-9;
+      })
+      : canonicalCandidates;
     const current = preferredCatalogRow(identityCandidates, persistedHoldings, purchaseDates)
-      ?? (seed ? rows.find((row) => row.product_id === seed.id && row.identity_key === seed.identityKey) : undefined);
-    const baseline = !current && seed
+      ?? (identityCandidates.length === 0 ? preferredCatalogRow(holdingMatchedLegacyCandidates, persistedHoldings, purchaseDates) : undefined)
+      ?? (seed && !selectedForCanonical.has(seed.id) ? rows.find((row) => row.product_id === seed.id && row.identity_key === seed.identityKey) : undefined);
+    const baseline = !current && seed && !selectedForCanonical.has(seed.id)
       ? rows.find((row) => row.product_id === seed.id && row.identity_key === seed.identityKey && !normalizeFingerprint(row.identity_fingerprint))
       : undefined;
     const selectedCurrent = current ?? baseline;
@@ -146,6 +170,20 @@ export async function prepareProductCatalogSync(
       planned.set(row.product_id, { product, status: "archived" });
       statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
     }
+  }
+
+  // A complete account snapshot is authoritative for API products that
+  // disappeared from both the product list and the position response. Archive
+  // only when the stable identity is absent and the holding is explicitly
+  // known to be zero. Partial/failed accounts and positive holdings remain.
+  for (const row of rows.filter((candidate) => candidate.status === "active")) {
+    const product = parseProduct(row.payload)[0];
+    if (!product || product.productDataMode !== "api" || !completeAccounts.has(product.accountId)) continue;
+    if (incomingIdentityKeys.has(row.identity_key) || incomingCanonicalIds.has(row.canonical_product_id)) continue;
+    const evidence = existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeAccounts);
+    if (!evidence.known || evidence.amount > 0) continue;
+    planned.set(row.product_id, { product, status: "archived" });
+    statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
   }
 
   // Some account APIs return holdings without product-rate rows. A positive
@@ -502,8 +540,23 @@ function productTemplateFromRate(rate: LiveRate, id: string, identityKey: string
 
 function parseProduct(payload: string) {
   try {
-    const value = JSON.parse(payload) as Product;
-    return value && typeof value.id === "string" && typeof value.identityKey === "string" ? [value] : [];
+    const raw = JSON.parse(payload) as Record<string, unknown>;
+    if (!raw || typeof raw.id !== "string" || typeof raw.identityKey !== "string") return [];
+    const value = raw as unknown as Product;
+    if (raw.productDataMode === "api" || raw.productDataMode === "manual") return [value];
+    // Rows created before productDataMode was introduced were system catalog
+    // entries. Preserve their intended behavior without requiring a second
+    // destructive migration: live/private sources are API-managed; the rest
+    // remain editable manual products.
+    const sourceKind = typeof raw.source === "object" && raw.source !== null
+      ? (raw.source as { kind?: unknown }).kind
+      : undefined;
+    const apiManaged = sourceKind === "live" || sourceKind === "private";
+    if (apiManaged) {
+      const apiAccess = raw.apiAccess === "public" ? "public" : "authenticated";
+      return [{ ...value, productDataMode: "api", apiAccess } as Product];
+    }
+    return [{ ...value, productDataMode: "manual" } as Product];
   } catch {
     return [];
   }
