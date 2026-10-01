@@ -171,6 +171,7 @@ input:focus-visible,
 .menu-account { border-bottom: var(--hairline) solid var(--border); padding: var(--space-2) var(--space-3); }
 .menu-account-label { color: var(--text-muted); font-size: var(--type-micro); font-weight: 400; line-height: var(--leading-micro); letter-spacing: .08em; text-transform: uppercase; }
 .menu-account-value { overflow: hidden; margin-top: .125rem; color: var(--text-secondary); font-size: var(--type-caption); line-height: var(--leading-caption); text-overflow: ellipsis; white-space: nowrap; }
+.menu-account + .menu-item { margin-top: var(--space-1); }
 .menu-item {
   display: block;
   width: 100%;
@@ -181,7 +182,7 @@ input:focus-visible,
   color: var(--text-primary);
   font: inherit;
   font-size: var(--type-body);
-  font-weight: 400;
+  font-weight: 600;
   line-height: var(--leading-body);
   text-align: left;
   text-decoration: none;

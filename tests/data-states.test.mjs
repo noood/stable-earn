@@ -6,7 +6,7 @@ const load = moduleLoader();
 const { productInformationIssues, productParticipatesInInterest, holdingSyncNote } = load("@/lib/product-status");
 const { productHasComparableApr, productHasKnownCapacity, productShouldBeActive } = load("@/lib/opportunity-policy");
 const { applyProductOverride, productTermStatus } = load("@/lib/product-overrides");
-const { syncFailureSummary, nextScheduledRefreshAt, scheduledRefreshPending } = load("@/lib/sync-notice");
+const { syncFailureSummary, sanitizeSyncFailure, nextScheduledRefreshAt, scheduledRefreshPending } = load("@/lib/sync-notice");
 const { scheduledRefreshMetadata } = load("@/lib/sync-cache");
 const { localPrivateProductsPreview, localSyncScenarioPreview } = load("@/lib/local-preview");
 const base = localPrivateProductsPreview().products.find((p) => p.id === "bn-g-usdt");
@@ -47,6 +47,9 @@ test("opportunity boundary is inclusive at 6%, long terms need a holding", () =>
 
 test("banner distinguishes whole failure, interface scope and page network failure", () => {
   assert.match(syncFailureSummary(["Bitget（持仓接口未完整返回）"]), /Bitget 持仓 API/);
+  assert.equal(sanitizeSyncFailure("Bitget（USDT:1382948397058678784、USDT:1488775596992425984 持仓未返回）"), "Bitget（部分数据未返回）");
+  assert.equal(sanitizeSyncFailure("Bitget USDT:1382948397058678784 持仓未返回"), "Bitget（部分数据未返回）");
+  assert.equal(syncFailureSummary(["Bitget（USDT:1382948397058678784、USDT:1488775596992425984 持仓未返回）"]), "Bitget 部分数据未返回；下次更新将重试。");
   assert.match(syncFailureSummary(["Bybit.com 定期产品", "Bybit.com 定期持仓"]), /定期产品、Bybit.com 定期持仓/);
   assert.equal(syncFailureSummary(["Bitget（USDGO 产品未返回）"]), "Bitget USDGO 产品未返回；下次更新将重试。");
   assert.match(syncFailureSummary(["产品和持仓数据更新失败"]), /^本次产品和持仓数据更新失败/);

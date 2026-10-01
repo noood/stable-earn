@@ -17,7 +17,7 @@ import { prepareProductCatalogSync, resolveCatalogProductIds, type ProductCatalo
 import type { HoldingPosition, HoldingSyncState, Product } from "@/lib/domain";
 import { diagnosticErrorKind, syncDiagnostic, withSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
 import { acquireRefresh, claimDailyRefresh, refreshIsLocked, releaseRefresh, renewRefresh } from "@/lib/refresh-control";
-import { scheduledRefreshPending } from "@/lib/sync-notice";
+import { sanitizeSyncFailure, scheduledRefreshPending } from "@/lib/sync-notice";
 import {
   formatCacheTime,
   loadSyncCache,
@@ -527,7 +527,7 @@ function cachedResponse(
   const payload = record.payload!;
   const failures = payload.failures ?? legacyFailures(payload.note);
   const failed = state === "error" || Boolean(record.lastError);
-  const responseFailures = state === "syncing" ? [] : failed ? ["产品和持仓数据更新失败"] : failures;
+  const responseFailures = state === "syncing" ? [] : failed ? ["产品和持仓数据更新失败"] : failures.map(sanitizeSyncFailure);
   return NextResponse.json({
     ...payload,
     partial: state === "syncing" ? false : payload.partial,
@@ -767,7 +767,12 @@ function productHoldingSyncState(product: Product, statuses: PrivateStatuses): H
 
 function friendlyBitgetDiagnostic(area: "产品" | "持仓", diagnostic?: string) {
   if (diagnostic?.startsWith("missing_")) {
-    return `${diagnostic.slice("missing_".length).replaceAll("_", "、")} ${area}未返回`;
+    const details = diagnostic.slice("missing_".length);
+    // Keep the exact upstream IDs in the structured Events diagnostics, but
+    // never expose them in the dashboard banner. A missing asset name is still
+    // useful copy; a missing numeric product ID is only a troubleshooting clue.
+    if (/:[0-9]{6,}/.test(details)) return "部分数据未返回";
+    return `${details.replaceAll("_", "、")} ${area}未返回`;
   }
   if (diagnostic === "timeout") return `${area}接口请求超时`;
   if (diagnostic?.startsWith("401/") || diagnostic?.startsWith("403/")) return `${area}接口拒绝访问`;

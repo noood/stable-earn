@@ -4,6 +4,17 @@ export { nextScheduledRefreshAt } from "./sync-cache";
 
 export const serverReadFailureMessage = "服务器读取失败，数据无法显示，请刷新页面。";
 
+/**
+ * Product IDs are useful in Events while investigating an upstream mismatch,
+ * but they are not actionable dashboard copy. Older cached snapshots may still
+ * contain the diagnostic form, so sanitize at the display boundary as well as
+ * when creating new snapshots.
+ */
+export function sanitizeSyncFailure(value: string) {
+  if (/^Bitget.*(?:USDT|USDC|USDGO):\d{6,}/.test(value)) return "Bitget（部分数据未返回）";
+  return value;
+}
+
 /** Read failures and exchange failures have different display priorities. */
 export function dashboardReadState(input: {
   isDemo: boolean; opening: boolean; requesting: boolean; backgroundUpdating: boolean;
@@ -20,6 +31,7 @@ export function dashboardReadState(input: {
 }
 
 export function syncFailureSummary(failures: string[]): string {
+  failures = failures.map(sanitizeSyncFailure);
   if (failures.includes("页面数据读取失败")) return serverReadFailureMessage;
   const incomplete = failures.filter((value) => value.includes("未返回"));
   const actualFailures = failures.filter((value) => !value.includes("未返回"));
