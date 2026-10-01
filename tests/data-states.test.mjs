@@ -48,7 +48,7 @@ test("opportunity boundary is inclusive at 6%, long terms need a holding", () =>
 test("banner distinguishes whole failure, interface scope and page network failure", () => {
   assert.match(syncFailureSummary(["Bitget（持仓接口未完整返回）"]), /Bitget 持仓 API/);
   assert.match(syncFailureSummary(["Bybit.com 定期产品", "Bybit.com 定期持仓"]), /定期产品、Bybit.com 定期持仓/);
-  assert.match(syncFailureSummary(["Bitget（USDGO 产品未返回）"]), /Bitget USDGO/);
+  assert.equal(syncFailureSummary(["Bitget（USDGO 产品未返回）"]), "Bitget USDGO 产品未返回；下次更新将重试。");
   assert.match(syncFailureSummary(["产品和持仓数据更新失败"]), /^本次产品和持仓数据更新失败/);
   assert.equal(syncFailureSummary(["页面数据读取失败"]), "服务器读取失败，数据无法显示，请刷新页面。");
 });

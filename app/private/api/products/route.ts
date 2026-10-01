@@ -697,7 +697,7 @@ function buildNote(failures: string[]) {
   const actualFailures = failures.filter((failure) => !failure.includes("未返回"));
   return [
     actualFailures.length ? `${actualFailures.join("、")} API 获取失败。` : "",
-    incomplete.length ? `${incomplete.join("、")}；相关缓存数据仍在使用。` : "",
+    incomplete.length ? `${incomplete.join("、")}；下次更新将重试。` : "",
   ].filter(Boolean).join(" ");
 }
 

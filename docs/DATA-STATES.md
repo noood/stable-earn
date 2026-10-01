@@ -99,10 +99,12 @@ Cron 只向 `SYNC_QUEUE` 投递每个用户的任务，队列每次仅消费一�
 - `exchange_payload` / `exchange_body_error`：通过 `requestId` 对应 HTTP 请求，记录数字业务码或正文读取失败类型。HTTP 200 不等于业务成功。
 - `platform_read_error` / `sync_finished`：平台读取异常、整轮成功/部分成功/失败与是否提交缓存。
 - `sync_retry_queued` / `sync_skipped`：安排下一轮的延迟，或跳过已完成/过期任务的原因。
+- `bitget_product_rows` / `bitget_assets_rows` / `bitget_holding_mapping`：Bitget 产品 ID、资产接口返回的产品 ID 与最终目录归属的脱敏对账摘要；仅用于排查产品与持仓错配。
+- `binance_locked_rows`：临时的 Binance 定期产品/持仓对账摘要，用于确认产品是否仍在产品接口、持仓是否明确为零，以及 `redeemDate` 和持仓 ID。确认问题后会移除该临时日志。
 
 403/451/429 的 `accessReason` 从响应中识别 `region_restricted`（地区限制）、`rate_limited`（频率限制）、`ip_not_allowed`（IP 不允许）；没有明确依据时为 `access_denied_unknown`，不能仅凭 403/451 判定地区限制。成功和失败响应均可附带经过格式校验的 `cf-ray`、`x-request-id`、`x-amz-cf-id`，用于对比和上游追踪；未返回或格式不符时省略。这些标识不等于实际出口 IP 或位置，也不额外请求查 IP 服务。
 
-耗时单位为毫秒；HTTP 耗时截至响应返回，正文日志耗时包含读取。日志不输出完整 URL、认证头、签名、密钥、邮箱、持仓金额或响应正文。未识别的主机、路径和非数字业务码使用占位值。原因识别只在内存中检查响应，不保存原文；部署前丢失的诊断无法补回。排查队列失败时也检查 `sync_queue_finished`，以免漏掉同步开始前的数据库异常。
+耗时单位为毫秒；HTTP 耗时截至响应返回，正文日志耗时包含读取。普通接口诊断日志不输出完整 URL、认证头、签名、密钥、邮箱、持仓金额或响应正文；上面列出的产品对账事件只输出必要的脱敏产品/持仓字段。未识别的主机、路径和非数字业务码使用占位值。原因识别只在内存中检查响应，不保存原文；部署前丢失的诊断无法补回。排查队列失败时也检查 `sync_queue_finished`，以免漏掉同步开始前的数据库异常。
 
 ### 离线与本地验证
 

@@ -24,7 +24,7 @@ export function syncFailureSummary(failures: string[]): string {
   const incomplete = failures.filter((value) => value.includes("未返回"));
   const actualFailures = failures.filter((value) => !value.includes("未返回"));
   if (incomplete.length > 0) {
-    const prefix = `${incomplete.map(formatIncompleteFailure).join("、")}；相关缓存数据仍在使用。`;
+    const prefix = `${incomplete.map(formatIncompleteFailure).join("、")}；下次更新将重试。`;
     if (actualFailures.length === 0) return prefix;
     return `${prefix}${syncFailureSummary(actualFailures)}`;
   }

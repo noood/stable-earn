@@ -80,7 +80,7 @@ test("updating copy uses one warning style, with a timestamp only when available
       dataBlocked: false, updating: true, historyAvailable: Boolean(lastUpdated), lastUpdated, loading: true,
       currentDataSummary: "",
     });
-    assert.match(html, /text-warning font-semibold/);
+    assert.match(html, /text-secondary font-normal/);
     assert.doesNotMatch(html, /暂无成功数据|text-danger/);
     assert.ok(html.includes("数据正在更新中，请稍候。"));
     assert.doesNotMatch(html, /当前数据截至 09\/08 10:36/);
@@ -93,7 +93,7 @@ test("page read errors override exchange warnings and dates", () => {
       dataBlocked, updating: false, loading: false, hasSyncFailure: true,
       currentDataSummary: "当前数据截至 09/08 11:09。", failureSummary: "Bitget API 暂不可用；下次更新将重试。",
     });
-    assert.ok(html.includes(`${dataBlocked ? "text-danger" : "text-warning"} font-semibold`));
+    assert.ok(html.includes("text-danger font-semibold"));
     if (dataBlocked) assert.doesNotMatch(html, /当前数据截至|Bitget/);
     else assert.match(html, /Bitget API 暂不可用/);
   }

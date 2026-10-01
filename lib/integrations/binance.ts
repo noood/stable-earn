@@ -2,6 +2,7 @@ import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import { buildProductIdentity } from "@/lib/product-identity";
 import type { LiveRate } from "@/lib/live-rates";
 import type { HoldingPosition, Product } from "@/lib/domain";
+import { syncDiagnostic } from "@/lib/sync-diagnostics";
 
 type Credentials = {
   apiKey: string;
@@ -188,6 +189,40 @@ export async function fetchBinanceLockedSnapshot(
   const productRows = products.rows ?? [];
   const positionRows = positionsResponse.rows ?? [];
   const fetchedAt = new Date().toISOString();
+
+  // Temporary, sanitized trace for verifying why an expired locked product
+  // remains visible. Keep product and position IDs together with only the
+  // fields needed for lifecycle decisions; never emit the raw response.
+  syncDiagnostic("binance_locked_rows", {
+    account,
+    productRows: productRows.flatMap((row) => {
+      const detail = row.detail;
+      const asset = String(detail?.asset ?? "").toUpperCase();
+      return supported.has(asset) ? [{
+        productId: String(row.projectId ?? "").trim() || null,
+        asset,
+        duration: positiveNumber(detail?.duration),
+        apr: parseBinanceApr(detail?.apr ?? detail?.apy ?? detail?.annualPercentageRate ?? detail?.interestRate),
+        status: detail?.status ?? null,
+        isSoldOut: detail?.isSoldOut ?? null,
+      }] : [];
+    }),
+    positionRows: positionRows.flatMap((row) => {
+      const asset = String(row.asset ?? "").toUpperCase();
+      return supported.has(asset) ? [{
+        positionId: row.positionId === undefined ? null : String(row.positionId),
+        productId: String(row.projectId ?? "").trim() || null,
+        asset,
+        amount: finiteNumber(row.amount ?? row.principal),
+        duration: positiveNumber(row.duration),
+        apr: parseBinanceApr(row.apr ?? row.apy ?? row.annualPercentageRate ?? row.interestRate),
+        purchaseTime: timestampIso(row.purchaseTime),
+        redeemDate: timestampIso(row.redeemDate),
+        status: row.status ?? null,
+      }] : [];
+    }),
+  });
+
   const rates: LiveRate[] = [];
   const rateByProject = new Map<string, LiveRate>();
 
