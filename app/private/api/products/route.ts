@@ -36,6 +36,8 @@ type PrivateResult<T> = { snapshot: T | null; status: PrivateStatus; diagnostic?
 type BinanceAccountSnapshot = BinanceFlexibleSnapshot & {
   sync: { flexible: boolean; locked: boolean };
   positions: BinanceLockedSnapshot["positions"];
+  lockedProductListComplete: boolean;
+  lockedPositionListComplete: boolean;
 };
 type PrivateStatuses = {
   binanceGlobal: PrivateStatus;
@@ -363,8 +365,12 @@ async function buildPrivatePayload(
   ];
   const fallbackRates = cached?.payload?.rates ?? [];
   const completeAccountIds = [
-    binanceGlobalStatus === "synced" ? "binance-global" : null,
-    binanceBahrainStatus === "synced" ? "binance-bahrain" : null,
+    binanceGlobalStatus === "synced"
+      && binanceGlobal?.lockedProductListComplete
+      && binanceGlobal?.lockedPositionListComplete ? "binance-global" : null,
+    binanceBahrainStatus === "synced"
+      && binanceBahrain?.lockedProductListComplete
+      && binanceBahrain?.lockedPositionListComplete ? "binance-bahrain" : null,
     // Bybit's public product rows share this account id with private rows, so
     // only treat the account as complete when both private and public reads
     // succeeded. A public endpoint failure must not archive a cached product.
@@ -627,6 +633,8 @@ async function fetchBinanceAccountSnapshot(
     },
     positions: locked.status === "fulfilled" ? locked.value.positions : [],
     sync: { flexible: flexible.status === "fulfilled", locked: locked.status === "fulfilled" },
+    lockedProductListComplete: locked.status === "fulfilled" ? locked.value.productListComplete : false,
+    lockedPositionListComplete: locked.status === "fulfilled" ? locked.value.positionListComplete : false,
   };
 }
 

@@ -79,6 +79,8 @@ export type BinanceLockedSnapshot = BinanceFlexibleSnapshot & {
     sourceProductId: string;
     asset: Product["asset"];
   }>;
+  productListComplete: boolean;
+  positionListComplete: boolean;
 };
 
 const accounts = {
@@ -173,7 +175,7 @@ export async function fetchBinanceLockedSnapshot(
 ): Promise<BinanceLockedSnapshot> {
   const accountConfig = accounts[account];
   const supported = new Set(assets.map((asset) => asset.toUpperCase()));
-  const [products, positionsResponse] = await Promise.all([
+  const [productPage, positionPage] = await Promise.all([
     signedGet<PageResponse<LockedProductRow>>(
       "/sapi/v1/simple-earn/locked/list",
       { current: 1, size: 100 },
@@ -186,8 +188,12 @@ export async function fetchBinanceLockedSnapshot(
     ),
   ]);
 
-  const productRows = products.rows ?? [];
-  const positionRows = positionsResponse.rows ?? [];
+  const [products, positionsResponse] = await Promise.all([
+    collectBinancePages("/sapi/v1/simple-earn/locked/list", productPage, credentials),
+    collectBinancePages("/sapi/v1/simple-earn/locked/position", positionPage, credentials),
+  ]);
+  const productRows = products.rows;
+  const positionRows = positionsResponse.rows;
   const fetchedAt = new Date().toISOString();
 
   // Temporary, sanitized trace for verifying why an expired locked product
@@ -197,6 +203,10 @@ export async function fetchBinanceLockedSnapshot(
     account,
     productRowCount: productRows.length,
     positionRowCount: positionRows.length,
+    productTotal: products.total ?? null,
+    positionTotal: positionsResponse.total ?? null,
+    productListComplete: products.complete,
+    positionListComplete: positionsResponse.complete,
     productRows: productRows.flatMap((row) => {
       const detail = row.detail;
       const asset = String(detail?.asset ?? "").toUpperCase();
@@ -294,7 +304,13 @@ export async function fetchBinanceLockedSnapshot(
     }];
   });
 
-  return { rates, holdings, positions };
+  return {
+    rates,
+    holdings,
+    positions,
+    productListComplete: products.complete,
+    positionListComplete: positionsResponse.complete,
+  };
 }
 
 function lockedRate(
@@ -416,6 +432,41 @@ async function signedGet<ResponseBody>(
   } finally {
     clearTimeout(timer);
   }
+}
+
+const binancePageSize = 100;
+const maxBinancePages = 20;
+
+async function collectBinancePages<Row>(
+  path: string,
+  firstPage: PageResponse<Row>,
+  credentials: Credentials,
+) {
+  const rows = [...(firstPage.rows ?? [])];
+  const reportedTotal = finiteOptional(firstPage.total);
+  const totalPages = reportedTotal === undefined
+    ? undefined
+    : Math.max(1, Math.ceil(reportedTotal / binancePageSize));
+  let current = 1;
+  let lastPageSize = rows.length;
+
+  while (current < (totalPages ?? maxBinancePages)
+    && (totalPages !== undefined || lastPageSize === binancePageSize)) {
+    current += 1;
+    const page = await signedGet<PageResponse<Row>>(path, { current, size: binancePageSize }, credentials);
+    const pageRows = page.rows ?? [];
+    rows.push(...pageRows);
+    lastPageSize = pageRows.length;
+    if (totalPages === undefined && pageRows.length < binancePageSize) break;
+  }
+
+  return {
+    rows,
+    total: reportedTotal,
+    complete: reportedTotal !== undefined
+      ? rows.length >= reportedTotal
+      : lastPageSize < binancePageSize,
+  };
 }
 
 async function hmacHex(payload: string, secret: string) {

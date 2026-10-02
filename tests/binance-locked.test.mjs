@@ -37,4 +37,55 @@ test("Binance locked snapshot maps available products and held positions", async
   assert.ok(Math.abs(result.rates[0].tiers[0].apr - 6.73) < 1e-9);
   assert.equal(result.holdings["USDT001"], 123.45);
   assert.equal(result.holdings[result.rates[0].productId], 123.45);
+  assert.equal(result.productListComplete, true);
+  assert.equal(result.positionListComplete, true);
+});
+
+test("Binance locked snapshot fetches past the first page before marking products complete", async () => {
+  const requests = [];
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => {
+        const parsed = new URL(url);
+        requests.push(parsed);
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          path: parsed.pathname,
+          url,
+          text: async () => "{}",
+        };
+      },
+      readExchangeJson: async (response) => {
+        const current = Number(new URL(response.url).searchParams.get("current"));
+        if (response.path.endsWith("/locked/list")) {
+          return current === 1
+            ? {
+              total: 101,
+              rows: Array.from({ length: 100 }, (_, index) => ({
+                projectId: `OTHER${index}`,
+                detail: { asset: "OTHER", apr: "0.01", duration: 7 },
+              })),
+            }
+            : {
+              total: 101,
+              rows: [{
+                projectId: "USDT001",
+                detail: { asset: "USDT", apr: "0.0673", duration: 7 },
+                quota: { totalPersonalQuota: "1000" },
+              }],
+            };
+        }
+        return { total: 0, rows: [] };
+      },
+    },
+  });
+  const { fetchBinanceLockedSnapshot } = load("@/lib/integrations/binance");
+  const result = await fetchBinanceLockedSnapshot({ apiKey: "key", apiSecret: "secret" });
+
+  assert.equal(result.productListComplete, true);
+  assert.equal(result.rates.length, 1);
+  assert.ok(requests.some((request) => request.pathname.endsWith("/locked/list")
+    && request.searchParams.get("current") === "2"));
 });
