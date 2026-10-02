@@ -713,7 +713,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       </nav>
 
       <div className="mx-auto max-w-[1500px] px-5 py-5 lg:px-10 lg:py-6">
-        <div className="card type-caption mb-5 flex items-center justify-between gap-4 px-5 py-3" aria-live="polite">
+        <div className="card type-caption mb-5 flex items-center justify-between gap-4 px-5 py-4" aria-live="polite">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
             {dataBlocked

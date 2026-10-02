@@ -337,9 +337,15 @@ function holdingEvidence(
   const freshValue = firstHolding(fresh, [id, rate.productId, rate.externalProductId, rate.identityKey]);
   if (freshValue !== undefined) return { known: true, amount: freshValue };
   if (completeAccounts.has(product.accountId)) return { known: true, amount: 0 };
-  const persistedValue = persisted.get(id);
-  if (persistedValue !== undefined) return { known: true, amount: persistedValue };
-  return product.holdingDataMode === "manual" ? { known: true, amount: 0 } : { known: false, amount: 0 };
+  if (product.holdingDataMode === "manual") {
+    const persistedValue = persisted.get(id);
+    if (persistedValue !== undefined) return { known: true, amount: persistedValue };
+    return { known: true, amount: 0 };
+  }
+  // A persisted API amount belongs to the last successful snapshot. When the
+  // current account read is partial, treating that value as fresh zero can
+  // archive an existing product after an APR change.
+  return { known: false, amount: 0 };
 }
 
 function existingHoldingEvidence(
@@ -352,9 +358,12 @@ function existingHoldingEvidence(
   const freshValue = firstHolding(fresh, [row.product_id, row.identity_key, product.externalProductId]);
   if (freshValue !== undefined) return { known: true, amount: freshValue };
   if (completeAccounts.has(product.accountId)) return { known: true, amount: 0 };
-  const persistedValue = persisted.get(row.product_id);
-  if (persistedValue !== undefined) return { known: true, amount: persistedValue };
-  return product.holdingDataMode === "manual" ? { known: true, amount: 0 } : { known: false, amount: 0 };
+  if (product.holdingDataMode === "manual") {
+    const persistedValue = persisted.get(row.product_id);
+    if (persistedValue !== undefined) return { known: true, amount: persistedValue };
+    return { known: true, amount: 0 };
+  }
+  return { known: false, amount: 0 };
 }
 
 function firstHolding(values: Record<string, number>, ids: Array<string | undefined>) {

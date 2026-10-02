@@ -33,6 +33,30 @@ test("manual catalog migration preserves old aliases and rewrites the embedded i
   assert.equal(db.sqlite.prepare("SELECT product_id FROM product_identity_aliases WHERE alias = ?").get("manual-abc12345").product_id, "manual-abc12345");
 });
 
+test("manual identity repair maps legacy account-asset ids to the default slug", () => {
+  const migrationSql = readFileSync(new URL("../drizzle/0016_repair_manual_identity_aliases.sql", import.meta.url), "utf8");
+  const db = sqliteDb();
+  const now = "2026-10-02T00:00:00.000Z";
+  const insert = db.sqlite.prepare(`INSERT INTO product_catalog
+    (owner_id, product_id, canonical_product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`);
+  for (const [id, accountId, asset] of [
+    ["mexc-ph-usdt", "mexc-ph", "USDT"],
+    ["okx-usdt", "okx", "USDT"],
+  ]) {
+    insert.run("user", id, id, id, null, JSON.stringify({
+      id, accountId, asset, productType: "flexible", productDataMode: "manual", identityKey: id,
+    }), now, now);
+  }
+  db.sqlite.exec(migrationSql);
+  const rows = db.sqlite.prepare("SELECT product_id, identity_key FROM product_catalog ORDER BY product_id").all().map((row) => ({ ...row }));
+  assert.deepEqual(rows, [
+    { product_id: "mexc-ph-usdt", identity_key: "mexc-ph:USDT:flexible:manual:default" },
+    { product_id: "okx-usdt", identity_key: "okx:USDT:flexible:manual:default" },
+  ]);
+  assert.equal(db.sqlite.prepare("SELECT product_id FROM product_identity_aliases WHERE alias = ?").get("mexc-ph-usdt").product_id, "mexc-ph-usdt");
+});
+
 test("canonical column migration keeps aliases and removes only the obsolete column", () => {
   const aliasesSql = readFileSync(new URL("../drizzle/0011_manual_identity_aliases.sql", import.meta.url), "utf8");
   const dropSql = readFileSync(new URL("../drizzle/0012_remove_canonical_product_id.sql", import.meta.url), "utf8");

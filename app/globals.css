@@ -52,7 +52,7 @@
   --table-row-min-height: 7rem;
   --table-cell-x: 1.75rem;
   --table-middle-x: 2.25rem;
-  --table-cell-y: var(--space-4);
+  --table-cell-y: var(--space-6);
   --table-detail-gap: .5rem;
   --progress-height: .25rem;
 
@@ -291,7 +291,7 @@ input:focus-visible,
 .product-table th:last-child,
 .product-table td:last-child { text-align: center; }
 .product-table th:last-child { padding-inline: var(--space-3); }
-.table-toolbar { display: flex; min-height: 5.25rem; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-6); }
+.table-toolbar { display: flex; min-height: 5.25rem; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-5) var(--space-6); }
 .table-toolbar-copy { display: grid; min-height: 2.875rem; align-content: center; gap: var(--space-1); }
 .table-toolbar-subtitle { min-height: var(--leading-caption); }
 .button-text.table-toolbar-inline-action { min-height: var(--leading-caption); padding: 0 .25rem; font-size: inherit; line-height: inherit; vertical-align: baseline; }
@@ -331,7 +331,7 @@ input:focus-visible,
   align-items: baseline;
 }
 .product-fact span:first-child { font-weight: 600; }
-.product-fact-separator { margin: 0 var(--space-1); color: var(--text-muted); font-weight: 400; }
+.product-fact-separator { margin: 0; color: var(--text-muted); font-weight: 400; }
 .product-fact-note { color: inherit; font-weight: inherit; }
 .product-fact-danger { color: var(--danger-text); font-weight: 600; }
 .manual-field {
@@ -607,7 +607,7 @@ input:focus-visible,
 .product-history-trigger svg { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.75; }
 .product-history-trigger:hover,
 .product-history-trigger[aria-expanded="true"] { background: var(--surface-subtle); color: var(--text-primary); }
-.product-history-dot { position: absolute; top: .22rem; right: .22rem; display: block; width: .62rem; height: .62rem; aspect-ratio: 1; border: 2px solid var(--surface); border-radius: 999px; background: var(--danger-text); }
+.product-history-dot { position: absolute; top: .4rem; right: .4rem; display: block; box-sizing: border-box; width: .5rem; height: .5rem; flex: 0 0 .5rem; border: 1px solid var(--surface); border-radius: 50%; background: var(--danger-text); }
 .product-history-popover { position: fixed; z-index: 50; width: max-content; min-width: 15rem; max-width: calc(100vw - 1.5rem); max-height: min(22rem, calc(100vh - 1.5rem)); overflow: auto; padding: var(--space-4); }
 .product-history-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); border-bottom: var(--hairline) solid var(--border); padding-bottom: var(--space-3); }
 .product-history-title { margin: 0; color: var(--text-muted); font-size: var(--type-micro); font-weight: 400; line-height: var(--leading-micro); letter-spacing: .08em; text-transform: uppercase; }
@@ -616,6 +616,7 @@ input:focus-visible,
 .product-history-list::before { position: absolute; top: .5rem; bottom: .5rem; left: calc(var(--history-node-size) / 2); width: 1px; transform: translateX(-50%); background: var(--border); content: ""; }
 .product-history-event { position: relative; display: flex; gap: var(--space-3); padding: var(--space-1) 0 var(--space-3); }
 .product-history-event:last-child { padding-bottom: var(--space-1); }
+.product-history-event:last-child::after { position: absolute; z-index: 0; top: calc(var(--space-1) + (var(--leading-micro) - var(--history-node-size)) / 2 + var(--history-node-size)); bottom: 0; left: 0; width: var(--history-node-size); background: var(--surface); content: ""; pointer-events: none; }
 .product-history-node { position: relative; z-index: 1; display: block; box-sizing: border-box; width: var(--history-node-size); min-width: var(--history-node-size); max-width: var(--history-node-size); height: var(--history-node-size); min-height: var(--history-node-size); max-height: var(--history-node-size); flex: 0 0 var(--history-node-size); margin-top: calc((var(--leading-micro) - var(--history-node-size)) / 2); border-radius: 9999px; background: var(--border-strong); }
 .product-history-node-latest { background: var(--danger-text); }
 .product-history-node-latest::after { position: absolute; inset: -.125rem; border: 1px solid var(--danger-text); border-radius: 50%; content: ""; }

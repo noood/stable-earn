@@ -46,3 +46,50 @@ test("Bitget platform identities reuse the migrated row for the matching offer",
   assert.notEqual(result.rates[1].productId, legacy.id);
   assert.equal(result.products.length, 2);
 });
+
+test("partial holding sync does not archive an active product after an APR drop", async () => {
+  const load = moduleLoader();
+  const { prepareProductCatalogSync } = load("@/lib/product-catalog");
+  const db = sqliteDb();
+  const now = "2026-10-02T00:00:00.000Z";
+  const product = {
+    id: "api-bitget-usdt",
+    accountId: "bitget-global",
+    exchange: "bitget",
+    region: "global",
+    asset: "USDT",
+    name: "Simple Earn",
+    productDataMode: "api",
+    apiAccess: "authenticated",
+    holdingDataMode: "api",
+    productType: "flexible",
+    tiers: [{ id: "api-bitget-usdt-tier-0", min: 0, max: 300, apr: 8 }],
+    source: { kind: "live", label: "Bitget", fetchedAt: now },
+    rateCoverage: "complete",
+    externalProductId: "bg-usdt-standard",
+    identityKey: "bitget-global:USDT:flexible:bg-usdt-standard",
+  };
+  db.sqlite.prepare(`INSERT INTO product_catalog
+    (owner_id, product_id, canonical_product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`)
+    .run("user", product.id, product.identityKey, product.identityKey, null, JSON.stringify(product), now, now);
+  db.sqlite.prepare("INSERT INTO holdings (user_id, product_id, amount, updated_at) VALUES (?, ?, ?, ?)")
+    .run("user", product.id, 0, now);
+
+  const result = await prepareProductCatalogSync(db, "user", [{
+    productId: product.identityKey,
+    identityKey: product.identityKey,
+    canonicalProductId: product.identityKey,
+    externalProductId: product.externalProductId,
+    apr: 5,
+    tiers: [{ min: 0, max: 300, apr: 5 }],
+    fetchedAt: "2026-10-02T01:00:00.000Z",
+    sourceLabel: "Bitget",
+    catalog: { accountId: "bitget-global", exchange: "bitget", region: "global", asset: "USDT", holdingDataMode: "api", apiAccess: "authenticated" },
+  }], {}, []);
+
+  assert.equal(result.products.length, 1);
+  assert.equal(result.products[0].id, product.id);
+  await db.batch(result.statements);
+  assert.equal(db.sqlite.prepare("SELECT status FROM product_catalog WHERE product_id = ?").get(product.id).status, "active");
+});

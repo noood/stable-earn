@@ -39,6 +39,11 @@ export function productShouldBeActive(
   alreadyActive = false,
 ) {
   if (product.productDataMode === "manual") return true;
+  // A partial/failed holding response is not evidence that an existing
+  // product is empty. Keep the row until a complete snapshot explicitly
+  // confirms zero; otherwise an APR change during a partial sync could archive
+  // a product whose holding is merely unknown.
+  if (!holding.known && alreadyActive) return true;
   if (holding.known && holding.amount > 0) return true;
   if (product.availability === "unavailable" || product.eligibilityStatus === "ineligible") {
     return alreadyActive && !holding.known;
