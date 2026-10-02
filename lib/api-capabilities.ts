@@ -4,7 +4,7 @@ export type ApiField = "purchaseAt" | "redeemAt" | "quota" | "termDays" | "eligi
 export type ApiFieldCapability = "supported" | "unsupported";
 
 /**
- * Capabilities are declared per integration/product family, not inferred from
+ * Capabilities are declared per integration and product type, not inferred from
  * one response. A supported field that is missing is temporary and remains
  * read-only; an unsupported field uses the existing manual fallback.
  */

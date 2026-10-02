@@ -82,8 +82,9 @@ export async function prepareProductCatalogSync(
   const productIds: Record<string, string> = {};
   const transformedRates: LiveRate[] = [];
   const statements: D1PreparedStatement[] = [];
-  // The database column is retained for schema compatibility, but its value
-  // is now the complete platform identity rather than an internal family.
+  // Pre-0012 databases may still expose the old column. Current databases use
+  // identity_key; this branch only keeps the deployment compatible while old
+  // schemas are being retired.
   const selectedByIdentity = new Map<string, Set<string>>();
   const binanceCatalogDecisions: Array<Record<string, unknown>> = [];
   const normalizedIncomingRates = deduplicateRates(incomingRates);

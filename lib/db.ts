@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import type { D1Database } from "@cloudflare/workers-types";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { schemaStatements } from "@/db/schema";
+import { isLocalDevelopmentRequest } from "./request-security";
 
 type RuntimeEnv = Cloudflare.Env & {
   DB?: D1Database;
@@ -32,7 +33,7 @@ export async function getUserId(request: Request) {
 }
 
 export async function getUserIdentity(request: Request): Promise<UserIdentity | null> {
-  if (process.env.NODE_ENV === "development") {
+  if (isLocalDevelopmentRequest(request)) {
     return { userId: "local-owner", email: "local@stable-earn.test" };
   }
 

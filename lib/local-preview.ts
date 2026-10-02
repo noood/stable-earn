@@ -3,6 +3,7 @@ import type { ProductOverrideMap } from "./product-overrides";
 import { seedProducts } from "./seed-data";
 import { buildManualProductIdentity } from "./product-identity";
 import { nextScheduledRefreshAt } from "./sync-cache";
+import { isLocalDevelopmentRequest } from "./request-security";
 
 export function localPrivateProductsPreview(now = new Date()) {
   const freshAt = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
@@ -333,7 +334,7 @@ function previewBinanceFixedProduct(id: string, patch: Partial<Product> = {}, no
 }
 
 export function isLocalPreviewRequest(request: Request) {
-  return process.env.NODE_ENV === "development"
+  return isLocalDevelopmentRequest(request)
     && new URL(request.url).searchParams.get("preview") === "1";
 }
 

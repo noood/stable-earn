@@ -83,6 +83,7 @@ export function buildPlatformProductIdentity(input: PlatformProductIdentityInput
   const identityKey = `${accountId}:${asset}:${productType}:${externalProductId}`;
   return {
     externalProductId,
+    /** @deprecated Compatibility name only; use identityKey. */
     canonicalProductId: identityKey,
     identityKey,
   };
