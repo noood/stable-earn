@@ -1,6 +1,6 @@
 import type { HoldingMap, Product, ProductChangeEvent } from "./domain";
 import type { ProductOverrideMap } from "./product-overrides";
-import { seedProducts } from "./seed-data";
+import { previewProducts } from "./preview-fixtures";
 import { buildManualProductIdentity } from "./product-identity";
 import { nextScheduledRefreshAt } from "./sync-cache";
 import { isLocalDevelopmentRequest } from "./request-security";
@@ -385,7 +385,7 @@ function previewBybitFixedProduct(
   fetchedAt: string,
   patch: Partial<Product> = {},
 ): Product {
-  const base = seedProducts.find((product) => product.id === "by-g-usdt-short-fixed")!;
+  const base = previewProducts.find((product) => product.id === "by-g-usdt-short-fixed")!;
   return {
     ...base,
     id,
@@ -405,7 +405,7 @@ function previewBybitFixedProduct(
 }
 
 function previewBinanceFixedProduct(id: string, patch: Partial<Product> = {}, now = new Date()): Product {
-  const account = seedProducts.find((product) => product.id === "bn-g-usdt")!;
+  const account = previewProducts.find((product) => product.id === "bn-g-usdt")!;
   const purchaseDate = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
   return {
     ...account,
@@ -451,8 +451,8 @@ function previewRate(
 }
 
 function previewProduct(id: string, rate?: ReturnType<typeof previewRate>, patch: Partial<Product> = {}) {
-  const base = seedProducts.find((product) => product.id === id);
-  if (!base) throw new Error(`Missing seed product: ${id}`);
+  const base = previewProducts.find((product) => product.id === id);
+  if (!base) throw new Error(`Missing preview fixture: ${id}`);
   return {
     ...base,
     ...patch,
@@ -467,7 +467,7 @@ function previewProduct(id: string, rate?: ReturnType<typeof previewRate>, patch
 }
 
 function previewBitgetPromoProduct(rate: ReturnType<typeof previewRate>) {
-  const base = seedProducts.find((product) => product.id === "bg-usdt-simple")!;
+  const base = previewProducts.find((product) => product.id === "bg-usdt-simple")!;
   return {
     ...base,
     id: "bg-usdt-promo",
@@ -484,7 +484,7 @@ function previewBitgetPromoProduct(rate: ReturnType<typeof previewRate>) {
 }
 
 function previewManualProduct(id: string, asset: Product["asset"], kind: "flexible" | "limited" | "fixed", termDays?: number): Product {
-  const account = seedProducts.find((product) => product.accountId === "binance-global" && product.asset === asset)!;
+  const account = previewProducts.find((product) => product.accountId === "binance-global" && product.asset === asset)!;
   const { apiAccess, ...manualBase } = account;
   void apiAccess;
   return {

@@ -28,7 +28,7 @@ export type LiveRate = {
   externalProductId?: string;
   identityKey?: string;
   identityFingerprint?: string;
-  /** Required when an adapter can return a product absent from seed-data. */
+  /** Required when an adapter can return a product absent from the compatibility templates. */
   catalog?: {
     accountId: string;
     exchange: Product["exchange"];

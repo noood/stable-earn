@@ -1,6 +1,6 @@
 import type { HoldingMap, Product } from "./domain";
 import type { ProductOverrideMap } from "./product-overrides";
-import { seedProducts } from "./seed-data";
+import { demoProductTemplates } from "./demo-fixtures";
 
 type DemoFacts = Partial<Pick<Product, "productType" | "termDays">>;
 
@@ -27,8 +27,8 @@ function demoProduct(
   tiers?: Array<[number, number | null, number]>,
   facts: DemoFacts = {},
 ): Product {
-  const product = seedProducts.find((candidate) => candidate.id === id);
-  if (!product) throw new Error(`Missing seed product: ${id}`);
+  const product = demoProductTemplates.find((candidate) => candidate.id === id);
+  if (!product) throw new Error(`Missing demo product: ${id}`);
   return {
     ...product,
     ...facts,

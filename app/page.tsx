@@ -13,7 +13,7 @@ import { apiFieldCapability } from "@/lib/api-capabilities";
 import { freshHoldingIdsForSave } from "@/lib/holding-cache";
 import { dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
 import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
-import { accounts, seedProducts } from "@/lib/seed-data";
+import { accounts } from "@/lib/seed-data";
 import { highestProductApr, maximumShortTermDays, meetsOpportunityApr, minimumOpportunityApr, productHasComparableApr, productHasKnownCapacity } from "@/lib/opportunity-policy";
 import { buildManualProductIdentity } from "@/lib/product-identity";
 import { buildManualChangeEvents, sameManualProduct } from "@/lib/product-change-events";
@@ -79,7 +79,7 @@ type PortfolioChanges = {
   hiddenProductIds?: string[];
   source?: ProductChangeEvent["source"];
 };
-const emptyHoldings = Object.fromEntries(seedProducts.map((product) => [product.id, 0])) as HoldingMap;
+const emptyHoldings: HoldingMap = {};
 
 export default function Home() {
   const [publicPage, setPublicPage] = useState(process.env.NODE_ENV === "development");
@@ -538,8 +538,8 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     const userProduct = draftManualProducts.some((product) => product.id === productId);
     if (userProduct) setDraftManualProducts((current) => current.filter((product) => product.id !== productId));
     else {
-      const seedProduct = products.find((product) => product.id === productId);
-      if (!seedProduct) return;
+      const listedProduct = products.find((product) => product.id === productId);
+      if (!listedProduct) return;
       setDraftHiddenProductIds((current) => [...new Set([...current, productId])]);
     }
     setDraftHoldings((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== productId)) as HoldingMap);

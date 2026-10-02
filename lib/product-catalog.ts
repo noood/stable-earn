@@ -3,7 +3,7 @@ import type { Product } from "./domain";
 import type { LiveRate } from "./live-rates";
 import { highestProductApr, productHasComparableApr, productQualifiesAsOpportunity, productShouldBeActive } from "./opportunity-policy";
 import { resolveProductWithoutApiData } from "./product-status";
-import { catalogProductTemplates } from "./seed-data";
+import { catalogProductTemplates } from "./catalog-templates";
 import { syncDiagnostic } from "./sync-diagnostics";
 
 /**

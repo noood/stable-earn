@@ -5,10 +5,10 @@ import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
 test("Bitget platform identities reuse the migrated row for the matching offer", async () => {
   const load = moduleLoader();
-  const { seedProducts } = load("@/lib/seed-data");
+  const { previewProducts } = load("@/lib/preview-fixtures");
   const { prepareProductCatalogSync } = load("@/lib/product-catalog");
   const db = sqliteDb();
-  const seed = seedProducts.find((product) => product.id === "bg-usdt-simple");
+  const seed = previewProducts.find((product) => product.id === "bg-usdt-simple");
   const legacy = {
     ...seed,
     identityKey: "bitget-global:USDT:flexible:bg-usdt-standard",
