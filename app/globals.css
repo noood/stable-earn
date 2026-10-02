@@ -273,24 +273,27 @@ input:focus-visible,
 .asset-switch::-webkit-scrollbar { display: none; }
 
 .product-table { width: 100%; min-width: 61.25rem; table-layout: fixed; text-align: left; }
-.product-table-col-platform { width: 22%; }
-.product-table-col-rate { width: 31%; }
+.product-table-col-platform { width: 20%; }
+.product-table-col-rate { width: 32%; }
 .product-table-col-holding { width: 29%; }
-.product-table-col-effective { width: 9%; }
+.product-table-col-effective { width: 10%; }
 .product-table-col-history { width: 9%; }
 .product-table thead { background: var(--surface-subtle); color: var(--text-muted); text-transform: uppercase; letter-spacing: .07em; }
 .product-table th,
 .product-table td { vertical-align: middle; }
+.product-table th:first-child,
+.product-table td:first-child { padding-right: var(--space-5); }
 .product-table th { padding: var(--space-3) var(--table-cell-x); font-size: var(--type-caption); font-weight: 400; line-height: var(--leading-caption); white-space: nowrap; }
 .product-table th:nth-child(2),
 .product-table td:nth-child(2),
 .product-table th:nth-child(3),
-.product-table td:nth-child(3) { padding-right: var(--table-middle-x); padding-left: var(--table-middle-x); }
+.product-table td:nth-child(3) { padding-inline: var(--table-middle-x); }
+.product-table th:nth-child(2),
+.product-table td:nth-child(2) { padding-left: var(--space-5); }
 .product-table th:nth-child(4),
-.product-table td:nth-child(4) { padding-inline: var(--space-3); }
+.product-table td:nth-child(4) { padding-right: var(--space-4); padding-left: var(--space-6); }
 .product-table th:last-child,
 .product-table td:last-child { text-align: center; }
-.product-table th:last-child { padding-inline: var(--space-3); }
 .product-table td:last-child .skeleton-table-line { margin-inline: auto; }
 .table-toolbar { display: flex; min-height: 5.25rem; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-5) var(--space-6); }
 .table-toolbar-copy { display: grid; min-height: 2.875rem; align-content: center; gap: var(--space-1); }
@@ -773,7 +776,5 @@ input:focus-visible,
 
 @media (min-width: 1280px) {
   .product-table { --table-cell-x: 2.25rem; --table-middle-x: 2.5rem; }
-  .product-table th:nth-child(3),
-  .product-table td:nth-child(3) { padding-left: 3.5rem; }
   .metrics-panel .metric-item:nth-child(n + 2)::before { content: ""; }
 }
