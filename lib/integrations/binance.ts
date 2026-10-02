@@ -1,5 +1,5 @@
 import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
-import { buildProductIdentity } from "@/lib/product-identity";
+import { buildPlatformProductIdentity } from "@/lib/product-identity";
 import type { LiveRate } from "@/lib/live-rates";
 import type { HoldingPosition, Product } from "@/lib/domain";
 import { syncDiagnostic } from "@/lib/sync-diagnostics";
@@ -90,17 +90,15 @@ export type BinanceLockedSnapshot = {
 
 const accounts = {
   global: {
-    productIds: { USDT: "bn-g-usdt", USDC: "bn-g-usdc" },
     sourceLabel: "Binance.com 官方账户 API",
   },
   bahrain: {
-    productIds: { USDT: "bn-bh-usdt", USDC: "bn-bh-usdc" },
     sourceLabel: "Binance Bahrain 官方账户 API",
   },
 } as const;
 
 type BinanceAccount = keyof typeof accounts;
-type SupportedAsset = keyof typeof accounts.global.productIds;
+type SupportedAsset = "USDT" | "USDC";
 
 export async function fetchBinanceFlexibleSnapshot(
   credentials: Credentials,
@@ -146,17 +144,25 @@ export async function fetchBinanceFlexibleSnapshot(
       rateSource.tierAnnualPercentageRate,
     );
     const holding = positionRows.reduce((sum, row) => sum + finiteNumber(row.totalAmount), 0);
+    const accountId = account === "global" ? "binance-global" : "binance-bahrain";
+    const externalProductId = rateSource.productId?.trim() || `flexible-${asset.toLowerCase()}`;
+    const identity = buildPlatformProductIdentity({
+      accountId,
+      asset,
+      productType: "flexible",
+      externalProductId,
+    });
 
     return {
       rate: {
-        productId: accountConfig.productIds[asset],
-        ...buildProductIdentity(accountConfig.productIds[asset], { productType: "flexible", tiers }, { externalProductId: rateSource.productId, includeExternalProductId: true }),
+        productId: identity.identityKey,
+        ...identity,
         apr: tiers[0]?.apr ?? 0,
         tiers,
         fetchedAt,
         sourceLabel: accountConfig.sourceLabel,
         catalog: {
-          accountId: account === "global" ? "binance-global" : "binance-bahrain",
+          accountId,
           exchange: "binance" as const,
           region: account,
           asset,
@@ -164,7 +170,7 @@ export async function fetchBinanceFlexibleSnapshot(
           apiAccess: "authenticated" as const,
         },
       },
-      productId: accountConfig.productIds[asset],
+      productId: identity.identityKey,
       holding,
       productListComplete: products.complete,
       positionListComplete: positions.complete,
@@ -345,13 +351,17 @@ function lockedRate(
   quota: LockedProductRow["quota"],
   fetchedAt: string,
 ): LiveRate {
-  const canonical = `${account === "global" ? "bn-g" : "bn-bh"}-${asset.toLowerCase()}-locked`;
-  const identity = buildProductIdentity(canonical, { productType: "fixed", termDays: duration, subscriptionStartsAt: timestampIso(detail?.subscriptionStartTime) }, { externalProductId: projectId, includeExternalProductId: true });
+  const accountId = account === "global" ? "binance-global" : "binance-bahrain";
+  const identity = buildPlatformProductIdentity({
+    accountId,
+    asset,
+    productType: "fixed",
+    externalProductId: projectId,
+  });
   const maximum = finiteOptional(quota?.totalPersonalQuota);
   const minimum = finiteOptional(quota?.minimum);
   return {
     productId: identity.identityKey,
-    canonicalProductId: canonical,
     ...identity,
     name: `Simple Earn Locked · ${formatLockedDuration(duration)}`,
     apr,
@@ -366,7 +376,7 @@ function lockedRate(
     rateCoverage: maximum === undefined ? "base_only" : "complete",
     capacitySource: maximum === undefined ? "cache" : "live",
     catalog: {
-      accountId: account === "global" ? "binance-global" : "binance-bahrain",
+      accountId,
       exchange: "binance",
       region: account === "global" ? "global" : "bahrain",
       asset: asset as Product["asset"],

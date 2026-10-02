@@ -26,7 +26,6 @@
   --track: #edf0ed;
   --danger-surface: #fbeeee;
   --danger-text: #934040;
-  --warning-text: #b45309;
   --overlay: rgb(14 40 32 / 44%);
   --focus: rgb(82 125 95 / 36%);
   --badge-text: #15201c;
@@ -232,7 +231,6 @@ input:focus-visible,
 .text-secondary { color: var(--text-secondary); }
 .text-muted { color: var(--text-secondary); }
 .text-subtle { color: var(--text-subtle); }
-.text-warning { color: var(--warning-text); }
 .text-danger { color: var(--danger-text); }
 
 .account-badge {
@@ -328,7 +326,7 @@ input:focus-visible,
 .product-fact span:first-child { font-weight: 600; }
 .product-fact-separator { margin: 0 .35rem; color: var(--text-muted); font-weight: 400; }
 .product-fact-note { color: inherit; font-weight: inherit; }
-.product-fact-warning { color: var(--danger-text); font-weight: 600; }
+.product-fact-danger { color: var(--danger-text); font-weight: 600; }
 .manual-field {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -574,8 +572,8 @@ input:focus-visible,
   overflow-wrap: anywhere;
   white-space: normal;
 }
-.product-meta-warning,
-.holding-summary-note-warning { color: var(--danger-text); font-weight: 600; }
+.product-meta-danger,
+.holding-summary-note-danger { color: var(--danger-text); font-weight: 600; }
 .product-row-empty {
   background: var(--surface-row-muted);
   color: var(--text-secondary);

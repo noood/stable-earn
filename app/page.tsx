@@ -699,7 +699,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             <Metric label={`预计每日收益 · ${asset}`} value={dataBlocked ? "—" : formatAmount(annualEarn / 365)} note="含活期、定期" />
             <Metric label={!dataBlocked && bestProduct?.rateCoverage === "max_only" ? "最高公开 APR" : "最佳首档 APR"} value={!dataBlocked && bestProduct ? `${highestProductApr(bestProduct).toFixed(2)}%` : "—"} note={dataBlocked ? "—" : bestProduct ? `${accountName(bestProduct.accountId)}${bestProduct.rateCoverage === "max_only" ? " · 阶梯待确认" : ""}` : "暂无产品"} />
             <Metric label="高息剩余额度" value={dataBlocked ? "—" : formatAmount(highYieldLeft)} note="APR ≥ 6% 的已知额度" />
-            <Metric label="超出首档" value={dataBlocked ? "—" : formatAmount(tierOneOverflow)} valueTone={!dataBlocked && tierOneOverflow > 0 ? "warning" : "default"} note={dataBlocked ? "—" : tierOneOverflow > 0 ? "已进入次档" : "未超出首档"} />
+            <Metric label="超出首档" value={dataBlocked ? "—" : formatAmount(tierOneOverflow)} valueTone={!dataBlocked && tierOneOverflow > 0 ? "danger" : "default"} note={dataBlocked ? "—" : tierOneOverflow > 0 ? "已进入次档" : "未超出首档"} />
           </>}
         </section>
 
@@ -889,14 +889,14 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
   const lifecycleStatusWarning = apiMaturity
     ? apiMaturityIsPast(apiMaturity)
     : Boolean(termStatus && termStatus.remainingDays <= 0);
-  const lifecycleValue = <>{lifecycleDateLabel}{termStatusText && <><span className="product-fact-separator">｜</span><span className={lifecycleStatusWarning ? "product-fact-warning" : "product-fact-note"}>{termStatusText}</span></>}</>;
+  const lifecycleValue = <>{lifecycleDateLabel}{termStatusText && <><span className="product-fact-separator">｜</span><span className={lifecycleStatusWarning ? "product-fact-danger" : "product-fact-note"}>{termStatusText}</span></>}</>;
 
   return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
     {(!editing || !manualProduct) && fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
     {!editing && manualTerm && <ProductFact label="活动期限" value={durationDays ? formatTerm(durationDays) : "待填写"} />}
-    {sourceText && <ProductMeta text={sourceText} warning={Boolean(rateFallbackAt)} />}
-    {incompleteText && <ProductMeta text={incompleteText} warning={holding > 0} />}
+    {sourceText && <ProductMeta text={sourceText} danger={Boolean(rateFallbackAt)} />}
+    {incompleteText && <ProductMeta text={incompleteText} danger={holding > 0} />}
     {editing && (manualApr || manualLimit || manualTerm || manualProductTerm || (productNeedsPurchaseDate(product) && Boolean(durationDays))) && <div className="manual-fields">
       {manualLimit && <ManualLimitInput value={manualSettings?.firstTierLimit ?? null} asset={product.asset} disabled={saving} onChange={(firstTierLimitValue) => onOverrideChange({ firstTierLimit: firstTierLimitValue })} />}
       {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
@@ -907,9 +907,9 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
   </div>;
 }
 
-function ProductMeta({ text, title, warning = false }: { text: ReactNode; title?: string; warning?: boolean }) {
+function ProductMeta({ text, title, danger = false }: { text: ReactNode; title?: string; danger?: boolean }) {
   const resolvedTitle = title ?? (typeof text === "string" ? text : undefined);
-  return <p className={`product-meta ${warning ? "product-meta-warning" : "text-muted"}`} title={resolvedTitle}>{text}</p>;
+  return <p className={`product-meta ${danger ? "product-meta-danger" : "text-muted"}`} title={resolvedTitle}>{text}</p>;
 }
 
 function apiTermLifecycleText(product: Product, position: HoldingPosition): ReactNode {
@@ -992,7 +992,7 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
     const note = overflow > 0
       ? `超出${capacityLabel} +${formatAmount(overflow)} ${product.asset}${nextApr !== undefined ? ` · 按 ${nextApr.toFixed(2)}%` : " · 不再计入本产品"}`
       : `${product.productType === "fixed" ? "还可申购" : "还可放"} ${formatAmount(Math.max(0, firstTierCapacity - usedInFirstTier))} ${product.asset}`;
-    summary = <HoldingSummary label={holdingLabel(`${capacityLabel} ${formatAmount(firstTierCapacity)}`)} cacheNote={holdingCacheNote} note={note} progress={firstTierProgress} progressLabel={`${account.name} ${capacityLabel}使用进度`} noteTone={overflow > 0 ? "warning" : "default"} compact={editing} />;
+    summary = <HoldingSummary label={holdingLabel(`${capacityLabel} ${formatAmount(firstTierCapacity)}`)} cacheNote={holdingCacheNote} note={note} progress={firstTierProgress} progressLabel={`${account.name} ${capacityLabel}使用进度`} noteTone={overflow > 0 ? "danger" : "default"} compact={editing} />;
   }
 
   return <div className="holding-column">{editing && (editable

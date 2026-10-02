@@ -1,5 +1,5 @@
 import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
-import { buildProductIdentity } from "@/lib/product-identity";
+import { buildPlatformProductIdentity } from "@/lib/product-identity";
 import type { Product } from "@/lib/domain";
 import { apiAssetsFor } from "@/lib/platform-capabilities";
 
@@ -47,12 +47,7 @@ type BybitResponse<Row> = {
   result?: { list?: Row[] };
 };
 
-const productIds = {
-  USDT: "by-g-usdt",
-  USDC: "by-g-usdc",
-} as const;
-
-type SupportedAsset = keyof typeof productIds;
+type SupportedAsset = "USDT" | "USDC";
 
 const supportedFixedAssets = new Set<Product["asset"]>(apiAssetsFor("bybit-global", "fixed", "productApi"));
 
@@ -63,22 +58,35 @@ export async function fetchBybitFlexibleHoldings(
     account === "global" ? "bybit-global" : "bybit-eu",
     "flexible",
     "holdingApi",
-  ).filter((asset): asset is SupportedAsset => asset in productIds),
+  ).filter((asset): asset is SupportedAsset => asset === "USDT" || asset === "USDC"),
 ) {
   const holdings: Record<string, number> = {};
   const results = await Promise.allSettled(assets.map(async (asset) => {
     const query = new URLSearchParams({ category: "FlexibleSaving", coin: asset });
     const response = await signedGet<BybitPositionRow>("/v5/earn/position", query, credentials);
-    const amount = (response.result?.list ?? [])
-      .filter((row) => row.coin === asset)
-      .reduce((sum, row) => sum + finiteNumber(row.amount), 0);
-    const baseProductId = productIds[asset];
-    const productId = account === "eu" ? baseProductId.replace("by-g-", "by-eu-") : baseProductId;
-    return [productId, amount] as const;
+    const accountId = account === "eu" ? "bybit-eu" : "bybit-global";
+    const rows = (response.result?.list ?? []).filter((row) => row.coin === asset);
+    const amounts = new Map<string, number>();
+    for (const row of rows) {
+      const externalProductId = row.productId?.trim() || `flexible-${asset.toLowerCase()}`;
+      const identity = buildPlatformProductIdentity({
+        accountId,
+        asset,
+        productType: "flexible",
+        externalProductId,
+      });
+      amounts.set(identity.identityKey, (amounts.get(identity.identityKey) ?? 0) + finiteNumber(row.amount));
+    }
+    // A successful empty position response is intentionally represented by no
+    // update. The catalog's complete-account rule records zero for the known
+    // product without borrowing an old holding from another product.
+    return [...amounts.entries()] as Array<readonly [string, number]>;
   }));
 
   results.forEach((result) => {
-    if (result.status === "fulfilled") holdings[result.value[0]] = result.value[1];
+    if (result.status === "fulfilled") {
+      for (const [productId, amount] of result.value) holdings[productId] = amount;
+    }
   });
   return {
     holdings,
@@ -145,20 +153,17 @@ function fixedProductRate(row: BybitFixedProductRow) {
   const subscriptionStart = timestampIso(row.subscribeStartAt);
   const subscriptionEnd = timestampIso(row.subscribeEndAt);
   const termDays = parseDurationDays(row.duration);
-  const canonicalProductId = `by-g-${asset.toLowerCase()}-fixed`;
-  const identity = buildProductIdentity(canonicalProductId, {
+  const identity = buildPlatformProductIdentity({
+    accountId: "bybit-global",
+    asset,
     productType: "fixed",
-    termDays: termDays > 0 ? termDays : undefined,
-    subscriptionStartsAt: subscriptionStart,
-    subscriptionEndsAt: subscriptionEnd,
-  }, { externalProductId: row.productId, includeExternalProductId: true });
-  const adapterProductId = `${identity.identityKey}:${row.subscribeStartAt || row.subscribeEndAt || "open"}`;
+    externalProductId: row.productId,
+  });
   const eligibilityRequired = Boolean(row.specialUserGroupRequired || row.isVip);
   const eligibilityLabel = row.specialUserGroupInfo || (row.isVip ? "VIP 用户" : undefined);
 
   return {
-    productId: adapterProductId,
-    canonicalProductId,
+    productId: identity.identityKey,
     ...identity,
     name: `Fixed Saving · ${formatDuration(row.duration)}`,
     apr: tiers[0]?.apr ?? 0,

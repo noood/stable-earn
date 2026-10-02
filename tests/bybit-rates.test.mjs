@@ -36,10 +36,10 @@ test("Bybit public flexible APR keeps the complete tier ladder", async () => {
   });
   const { fetchPublicRateSnapshot } = load("@/lib/live-rates");
   const result = await fetchPublicRateSnapshot();
-  const rate = result.rates.find((item) => item.productId === "by-g-usdc");
+  const rate = result.rates.find((item) => item.identityKey === "bybit-global:USDC:flexible:2");
 
   assert.equal(result.failures.length, 0);
-  assert.ok(result.rates.find((item) => item.productId === "by-g-usdt"));
+  assert.ok(result.rates.find((item) => item.identityKey === "bybit-global:USDT:flexible:1"));
   assert.ok(rate);
   assert.equal(rate.apr, 5.44);
   assert.deepEqual(rate.tiers, [

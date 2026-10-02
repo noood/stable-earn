@@ -1,6 +1,6 @@
 import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import type { EligibilityStatus, Product, ProductAvailability, RateCoverage } from "@/lib/domain";
-import { buildProductIdentity } from "@/lib/product-identity";
+import { buildPlatformProductIdentity } from "@/lib/product-identity";
 import { syncDiagnostic } from "@/lib/sync-diagnostics";
 import { publicProductAssetsFor } from "@/lib/platform-capabilities";
 
@@ -42,7 +42,7 @@ export type LiveRate = {
 type BybitEndpoint = {
   bases: readonly string[];
   platform: "Bybit.com" | "Bybit EU";
-  productId: string;
+  accountId: "bybit-global" | "bybit-eu";
   coin: string;
   label: string;
 };
@@ -67,9 +67,9 @@ type BybitFlexibleRow = {
 };
 
 const bybitEndpointDefinitions: BybitEndpoint[] = [
-  { bases: ["https://api.bybit.com", "https://api.bytick.com"], platform: "Bybit.com", productId: "by-g-usdt", coin: "USDT", label: "Bybit 官方公开 API" },
-  { bases: ["https://api.bybit.com", "https://api.bytick.com"], platform: "Bybit.com", productId: "by-g-usdc", coin: "USDC", label: "Bybit 官方公开 API" },
-  { bases: ["https://api.bybit.eu"], platform: "Bybit EU", productId: "by-eu-usdt", coin: "USDT", label: "Bybit EU 官方公开 API" },
+  { bases: ["https://api.bybit.com", "https://api.bytick.com"], platform: "Bybit.com", accountId: "bybit-global", coin: "USDT", label: "Bybit 官方公开 API" },
+  { bases: ["https://api.bybit.com", "https://api.bytick.com"], platform: "Bybit.com", accountId: "bybit-global", coin: "USDC", label: "Bybit 官方公开 API" },
+  { bases: ["https://api.bybit.eu"], platform: "Bybit EU", accountId: "bybit-eu", coin: "USDT", label: "Bybit EU 官方公开 API" },
 ];
 
 const bybitEndpoints = bybitEndpointDefinitions.filter((endpoint) => {
@@ -152,16 +152,22 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
         selectedTierCount: tiers.length,
       });
       if (!Number.isFinite(apr)) throw new Error("Bybit returned no APR");
-      const externalProductId = item?.productId;
+      const externalProductId = item?.productId ?? `flexible-${endpoint.coin.toLowerCase()}`;
+      const identity = buildPlatformProductIdentity({
+        accountId: endpoint.accountId,
+        asset: endpoint.coin,
+        productType: "flexible",
+        externalProductId,
+      });
       return {
-        productId: endpoint.productId,
-        ...buildProductIdentity(endpoint.productId, { productType: "flexible" }, { externalProductId, includeExternalProductId: true }),
+        productId: identity.identityKey,
+        ...identity,
         apr,
         ...(tiers.length > 0 ? { tiers } : {}),
         fetchedAt: new Date().toISOString(),
         sourceLabel: endpoint.label,
         catalog: {
-          accountId: endpoint.platform === "Bybit.com" ? "bybit-global" : "bybit-eu",
+          accountId: endpoint.accountId,
           exchange: "bybit",
           region: endpoint.platform === "Bybit.com" ? "global" : "eu",
           asset: endpoint.coin as Product["asset"],

@@ -49,8 +49,8 @@ test("Bitget keeps separate offers and assigns holdings by productId", async () 
   const usdcRates = result.rates.filter((rate) => rate.catalog?.asset === "USDC");
   assert.equal(usdcRates.length, 1);
   assert.equal(usdcRates[0].tiers.length, 1);
-  assert.equal(result.holdings["bg-usdt-standard"], 300);
-  assert.equal(result.holdings["bg-usdt-promo"], 0);
+  assert.equal(result.holdings["bitget-global:USDT:flexible:bg-usdt-standard"], 300);
+  assert.equal(result.holdings["bitget-global:USDT:flexible:bg-usdt-promo"], 0);
   assert.equal(result.sync.products, true);
   assert.equal(result.sync.holdings, true);
 });
@@ -115,6 +115,6 @@ test("Bitget follows assets endId pagination before treating an absent offer as 
   assert.equal(assetQueries[0].periodType, "flexible");
   assert.equal(assetQueries[1].idLessThan, "100");
   assert.equal(result.sync.holdings, true);
-  assert.equal(result.holdings["bg-usdt-standard"], 300);
-  assert.equal(result.holdings["bg-usdt-promo"], 0);
+  assert.equal(result.holdings["bitget-global:USDT:flexible:bg-usdt-standard"], 300);
+  assert.equal(result.holdings["bitget-global:USDT:flexible:bg-usdt-promo"], 0);
 });

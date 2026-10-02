@@ -43,6 +43,7 @@ npm run check
 3. 设置 Worker Secret：`CREDENTIAL_ENCRYPTION_KEY`。
 4. 在 Cloudflare Queues 中创建队列 `stable-earn-sync`（首次部署或升级时只需创建一次）。生产者、消费者及重试配置由部署写入；若改名，请同步修改 `wrangler.jsonc` 中的两处队列名。
 5. 按版本说明执行尚未执行且确实需要的 D1 migration。每个 migration 只针对目标数据库执行一次；不要因为重新部署 Worker 就重复执行历史 migration。
+   本次产品身份迁移对应 `drizzle/0010_platform_product_identity.sql`：先在远程 D1 执行并验证，再部署 Worker。
 6. 运行 `npm run deploy`，或使用 Cloudflare Workers Builds 自动部署。
 
 ### D1 migration 的执行位置

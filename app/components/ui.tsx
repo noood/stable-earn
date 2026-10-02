@@ -16,8 +16,8 @@ export function AccountBadge({ account }: { account: Account }) {
   return <span className="account-badge" title={account.name} style={{ backgroundColor: account.color, color: account.foreground }}>{account.mark}</span>;
 }
 
-export function Metric({ label, value, note, highlight = false, valueTone = "default" }: { label: string; value: string; note: string; highlight?: boolean; valueTone?: "default" | "warning" }) {
-  return <div className={`metric-item ${highlight ? "metric-item-highlight" : ""}`}><p className="text-muted type-caption">{label}</p><p className={`metric-value type-metric ${valueTone === "warning" ? "text-warning" : ""}`}>{value}</p><p className="metric-note text-muted type-micro">{note}</p></div>;
+export function Metric({ label, value, note, highlight = false, valueTone = "default" }: { label: string; value: string; note: string; highlight?: boolean; valueTone?: "default" | "danger" }) {
+  return <div className={`metric-item ${highlight ? "metric-item-highlight" : ""}`}><p className="text-muted type-caption">{label}</p><p className={`metric-value type-metric ${valueTone === "danger" ? "text-danger" : ""}`}>{value}</p><p className="metric-note text-muted type-micro">{note}</p></div>;
 }
 
 export function MetricSkeleton({ highlight = false }: { highlight?: boolean }) {
@@ -33,7 +33,7 @@ function ProgressBar({ value, label }: { value: number; label: string }) {
   return <div className="progress-track" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(normalizedValue)}><div className="progress-fill" style={{ width: `${normalizedValue}%` }} /></div>;
 }
 
-export function HoldingSummary({ label, value, note, cacheNote, progress, progressLabel, noteTone = "default", muted = false, compact = false }: { label?: ReactNode; value?: ReactNode; note?: ReactNode; cacheNote?: ReactNode; progress?: number; progressLabel?: string; noteTone?: "default" | "warning"; muted?: boolean; compact?: boolean }) {
+export function HoldingSummary({ label, value, note, cacheNote, progress, progressLabel, noteTone = "default", muted = false, compact = false }: { label?: ReactNode; value?: ReactNode; note?: ReactNode; cacheNote?: ReactNode; progress?: number; progressLabel?: string; noteTone?: "default" | "danger"; muted?: boolean; compact?: boolean }) {
   return (
     <div className={`holding-summary ${muted ? "holding-summary-muted" : ""} ${compact ? "holding-summary-compact" : ""}`}>
       {(label !== undefined || value !== undefined) && <div className="holding-summary-head">
@@ -41,8 +41,8 @@ export function HoldingSummary({ label, value, note, cacheNote, progress, progre
         {value !== undefined && <span className="whitespace-nowrap tabular-nums">{value}</span>}
       </div>}
       {progress !== undefined && <ProgressBar value={progress} label={progressLabel ?? "首档额度使用进度"} />}
-      {cacheNote !== undefined && <p className="holding-summary-note holding-summary-note-warning">{cacheNote}</p>}
-      {note !== undefined && <p className={`holding-summary-note ${noteTone === "warning" ? "holding-summary-note-warning" : ""}`}>{note}</p>}
+      {cacheNote !== undefined && <p className="holding-summary-note holding-summary-note-danger">{cacheNote}</p>}
+      {note !== undefined && <p className={`holding-summary-note ${noteTone === "danger" ? "holding-summary-note-danger" : ""}`}>{note}</p>}
     </div>
   );
 }

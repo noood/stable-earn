@@ -1,5 +1,5 @@
 import { exchangeFetch, logExchangePayload, readExchangeJson, readExchangeText } from "@/lib/exchange-fetch";
-import { buildProductIdentity } from "@/lib/product-identity";
+import { buildPlatformProductIdentity } from "@/lib/product-identity";
 import { syncDiagnostic } from "@/lib/sync-diagnostics";
 import { apiAssetsFor } from "@/lib/platform-capabilities";
 import type { LiveRate } from "@/lib/live-rates";
@@ -77,19 +77,10 @@ export type BitgetSavingsSnapshot = {
   };
 };
 
-// These are legacy family IDs used as the adapter-side canonical ID. The
-// catalog adds the upstream offer ID to the identity, so one family can have
-// multiple durable products (for example Bitget's 0–300 and 0–100000 offers).
-const baseProductIds = {
-  USDT: ["bg-usdt-simple"],
-  USDC: ["bg-usdc"],
-  USDGO: ["bg-usdgo"],
-} as const;
-
 const bitgetAssetPageSize = 100;
 const maxBitgetAssetPages = 50;
 
-type SupportedAsset = keyof typeof baseProductIds;
+type SupportedAsset = "USDT" | "USDC" | "USDGO";
 
 export async function fetchBitgetSavingsSnapshot(
   credentials: BitgetCredentials,
@@ -166,15 +157,16 @@ export async function fetchBitgetSavingsSnapshot(
     // has disappeared from the current product list.
     const selectedRows = mergeBitgetRows(asset, productRows, assetRows);
     selectedRows.forEach((item, index) => {
-      const targetId = baseProductIds[asset][0];
       const externalProductId = item.externalProductId ?? bitgetFallbackExternalId(item.tiers, item.row.productLevel, index);
+      const identity = buildPlatformProductIdentity({
+        accountId: "bitget-global",
+        asset,
+        productType: "flexible",
+        externalProductId,
+      });
       rates.push({
-        productId: targetId,
-        canonicalProductId: targetId,
-        // Keep the family ID as the adapter ID, and put the upstream offer ID
-        // in the identity key. The catalog turns distinct identities in the
-        // same family into distinct durable rows without collapsing them.
-        ...buildProductIdentity(targetId, { productType: "flexible" }, { externalProductId, includeExternalProductId: true }),
+        productId: identity.identityKey,
+        ...identity,
         name: bitgetProductName(item.row, index),
         apr: item.tiers[0]?.apr ?? 0,
         tiers: item.tiers,
@@ -204,7 +196,13 @@ export async function fetchBitgetSavingsSnapshot(
           const tiers = normalizeAssetTiers(row.apy);
           const externalProductId = normalizeExternalProductId(row.productId)
             ?? bitgetFallbackExternalId(tiers, row.productLevel, index);
-          holdings[externalProductId] = (holdings[externalProductId] ?? 0) + finiteNumber(row.holdAmount);
+          const identity = buildPlatformProductIdentity({
+            accountId: "bitget-global",
+            asset,
+            productType: "flexible",
+            externalProductId,
+          });
+          holdings[identity.identityKey] = (holdings[identity.identityKey] ?? 0) + finiteNumber(row.holdAmount);
         });
       }
       // Bitget's assets endpoint is a paged list of current holdings, not a
@@ -215,7 +213,7 @@ export async function fetchBitgetSavingsSnapshot(
       if (assetCollection?.complete) {
         for (const rate of assetRates) {
           if (!matchingRows.some((row, index) => bitgetRowExternalId(row, index) === rate.externalProductId)) {
-            holdings[rate.externalProductId ?? rate.productId] = 0;
+            holdings[rate.identityKey ?? rate.productId] = 0;
           }
         }
       } else {

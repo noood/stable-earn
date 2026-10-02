@@ -71,7 +71,7 @@ test("loading retains skeletons and loaded metrics retain actual values", () => 
   assert.match(loaded, /1 个持仓产品/);
   assert.match(loaded, /Test Exchange/);
   assert.match(loaded, /已进入次档/);
-  assert.match(loaded, /metric-value type-metric text-warning/);
+  assert.match(loaded, /metric-value type-metric text-danger/);
 });
 
 test("updating copy uses one warning style, with a timestamp only when available", () => {

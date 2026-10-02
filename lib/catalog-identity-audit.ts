@@ -51,8 +51,8 @@ export type CatalogIdentityAudit = {
 /**
  * Read-only audit of persisted product identities and all user-data references.
  * It intentionally does not choose winners or prepare writes: duplicate
- * canonical families can be legitimate (for example fixed-term offers), so a
- * migration decision must be made from the returned rows and holdings.
+ * platform identities may still be legitimate historical rows, so a migration
+ * decision must be made from the returned rows and holdings.
  */
 export async function auditCatalogIdentities(db: D1Database, ownerId?: string): Promise<CatalogIdentityAudit> {
   const scope = ownerId ? " WHERE owner_id = ?" : "";

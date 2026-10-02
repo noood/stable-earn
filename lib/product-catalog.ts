@@ -81,44 +81,29 @@ export async function prepareProductCatalogSync(
   const productIds: Record<string, string> = {};
   const transformedRates: LiveRate[] = [];
   const statements: D1PreparedStatement[] = [];
-  const selectedByCanonical = new Map<string, Set<string>>();
+  // The database column is retained for schema compatibility, but its value
+  // is now the complete platform identity rather than an internal family.
+  const selectedByIdentity = new Map<string, Set<string>>();
   const binanceCatalogDecisions: Array<Record<string, unknown>> = [];
   const normalizedIncomingRates = deduplicateRates(incomingRates);
   const incomingIdentityKeys = new Set(normalizedIncomingRates
     .map((rate) => rate.identityKey ?? rate.canonicalProductId ?? rate.productId));
   const incomingCanonicalIds = new Set(normalizedIncomingRates
-    .map((rate) => rate.canonicalProductId ?? rate.productId));
+    .map((rate) => rate.identityKey ?? rate.canonicalProductId ?? rate.productId));
 
   for (const rate of normalizedIncomingRates.filter(rateHasKnownApr)) {
-    const canonicalProductId = rate.canonicalProductId ?? rate.productId;
-    const identityKey = rate.identityKey ?? canonicalProductId;
+    const identityKey = rate.identityKey ?? rate.canonicalProductId ?? rate.productId;
+    const canonicalProductId = identityKey;
     const fingerprint = normalizeFingerprint(rate.identityFingerprint);
     const seed = catalogProductTemplates.find((product) => product.id === canonicalProductId);
     // Fingerprints are retained for diagnostics, but are not product identity.
     // Product-list and position endpoints may omit different mutable fields.
-    const selectedForCanonical = selectedByCanonical.get(canonicalProductId) ?? new Set<string>();
+    const selectedForIdentity = selectedByIdentity.get(identityKey) ?? new Set<string>();
     const identityCandidates = (byIdentity.get(identityKey) ?? [])
-      .filter((row) => !selectedForCanonical.has(row.product_id));
-    // Adapters may tighten an identity from a historical upstream ID to a
-    // stable slot. Reuse the existing canonical row during that transition so
-    // the first refresh repairs the row instead of creating another product.
-    const canonicalCandidates = rows.filter((row) => row.canonical_product_id === canonicalProductId
-      && !selectedForCanonical.has(row.product_id));
-    const incomingForCanonical = normalizedIncomingRates.filter((candidate) => (
-      (candidate.canonicalProductId ?? candidate.productId) === canonicalProductId
-    ));
-    const holdingMatchedLegacyCandidates = incomingForCanonical.length > 1
-      ? canonicalCandidates.filter((row) => {
-        const persistedAmount = persistedHoldings.get(row.product_id);
-        const freshAmount = firstHolding(freshHoldings, [rate.externalProductId, rate.productId, rate.identityKey]);
-        return persistedAmount !== undefined && freshAmount !== undefined
-          && Math.abs(persistedAmount - freshAmount) < 1e-9;
-      })
-      : canonicalCandidates;
+      .filter((row) => !selectedForIdentity.has(row.product_id));
     const current = preferredCatalogRow(identityCandidates, persistedHoldings, purchaseDates)
-      ?? (identityCandidates.length === 0 ? preferredCatalogRow(holdingMatchedLegacyCandidates, persistedHoldings, purchaseDates) : undefined)
-      ?? (seed && !selectedForCanonical.has(seed.id) ? rows.find((row) => row.product_id === seed.id && row.identity_key === seed.identityKey) : undefined);
-    const baseline = !current && seed && !selectedForCanonical.has(seed.id)
+      ?? (seed && !selectedForIdentity.has(seed.id) ? rows.find((row) => row.product_id === seed.id && row.identity_key === seed.identityKey) : undefined);
+    const baseline = !current && seed && !selectedForIdentity.has(seed.id)
       ? rows.find((row) => row.product_id === seed.id && row.identity_key === seed.identityKey && !normalizeFingerprint(row.identity_fingerprint))
       : undefined;
     const selectedCurrent = current ?? baseline;
@@ -154,9 +139,9 @@ export async function prepareProductCatalogSync(
     }
     mapProductIds(productIds, rate, canonicalProductId, identityKey, id);
 
-    const selected = selectedByCanonical.get(canonicalProductId) ?? new Set<string>();
+    const selected = selectedByIdentity.get(identityKey) ?? new Set<string>();
     selected.add(id);
-    selectedByCanonical.set(canonicalProductId, selected);
+    selectedByIdentity.set(identityKey, selected);
 
     if (selectedCurrent) {
       planned.set(id, { product, status: active ? "active" : "archived" });
@@ -171,7 +156,7 @@ export async function prepareProductCatalogSync(
   // A product omitted from the latest list is not a new identity. Existing
   // rows are archived only when a complete holding snapshot proves they are
   // empty and another row now represents the same stable identity.
-  for (const [canonicalProductId, selectedIds] of selectedByCanonical) {
+  for (const [canonicalProductId, selectedIds] of selectedByIdentity) {
     for (const row of rows.filter((candidate) => candidate.status === "active"
       && candidate.canonical_product_id === canonicalProductId
       && !selectedIds.has(candidate.product_id))) {
@@ -512,6 +497,14 @@ function reactivateCatalogStatement(db: D1Database, ownerId: string, productId: 
 }
 
 function productFromRate(base: Product, rate: LiveRate, id: string, identityKey: string): Product {
+  const normalizedBase: Product = rate.catalog
+    ? {
+      ...base,
+      productDataMode: "api",
+      apiAccess: rate.catalog.apiAccess,
+      holdingDataMode: rate.catalog.holdingDataMode,
+    } as Product
+    : base;
   const tiers = rate.tiers
     ? rate.tiers.map((tier, index) => {
       const previous = base.tiers[index];
@@ -531,7 +524,7 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
       ? "live"
       : capacityKnown ? base.capacitySource : undefined;
   return {
-    ...base,
+    ...normalizedBase,
     id,
     name: rate.name ?? base.name,
     productType: rate.productType ?? base.productType,
@@ -646,7 +639,7 @@ function recordBinanceCatalogDecision(
 ) {
   if (!isBinanceLockedProduct(product)) return;
   decisions.push({
-    canonicalProductId: product.identityKey.split(":")[0] ?? product.identityKey,
+    canonicalProductId: product.identityKey,
     identityKey: product.identityKey,
     externalProjectId: product.externalProductId ?? null,
     accountId: product.accountId,
