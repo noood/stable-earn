@@ -19,7 +19,9 @@ export async function GET(request: Request) {
     return {
       ownerId: row.owner_id,
       productId: row.product_id,
-      canonicalProductId: row.canonical_product_id,
+      // Kept as a read-only compatibility label for older audit consumers.
+      // The persisted source of truth is now identityKey.
+      canonicalProductId: row.identity_key,
       identityKey: row.identity_key,
       identityFingerprint: row.identity_fingerprint,
       status: row.status,

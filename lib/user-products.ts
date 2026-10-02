@@ -1,6 +1,7 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import type { Asset, Product } from "./domain";
 import { accounts } from "./seed-data";
+import { buildManualProductIdentity } from "./product-identity";
 
 export type UserProductInput = {
   id: string;
@@ -82,6 +83,7 @@ export function prepareUserProductStatements(
     ...deletedIds.flatMap((productId) => [
       db.prepare("DELETE FROM user_products WHERE user_id = ? AND product_id = ?").bind(userId, productId),
       db.prepare("DELETE FROM holdings WHERE user_id = ? AND product_id = ?").bind(userId, productId),
+      db.prepare("DELETE FROM holding_positions WHERE user_id = ? AND product_id = ?").bind(userId, productId),
       db.prepare("DELETE FROM product_overrides WHERE user_id = ? AND product_id = ?").bind(userId, productId),
       db.prepare("DELETE FROM product_override_limits WHERE user_id = ? AND product_id = ?").bind(userId, productId),
       db.prepare("DELETE FROM product_override_terms WHERE user_id = ? AND product_id = ?").bind(userId, productId),
@@ -116,6 +118,11 @@ export function userProductInputToProduct(input: UserProductInput): Product {
     tiers: [{ id: `${input.id}-tier-0`, min: 0, max: null, apr: 0 }],
     source: { kind: "manual", label: "手动添加" },
     rateCoverage: "unavailable",
-    identityKey: input.id,
+    identityKey: buildManualProductIdentity({
+      accountId: input.accountId,
+      asset: input.asset,
+      productType: input.manualKind === "fixed" ? "fixed" : "flexible",
+      slug: input.id.replace(/^manual-/, ""),
+    }),
   };
 }

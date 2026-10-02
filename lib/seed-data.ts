@@ -1,4 +1,5 @@
 import type { Account, Product, ProductDataSource } from "./domain";
+import { buildManualProductIdentity } from "./product-identity";
 
 export const accounts: Account[] = [
   { id: "binance-global", exchange: "binance", region: "global", name: "Binance.com", mark: "BN", color: "#f0b90b" },
@@ -61,7 +62,9 @@ function product(
 ): Product {
   return {
     id, accountId, exchange, region, asset, name, productType: "flexible", source, rateCoverage: "complete", ...dataMode,
-    identityKey: id,
+    identityKey: dataMode.productDataMode === "manual"
+      ? buildManualProductIdentity({ accountId, asset, productType: "flexible", slug: id })
+      : id,
     tiers: tiers.map(([min, max, apr], index) => ({ id: `${id}-tier-${index}`, min, max, apr })),
   };
 }

@@ -17,7 +17,6 @@ import { syncDiagnostic } from "./sync-diagnostics";
 type CatalogRow = {
   owner_id: string;
   product_id: string;
-  canonical_product_id: string;
   identity_key: string;
   identity_fingerprint: string | null;
   payload: string;
@@ -41,7 +40,7 @@ export type ProductCatalogSync = {
 };
 
 export async function loadCatalogRows(db: D1Database, ownerId: string) {
-  const result = await db.prepare(`SELECT owner_id, product_id, canonical_product_id, identity_key,
+  const result = await db.prepare(`SELECT owner_id, product_id, identity_key,
       identity_fingerprint, payload, status, first_seen_at, last_seen_at, archived_at
       FROM product_catalog WHERE owner_id = ? ORDER BY first_seen_at, product_id`).bind(ownerId).all<CatalogRow>();
   return result.results;
@@ -59,10 +58,12 @@ export async function prepareProductCatalogSync(
   freshHoldings: Record<string, number> = {},
   completeAccountIds: readonly string[] = [],
 ): Promise<ProductCatalogSync> {
-  const [rows, holdingResult] = await Promise.all([
+  const [rows, holdingResult, catalogColumns] = await Promise.all([
     loadCatalogRows(db, ownerId),
     db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ?").bind(ownerId).all<HoldingRow>(),
+    db.prepare("PRAGMA table_info(product_catalog)").bind().all<{ name: string }>(),
   ]);
+  const hasLegacyCanonicalColumn = catalogColumns.results.some((column) => column.name === "canonical_product_id");
   const overrideResult = await db.prepare("SELECT product_id, purchase_date FROM product_overrides WHERE user_id = ?").bind(ownerId).all<OverrideRow>();
   const now = new Date().toISOString();
   const completeAccounts = new Set(completeAccountIds);
@@ -88,8 +89,7 @@ export async function prepareProductCatalogSync(
   const normalizedIncomingRates = deduplicateRates(incomingRates);
   const incomingIdentityKeys = new Set(normalizedIncomingRates
     .map((rate) => rate.identityKey ?? rate.canonicalProductId ?? rate.productId));
-  const incomingCanonicalIds = new Set(normalizedIncomingRates
-    .map((rate) => rate.identityKey ?? rate.canonicalProductId ?? rate.productId));
+  const incomingCanonicalIds = incomingIdentityKeys;
 
   for (const rate of normalizedIncomingRates.filter(rateHasKnownApr)) {
     const identityKey = rate.identityKey ?? rate.canonicalProductId ?? rate.productId;
@@ -145,10 +145,10 @@ export async function prepareProductCatalogSync(
 
     if (selectedCurrent) {
       planned.set(id, { product, status: active ? "active" : "archived" });
-      statements.push(updateCatalogStatement(db, ownerId, selectedCurrent, product, canonicalProductId, active, now));
+      statements.push(updateCatalogStatement(db, ownerId, selectedCurrent, product, canonicalProductId, active, now, hasLegacyCanonicalColumn));
     } else if (active) {
       planned.set(id, { product, status: "active" });
-      statements.push(insertCatalogStatement(db, ownerId, product, canonicalProductId, identityKey, now));
+      statements.push(insertCatalogStatement(db, ownerId, product, canonicalProductId, identityKey, now, hasLegacyCanonicalColumn));
     }
     if (active) transformedRates.push({ ...rate, productId: id, canonicalProductId });
   }
@@ -158,7 +158,7 @@ export async function prepareProductCatalogSync(
   // empty and another row now represents the same stable identity.
   for (const [canonicalProductId, selectedIds] of selectedByIdentity) {
     for (const row of rows.filter((candidate) => candidate.status === "active"
-      && candidate.canonical_product_id === canonicalProductId
+      && candidate.identity_key === canonicalProductId
       && !selectedIds.has(candidate.product_id))) {
       const product = parseProduct(row.payload)[0];
       if (!product) continue;
@@ -207,7 +207,7 @@ export async function prepareProductCatalogSync(
   for (const row of rows.filter((candidate) => candidate.status === "active")) {
     const product = parseProduct(row.payload)[0];
     if (!product || product.productDataMode !== "api" || !completeAccounts.has(product.accountId)) continue;
-    if (incomingIdentityKeys.has(row.identity_key) || incomingCanonicalIds.has(row.canonical_product_id)) continue;
+    if (incomingIdentityKeys.has(row.identity_key) || incomingCanonicalIds.has(row.identity_key)) continue;
     const evidence = existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeAccounts);
     if (!evidence.known || evidence.amount > 0) continue;
     planned.set(row.product_id, { product, status: "archived" });
@@ -253,7 +253,7 @@ export async function prepareProductCatalogSync(
       }
     } else if (active) {
       planned.set(id, { product, status: "active" });
-      statements.push(insertCatalogStatement(db, ownerId, product, base.id, product.identityKey, now));
+      statements.push(insertCatalogStatement(db, ownerId, product, base.id, product.identityKey, now, hasLegacyCanonicalColumn));
     }
   }
 
@@ -268,10 +268,11 @@ export async function prepareProductCatalogSync(
 }
 
 export async function resolveCatalogProductIds(db: D1Database, ownerId: string) {
-  const [rows, holdingResult, overrideResult] = await Promise.all([
+  const [rows, holdingResult, overrideResult, aliasResult] = await Promise.all([
     loadCatalogRows(db, ownerId),
     db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ?").bind(ownerId).all<HoldingRow>(),
     db.prepare("SELECT product_id, purchase_date FROM product_overrides WHERE user_id = ?").bind(ownerId).all<OverrideRow>(),
+    db.prepare("SELECT alias, product_id FROM product_identity_aliases WHERE owner_id = ?").bind(ownerId).all<{ alias: string; product_id: string }>(),
   ]);
   const persistedHoldings = new Map(holdingResult.results.map((row) => [row.product_id, Number(row.amount)]));
   const purchaseDates = new Map(overrideResult.results.map((row) => [row.product_id, row.purchase_date]));
@@ -288,11 +289,11 @@ export async function resolveCatalogProductIds(db: D1Database, ownerId: string) 
     for (const row of candidates) {
       if (row.status === "active") map[row.product_id] = preferred.product_id;
     }
-    map[preferred.canonical_product_id] = preferred.product_id;
     map[preferred.identity_key] = preferred.product_id;
     const product = parseProduct(preferred.payload)[0];
     if (product?.externalProductId) map[product.externalProductId] = preferred.product_id;
   }
+  for (const row of aliasResult.results) map[row.alias] = row.product_id;
   return map;
 }
 
@@ -414,7 +415,7 @@ function resolveExistingRow(rows: CatalogRow[], sourceId: string) {
   return rows.find((row) => row.product_id === sourceId)
     ?? rows.find((row) => row.identity_key === sourceId)
     ?? rows.find((row) => parseProduct(row.payload)[0]?.externalProductId === sourceId)
-    ?? rows.find((row) => row.canonical_product_id === sourceId);
+    ?? rows.find((row) => row.identity_key === sourceId);
 }
 
 function mapProductIds(map: Record<string, string>, rate: LiveRate, canonical: string, identity: string, id: string) {
@@ -452,38 +453,50 @@ function updateCatalogStatement(
   ownerId: string,
   row: CatalogRow,
   product: Product,
-  canonicalProductId: string,
+  _canonicalProductId: string,
   active: boolean,
   now: string,
+  hasLegacyCanonicalColumn: boolean,
 ) {
-  return db.prepare(`UPDATE product_catalog SET
-      canonical_product_id = ?, identity_key = ?, identity_fingerprint = ?, payload = ?,
-      status = ?, last_seen_at = ?, archived_at = ?
-      WHERE owner_id = ? AND product_id = ?`)
-    .bind(canonicalProductId, product.identityKey, normalizeFingerprint(product.identityFingerprint), JSON.stringify(product),
-      active ? "active" : "archived", now, active ? null : now, ownerId, row.product_id);
+  const query = hasLegacyCanonicalColumn
+    ? `UPDATE product_catalog SET canonical_product_id = ?, identity_key = ?, identity_fingerprint = ?, payload = ?,
+        status = ?, last_seen_at = ?, archived_at = ? WHERE owner_id = ? AND product_id = ?`
+    : `UPDATE product_catalog SET identity_key = ?, identity_fingerprint = ?, payload = ?,
+        status = ?, last_seen_at = ?, archived_at = ? WHERE owner_id = ? AND product_id = ?`;
+  const values = hasLegacyCanonicalColumn
+    ? [product.identityKey, product.identityKey, normalizeFingerprint(product.identityFingerprint), JSON.stringify(product), active ? "active" : "archived", now, active ? null : now, ownerId, row.product_id]
+    : [product.identityKey, normalizeFingerprint(product.identityFingerprint), JSON.stringify(product), active ? "active" : "archived", now, active ? null : now, ownerId, row.product_id];
+  return db.prepare(query).bind(...values);
 }
 
 function insertCatalogStatement(
   db: D1Database,
   ownerId: string,
   product: Product,
-  canonicalProductId: string,
+  _canonicalProductId: string,
   identityKey: string,
   now: string,
+  hasLegacyCanonicalColumn: boolean,
 ) {
-  return db.prepare(`INSERT INTO product_catalog
-      (owner_id, product_id, canonical_product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at, archived_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)
+  const query = hasLegacyCanonicalColumn
+    ? `INSERT INTO product_catalog
+        (owner_id, product_id, canonical_product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at, archived_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)
       ON CONFLICT(owner_id, product_id) DO UPDATE SET
-        canonical_product_id = excluded.canonical_product_id,
-        identity_key = excluded.identity_key,
-        identity_fingerprint = excluded.identity_fingerprint,
-        payload = excluded.payload,
-        last_seen_at = excluded.last_seen_at,
-        status = 'active',
-        archived_at = NULL`)
-    .bind(ownerId, product.id, canonicalProductId, identityKey, normalizeFingerprint(product.identityFingerprint), JSON.stringify(product), now, now);
+        canonical_product_id = excluded.canonical_product_id, identity_key = excluded.identity_key,
+        identity_fingerprint = excluded.identity_fingerprint, payload = excluded.payload,
+        last_seen_at = excluded.last_seen_at, status = 'active', archived_at = NULL`
+    : `INSERT INTO product_catalog
+        (owner_id, product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at, archived_at)
+      VALUES (?, ?, ?, ?, ?, 'active', ?, ?, NULL)
+      ON CONFLICT(owner_id, product_id) DO UPDATE SET
+        identity_key = excluded.identity_key, identity_fingerprint = excluded.identity_fingerprint,
+        payload = excluded.payload, last_seen_at = excluded.last_seen_at,
+        status = 'active', archived_at = NULL`;
+  const values = hasLegacyCanonicalColumn
+    ? [ownerId, product.id, identityKey, identityKey, normalizeFingerprint(product.identityFingerprint), JSON.stringify(product), now, now]
+    : [ownerId, product.id, identityKey, normalizeFingerprint(product.identityFingerprint), JSON.stringify(product), now, now];
+  return db.prepare(query).bind(...values);
 }
 
 function archiveCatalogStatement(db: D1Database, ownerId: string, productId: string, now: string) {

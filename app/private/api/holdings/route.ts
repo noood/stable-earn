@@ -30,10 +30,11 @@ export async function GET(request: Request) {
   }
 
   const db = await getDatabase();
-  const [catalogProducts, manualProducts, holdingResult, overrideResult, limitResult, termResult, hiddenResult, hiddenCatalogResult] = await Promise.all([
+  const [catalogProducts, manualProducts, holdingResult, positionResult, overrideResult, limitResult, termResult, hiddenResult, hiddenCatalogResult] = await Promise.all([
     loadCatalogProducts(db, userId),
     loadUserProducts(db, userId),
     db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
+    db.prepare("SELECT product_id, amount FROM holding_positions WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
     db.prepare(`SELECT product_id, confirmed_apr, purchase_date, updated_at
       FROM product_overrides WHERE user_id = ? ORDER BY product_id`).bind(userId).all<OverrideRow>(),
     db.prepare(`SELECT product_id, first_tier_limit
@@ -49,9 +50,11 @@ export async function GET(request: Request) {
     ...hiddenCatalogResult.results.map((row) => row.product_id),
   ])].filter((productId) => removableProducts.has(productId));
   const holdingAmounts = new Map(holdingResult.results.map((row) => [row.product_id, Number(row.amount)]));
+  const positionAmounts = new Map<string, number>();
+  for (const row of positionResult.results) positionAmounts.set(row.product_id, (positionAmounts.get(row.product_id) ?? 0) + Number(row.amount));
   // Hiding an opportunity must never hide a positive position. The position
   // remains visible until it is genuinely zero, even if the user hid the row.
-  const hiddenProductIds = storedHiddenProductIds.filter((productId) => (holdingAmounts.get(productId) ?? 0) <= 0);
+  const hiddenProductIds = storedHiddenProductIds.filter((productId) => (holdingAmounts.get(productId) ?? 0) <= 0 && (positionAmounts.get(productId) ?? 0) <= 0);
   const hiddenProductIdSet = new Set(hiddenProductIds);
   const productIds = new Set([...catalogProducts.filter((product) => !hiddenProductIdSet.has(product.id)), ...manualProducts].map((product) => product.id));
   const limits = new Map(limitResult.results.map((row) => [row.product_id, row.first_tier_limit]));
@@ -88,11 +91,14 @@ export async function PUT(request: Request) {
   }
 
   const db = await getDatabase();
-  const [existingManualProducts, catalogProducts, hiddenCatalogResult, legacyHiddenResult] = await Promise.all([
+  const [existingManualProducts, catalogProducts, holdingResult, positionResult, hiddenCatalogResult, legacyHiddenResult, syncSnapshotResult] = await Promise.all([
     loadUserProducts(db, userId),
     loadCatalogProducts(db, userId),
+    db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
+    db.prepare("SELECT product_id, amount FROM holding_positions WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
     db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
     db.prepare("SELECT product_id FROM hidden_seed_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
+    db.prepare("SELECT payload FROM sync_snapshots WHERE owner_id = ? AND cache_key = 'private-products'").bind(userId).all<{ payload: string | null }>(),
   ]);
   const manualProductUpdates = payload?.manualProducts === undefined ? [] : sanitizeUserProducts(payload.manualProducts);
   if (!manualProductUpdates) return NextResponse.json({ error: "手动产品格式不正确。" }, { status: 400, headers: privateResponseHeaders });
@@ -118,6 +124,31 @@ export async function PUT(request: Request) {
   const manualProducts = manualProductInputs.map(userProductInputToProduct);
   const allProducts = [...catalogProducts.filter((product) => !hiddenProductIdSet.has(product.id)), ...manualProducts];
   const productIds = new Set(allProducts.map((product) => product.id));
+
+  // Hiding is a presentation choice, never a way to conceal an active
+  // position. Re-check both the aggregate and detailed positions on the
+  // server; a client cannot bypass this by sending a crafted hidden list.
+  const holdingAmounts = new Map(holdingResult.results.map((row) => [row.product_id, Number(row.amount)]));
+  const positionAmounts = new Map<string, number>();
+  for (const row of positionResult.results) positionAmounts.set(row.product_id, (positionAmounts.get(row.product_id) ?? 0) + Number(row.amount));
+  const snapshot = parseSyncSnapshot(syncSnapshotResult.results[0]?.payload);
+  const hiddenCatalogIds = new Set(catalogProducts.filter((product) => product.productDataMode === "api").map((product) => product.id));
+  if (hiddenProductsProvided) {
+    for (const productId of hiddenProductIds) {
+      if (!hiddenCatalogIds.has(productId)) continue;
+      const amount = holdingAmounts.get(productId);
+      const positions = positionAmounts.get(productId) ?? 0;
+      const snapshotAmount = snapshot?.holdingUpdates?.[productId];
+      const syncState = snapshot?.holdingSyncStates?.[productId];
+      const trustedSync = syncState === "synced";
+      const knownZero = trustedSync && (amount !== undefined
+        ? amount <= 0
+        : Number.isFinite(Number(snapshotAmount)) && Number(snapshotAmount) <= 0);
+      if (!knownZero || positions > 0) {
+        return NextResponse.json({ error: "有持仓或暂时无法确认持仓的 API 产品不能删除。" }, { status: 409, headers: privateResponseHeaders });
+      }
+    }
+  }
 
   const changedHoldingProductIds = sanitizeChangedProductIds(payload?.changedHoldingProductIds ?? Object.keys(candidate), productIds);
   const changedOverrideProductIds = sanitizeChangedProductIds(payload?.changedOverrideProductIds ?? [], productIds);
@@ -199,4 +230,14 @@ function sanitizeHiddenProductIds(value: unknown, removableProductIds: Set<strin
   if (!Array.isArray(value) || value.length > removableProductIds.size) return null;
   const ids = [...new Set(value.filter((productId): productId is string => typeof productId === "string"))];
   return ids.length === value.length && ids.every((productId) => removableProductIds.has(productId)) ? ids : null;
+}
+
+function parseSyncSnapshot(payload: string | null | undefined) {
+  if (!payload) return null;
+  try {
+    const value = JSON.parse(payload) as { holdingUpdates?: Record<string, number>; holdingSyncStates?: Record<string, string> };
+    return value && typeof value === "object" ? value : null;
+  } catch {
+    return null;
+  }
 }

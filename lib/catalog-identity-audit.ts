@@ -3,7 +3,6 @@ import type { D1Database } from "@cloudflare/workers-types";
 type CatalogAuditRow = {
   owner_id: string;
   product_id: string;
-  canonical_product_id: string;
   identity_key: string;
   identity_fingerprint: string | null;
   status: "active" | "archived";
@@ -58,7 +57,7 @@ export async function auditCatalogIdentities(db: D1Database, ownerId?: string): 
   const scope = ownerId ? " WHERE owner_id = ?" : "";
   const args = ownerId ? [ownerId] : [];
   const [catalogResult, userProductResult, holdingResult, positionResult, overrideResult, hiddenResult, hiddenSeedResult, snapshotResult] = await Promise.all([
-    db.prepare(`SELECT owner_id, product_id, canonical_product_id, identity_key,
+    db.prepare(`SELECT owner_id, product_id, identity_key,
         identity_fingerprint, status, payload
         FROM product_catalog${scope} ORDER BY owner_id, identity_key, product_id`).bind(...args).all<CatalogAuditRow>(),
     db.prepare(`SELECT user_id AS owner_id, product_id FROM user_products${ownerId ? " WHERE user_id = ?" : ""}`).bind(...args).all<ProductReferenceRow>(),
@@ -116,7 +115,7 @@ export async function auditCatalogIdentities(db: D1Database, ownerId?: string): 
 
   const duplicateIdentityGroups = grouped(rows, (row) => `${row.owner_id}\u0000${row.identity_key}`)
     .filter((group) => group.length > 1);
-  const activeCanonicalGroups = grouped(rows.filter((row) => row.status === "active"), (row) => `${row.owner_id}\u0000${row.canonical_product_id}`)
+  const activeCanonicalGroups = grouped(rows.filter((row) => row.status === "active"), (row) => `${row.owner_id}\u0000${row.identity_key}`)
     .filter((group) => group.length > 1);
   const generatedProductIds = rows.filter((row) => /^api-[a-z0-9]/i.test(row.product_id));
   const activeRows = rows.filter((row) => row.status === "active").length;

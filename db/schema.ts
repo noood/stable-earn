@@ -114,6 +114,8 @@ export const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS product_catalog (
     owner_id TEXT NOT NULL,
     product_id TEXT NOT NULL,
+    -- Removed by drizzle/0012 after aliases are captured. Kept here so a
+    -- fresh pre-migration database can run the ordered migrations safely.
     canonical_product_id TEXT NOT NULL,
     identity_key TEXT NOT NULL,
     identity_fingerprint TEXT,
@@ -127,8 +129,15 @@ export const schemaStatements = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_product_catalog_owner_status
     ON product_catalog (owner_id, status)`,
-  `CREATE INDEX IF NOT EXISTS idx_product_catalog_owner_canonical
-    ON product_catalog (owner_id, canonical_product_id)`,
+  `CREATE TABLE IF NOT EXISTS product_identity_aliases (
+    owner_id TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    product_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (owner_id, alias)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_product_identity_aliases_product
+    ON product_identity_aliases (owner_id, product_id)`,
   `CREATE TABLE IF NOT EXISTS hidden_products (
     user_id TEXT NOT NULL,
     product_id TEXT NOT NULL,

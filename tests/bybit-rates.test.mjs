@@ -46,4 +46,6 @@ test("Bybit public flexible APR keeps the complete tier ladder", async () => {
     { min: 0, max: 200, apr: 5.44 },
     { min: 200, max: null, apr: 2.44 },
   ]);
+  assert.equal(rate.capacitySource, "live");
+  assert.ok(rate.capacityFetchedAt);
 });

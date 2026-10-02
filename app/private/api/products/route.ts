@@ -415,6 +415,17 @@ async function buildPrivatePayload(
       normalizedFreshHoldings[product.id] = 0;
     }
   }
+  // A hidden API product must reappear as soon as a fresh, trusted sync finds
+  // a positive balance. This prevents the hide action from masking a later
+  // deposit while preserving the product row and its history.
+  const hiddenRows = await db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ?")
+    .bind(userId).all<{ product_id: string }>();
+  for (const row of hiddenRows.results) {
+    if (Number(normalizedFreshHoldings[row.product_id]) > 0) {
+      catalog.statements.push(db.prepare("DELETE FROM hidden_products WHERE user_id = ? AND product_id = ?")
+        .bind(userId, row.product_id));
+    }
+  }
   const holdingUpdates = Object.fromEntries(Object.entries({
     ...(cached?.payload?.holdingUpdates ?? {}),
     ...normalizedFreshHoldings,

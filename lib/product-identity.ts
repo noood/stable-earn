@@ -27,6 +27,34 @@ export type ProductIdentityChange = {
   currentKey?: string;
 };
 
+/**
+ * Build the identity for a user-created product.  The UUID remains the
+ * durable database row id; this key describes the product itself and may
+ * change when the user edits its account, asset, or kind.
+ */
+export function buildManualProductIdentity(input: {
+  accountId: string;
+  asset: string;
+  productType: "flexible" | "fixed";
+  slug: string;
+}) {
+  const accountId = input.accountId.trim();
+  const asset = input.asset.trim().toUpperCase();
+  const productType = input.productType.trim().toLowerCase();
+  const slug = stableIdentitySlug(input.slug);
+  if (!accountId || !asset || !productType || !slug) {
+    throw new Error("Manual product identity requires account, asset, type, and slug");
+  }
+  return `${accountId}:${asset}:${productType}:manual:${slug}`;
+}
+
+export function stableIdentitySlug(value: string) {
+  return value.trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
 export function productIdentityFingerprint(snapshot: IdentitySnapshot) {
   // Identity describes the offer, not a mutable availability window. APR,
   // quota and subscription timestamps may be omitted or change between the

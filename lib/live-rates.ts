@@ -159,13 +159,16 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
         productType: "flexible",
         externalProductId,
       });
+      const fetchedAt = new Date().toISOString();
+      const hasLiveCapacity = tiers.some((tier) => tier.max !== null);
       return {
         productId: identity.identityKey,
         ...identity,
         apr,
         ...(tiers.length > 0 ? { tiers } : {}),
-        fetchedAt: new Date().toISOString(),
+        fetchedAt,
         sourceLabel: endpoint.label,
+        ...(hasLiveCapacity ? { capacitySource: "live" as const, capacityFetchedAt: fetchedAt } : {}),
         catalog: {
           accountId: endpoint.accountId,
           exchange: "bybit",

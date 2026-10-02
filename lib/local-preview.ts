@@ -1,6 +1,7 @@
 import type { HoldingMap, Product } from "./domain";
 import type { ProductOverrideMap } from "./product-overrides";
 import { seedProducts } from "./seed-data";
+import { buildManualProductIdentity } from "./product-identity";
 import { nextScheduledRefreshAt } from "./sync-cache";
 
 export function localPrivateProductsPreview(now = new Date()) {
@@ -402,7 +403,7 @@ function previewManualProduct(id: string, asset: Product["asset"], kind: "flexib
     tiers: [{ id: `${id}-tier-0`, min: 0, max: 200, apr: 0 }],
     source: { kind: "manual", label: "手动添加" },
     rateCoverage: "unavailable",
-    identityKey: id,
+    identityKey: buildManualProductIdentity({ accountId: account.accountId, asset, productType: kind === "fixed" ? "fixed" : "flexible", slug: id.replace(/^manual-/, "") }),
   };
 }
 

@@ -15,6 +15,7 @@ import { dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, 
 import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
 import { accounts, seedProducts } from "@/lib/seed-data";
 import { highestProductApr, maximumShortTermDays, meetsOpportunityApr, minimumOpportunityApr, productHasComparableApr, productHasKnownCapacity } from "@/lib/opportunity-policy";
+import { buildManualProductIdentity } from "@/lib/product-identity";
 
 type ApiResult = {
   dailyRefreshPending?: boolean;
@@ -498,7 +499,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       tiers: [{ id: `${id}-tier-0`, min: 0, max: null, apr: 0 }],
       source: { kind: "manual", label: "手动添加" },
       rateCoverage: "unavailable",
-      identityKey: id,
+      identityKey: buildManualProductIdentity({ accountId: account.id, asset, productType: "flexible", slug: id.replace(/^manual-/, "") }),
     };
     setDraftManualProducts((current) => [...current, product]);
     setDraftHoldings((current) => ({ ...current, [id]: 0 }));
@@ -520,6 +521,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         productType: kind === "fixed" ? "fixed" : "flexible",
         name: kind === "fixed" ? "手动定期理财" : kind === "limited" ? "手动限时活期" : "手动活期理财",
         termDays: kind === "flexible" ? undefined : next.termDays,
+        identityKey: buildManualProductIdentity({ accountId: account.id, asset: next.asset, productType: kind === "fixed" ? "fixed" : "flexible", slug: next.id.replace(/^manual-/, "") }),
       };
     }));
   }
@@ -620,6 +622,9 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     }
     return map;
   }, [holdingPositions]);
+  const positivePositionProductIds = useMemo(() => new Set(
+    holdingPositions.filter((position) => Number(position.amount) > 0).map((position) => position.productId),
+  ), [holdingPositions]);
   const totalHolding = assetProducts.reduce((sum, product) => holdingIsKnown(product) ? sum + (activeHoldings[product.id] ?? 0) : sum, 0);
   const calculableProducts = assetProducts.filter((product) => holdingIsKnown(product) && productParticipatesInInterest(product, activeHoldings[product.id] ?? 0, activeOverrides[product.id], Boolean(holdingPositionByProduct.get(product.id))));
   const comparableOpportunityProducts = assetProducts.filter(productHasComparableApr);
@@ -727,7 +732,14 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             const isManualProduct = baseProduct.productDataMode === "manual";
             const apiHoldingSource = !isDemo && apiHoldingProductIds.has(baseProduct.id);
             const holdingFromApi = baseProduct.holdingDataMode === "api" || apiHoldingSource;
-            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingPosition={holdingPositionByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
+            const apiDeleteBlocked = !holdingIsKnown(baseProduct)
+              || (holdingSyncStates?.[listedProduct.id] !== undefined && holdingSyncStates[listedProduct.id] !== "synced")
+              || (activeHoldings[listedProduct.id] ?? 0) > 0
+              || positivePositionProductIds.has(listedProduct.id);
+            const apiDeleteDisabledReason = !holdingIsKnown(baseProduct) || holdingSyncStates?.[listedProduct.id] === "error" || holdingSyncStates?.[listedProduct.id] === "partial"
+              ? "暂时无法确认持仓，刷新成功后才能删除"
+              : (activeHoldings[listedProduct.id] ?? 0) > 0 || positivePositionProductIds.has(listedProduct.id) ? "有持仓的产品不能删除" : undefined;
+            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingPosition={holdingPositionByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} apiDeleteDisabled={apiDeleteBlocked} apiDeleteDisabledReason={apiDeleteDisabledReason} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
           }) : <tr><td colSpan={4}><EmptyProductState /></td></tr>}</tbody></table></div>
         </section>
 
@@ -793,7 +805,7 @@ function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUn
   return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><span aria-hidden="true">⋯</span></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}{!demo && <button type="button" disabled={loading || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-refresh">{refreshLabel}</button>}<button type="button" onClick={(event) => closeMenu(event, onApiSettings)} className="menu-item menu-item-leading">API 设置</button>{!demo && <a href="/logout" className="menu-item menu-item-danger">退出登录</a>}</div></details></div>;
 }
 
-function ProductRow({ product, baseProduct, manualSettings, holdingPosition, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, rateFallbackAt, holdingFallbackAt, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingPosition?: HoldingPosition; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; rateFallbackAt?: string; holdingFallbackAt?: string; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
+function ProductRow({ product, baseProduct, manualSettings, holdingPosition, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, apiDeleteDisabled, apiDeleteDisabledReason, rateFallbackAt, holdingFallbackAt, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingPosition?: HoldingPosition; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; apiDeleteDisabled: boolean; apiDeleteDisabledReason?: string; rateFallbackAt?: string; holdingFallbackAt?: string; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
   const account = accounts.find((item) => item.id === product.accountId)!;
   const hasApiTiming = Boolean(holdingPosition?.purchaseAt);
   const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming);
@@ -802,7 +814,7 @@ function ProductRow({ product, baseProduct, manualSettings, holdingPosition, hol
       <TableCell>
         {editing && manualProduct
           ? <ManualProductIdentityEditor product={baseProduct} account={account} disabled={saving} onChange={onManualProductChange} onDelete={onDelete} />
-          : <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div><div className="text-muted type-caption mt-0.5 max-w-[220px] whitespace-normal break-words">{standardProductName(product)}</div></div></div>}
+          : <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div><div className="text-muted type-caption mt-0.5 max-w-[220px] whitespace-normal break-words">{standardProductName(product)}</div>{editing && !manualProduct && <button type="button" className="manual-product-delete text-danger type-caption" disabled={saving || apiDeleteDisabled} title={apiDeleteDisabledReason} onClick={onDelete}>删除产品</button>}</div></div>}
       </TableCell>
       <TableCell><ProductTierSummary product={product} baseProduct={baseProduct} manualSettings={manualSettings} holdingPosition={holdingPosition} holding={holding} editing={editing} saving={saving} manualProduct={manualProduct} rateFallbackAt={rateFallbackAt} onOverrideChange={onOverrideChange} onManualProductChange={onManualProductChange} /></TableCell>
       <TableCell><ProductHolding product={product} account={account} holding={holding} holdingAvailable={holdingAvailable} holdingSyncState={holdingSyncState} editing={editing} editable={editable} saving={saving} holdingFallbackAt={holdingFallbackAt} productInfoIssues={productInfoIssues} onHoldingChange={onHoldingChange} /></TableCell>
@@ -895,7 +907,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
     {(!editing || !manualProduct) && fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
     {!editing && manualTerm && <ProductFact label="活动期限" value={durationDays ? formatTerm(durationDays) : "待填写"} />}
-    {sourceText && <ProductMeta text={sourceText} danger={Boolean(rateFallbackAt)} />}
+    {sourceText && <ProductMeta text={sourceText} danger={Boolean(rateFallbackAt || product.capacitySource === "cache")} />}
     {incompleteText && <ProductMeta text={incompleteText} danger={holding > 0} />}
     {editing && (manualApr || manualLimit || manualTerm || manualProductTerm || (productNeedsPurchaseDate(product) && Boolean(durationDays))) && <div className="manual-fields">
       {manualLimit && <ManualLimitInput value={manualSettings?.firstTierLimit ?? null} asset={product.asset} disabled={saving} onChange={(firstTierLimitValue) => onOverrideChange({ firstTierLimit: firstTierLimitValue })} />}
