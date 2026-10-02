@@ -297,3 +297,26 @@ test("product APR cache keeps its own timestamp even without a matching failure 
     assert.equal(response.holdingFallbacks["bn-g-usdt"], undefined);
   }
 });
+
+test("failed holding fallback preserves active product IDs instead of applying legacy aliases", () => {
+  const f = fixture();
+  const { normalizeCatalogHoldingId } = f.load("@/app/private/api/products/route");
+  const active = new Set(["bg-usdt-simple", "api-bg-usdt-simple-1gd23qx"]);
+  const aliases = {
+    "bg-usdt-simple": "api-bg-usdt-simple-1gd23qx",
+    "api-bg-usdt-simple-1gd23qx": "api-bg-usdt-simple-1gd23qx",
+  };
+
+  assert.equal(
+    normalizeCatalogHoldingId("bg-usdt-simple", active, aliases),
+    "bg-usdt-simple",
+  );
+  assert.equal(
+    normalizeCatalogHoldingId("api-bg-usdt-simple-1gd23qx", active, aliases),
+    "api-bg-usdt-simple-1gd23qx",
+  );
+  assert.equal(
+    normalizeCatalogHoldingId("legacy-external-id", active, { "legacy-external-id": "bg-usdt-simple" }),
+    "bg-usdt-simple",
+  );
+});

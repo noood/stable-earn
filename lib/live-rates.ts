@@ -55,6 +55,12 @@ type BybitFlexibleRow = {
   apy?: string;
   bonusApr?: string;
   extraApr?: string;
+  tierAprDetails?: Array<{
+    min?: string | number | null;
+    max?: string | number | null;
+    estimateApr?: string | number | null;
+    apr?: string | number | null;
+  }>;
   status?: string;
   [key: string]: unknown;
 };
@@ -115,6 +121,9 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
       if (!response.ok || body.retCode !== 0) throw new Error(`Bybit returned ${response.status}/${body.retCode ?? "unknown"}`);
       const candidates = body.result?.list ?? [];
       const item = candidates.find((candidate) => candidate.status === "Available") ?? candidates[0];
+      const baseApr = parsePercent(item?.estimateApr);
+      const tiers = parseBybitTiers(item?.tierAprDetails);
+      const apr = tiers[0]?.apr ?? baseApr;
       syncDiagnostic("bybit_flexible_rows", {
         platform: endpoint.platform,
         coin: endpoint.coin,
@@ -133,15 +142,16 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
           rateFields: safeBybitRateFields(candidate),
         })),
         selectedProductId: item?.productId ?? null,
-        selectedApr: item?.estimateApr ?? null,
+        selectedApr: Number.isFinite(apr) ? `${apr}%` : item?.estimateApr ?? null,
+        selectedTierCount: tiers.length,
       });
-      const baseApr = parsePercent(item?.estimateApr);
-      if (!Number.isFinite(baseApr)) throw new Error("Bybit returned no APR");
+      if (!Number.isFinite(apr)) throw new Error("Bybit returned no APR");
       const externalProductId = item?.productId;
       return {
         productId: endpoint.productId,
         ...buildProductIdentity(endpoint.productId, { productType: "flexible" }, { externalProductId, includeExternalProductId: true }),
-        apr: baseApr,
+        apr,
+        ...(tiers.length > 0 ? { tiers } : {}),
         fetchedAt: new Date().toISOString(),
         sourceLabel: endpoint.label,
         catalog: {
@@ -160,6 +170,28 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
     }
   }
   throw lastError ?? new Error("Bybit public API unavailable");
+}
+
+function parseBybitTiers(details: BybitFlexibleRow["tierAprDetails"]) {
+  return (details ?? []).flatMap((detail) => {
+    const min = parseFiniteNumber(detail.min);
+    const rawMax = parseFiniteNumber(detail.max);
+    const max = rawMax === -1 ? null : rawMax;
+    const apr = parsePercentValue(detail.estimateApr ?? detail.apr);
+    if (!Number.isFinite(min) || !Number.isFinite(apr)) return [];
+    return [{ min, max: max !== null && Number.isFinite(max) && max > min ? max : null, apr }];
+  }).sort((left, right) => left.min - right.min);
+}
+
+function parsePercentValue(value: string | number | null | undefined) {
+  if (typeof value === "number") return value;
+  return parsePercent(value ?? undefined);
+}
+
+function parseFiniteNumber(value: string | number | null | undefined) {
+  if (typeof value === "number") return value;
+  const parsed = Number.parseFloat((value ?? "").replaceAll(",", ""));
+  return parsed;
 }
 
 /**

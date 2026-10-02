@@ -407,7 +407,7 @@ async function buildPrivatePayload(
     }));
   const catalogProductIds = { ...await resolveCatalogProductIds(db, userId), ...catalog.productIds };
   const normalizedFreshHoldings: Record<string, number> = Object.fromEntries(Object.entries(freshHoldingUpdates)
-    .map(([productId, amount]) => [catalogProductIds[productId] ?? productId, amount]));
+    .map(([productId, amount]) => [normalizeCatalogHoldingId(productId, activeProductIds, catalogProductIds), amount]));
   for (const product of catalog.products) {
     if (product.holdingDataMode === "api"
       && completeAccountIds.includes(product.accountId)
@@ -418,12 +418,12 @@ async function buildPrivatePayload(
   const holdingUpdates = Object.fromEntries(Object.entries({
     ...(cached?.payload?.holdingUpdates ?? {}),
     ...normalizedFreshHoldings,
-  }).map(([productId, amount]) => [catalogProductIds[productId] ?? productId, amount] as const)
+  }).map(([productId, amount]) => [normalizeCatalogHoldingId(productId, activeProductIds, catalogProductIds), amount] as const)
     .filter(([productId]) => activeProductIds.has(productId)));
 
   const positionUpdatedAt = new Date().toISOString();
   const normalizedHoldingPositions: HoldingPosition[] = freshHoldingPositions.flatMap((position) => {
-    const productId = catalogProductIds[position.sourceProductId];
+    const productId = normalizeCatalogHoldingId(position.sourceProductId, activeProductIds, catalogProductIds);
     if (!productId || !activeProductIds.has(productId)) return [];
     return [{
       productId,
@@ -465,7 +465,7 @@ async function buildPrivatePayload(
     cached?.payload?.holdingFallbacks ?? {},
     cached?.updatedAt ?? updatedFallbackTime(cached?.payload?.fetchedAt),
   ))
-    .map(([productId, time]) => [catalogProductIds[productId] ?? productId, time])
+    .map(([productId, time]) => [normalizeCatalogHoldingId(productId, activeProductIds, catalogProductIds), time])
     .filter(([productId]) => activeProductIds.has(productId) && !freshHoldingProductIds.has(productId)));
   // Temporary, sanitized trace used to distinguish a live Bitget holding
   // from a cached value and to show exactly which catalog ID received it.
@@ -479,7 +479,7 @@ async function buildPrivatePayload(
     adapterHoldings: bitget?.holdings ?? {},
     adapterToCatalog: Object.fromEntries(Object.keys(bitget?.holdings ?? {}).map((sourceId) => [
       sourceId,
-      catalogProductIds[sourceId] ?? sourceId,
+      normalizeCatalogHoldingId(sourceId, activeProductIds, catalogProductIds),
     ])),
     freshCatalogHoldings: bitgetRelevant(normalizedFreshHoldings),
     cachedCatalogHoldings: bitgetRelevant(cached?.payload?.holdingUpdates ?? {}),
@@ -527,6 +527,20 @@ async function buildPrivatePayload(
       identityChanges,
     },
   };
+}
+
+/**
+ * Preserve an active catalog row when resolving aliases from older catalog
+ * identities. A legacy alias may point at a different active row, but that
+ * must never rewrite a current row's zero balance onto the legacy row (or the
+ * reverse) during a failed-refresh fallback.
+ */
+export function normalizeCatalogHoldingId(
+  productId: string,
+  activeProductIds: ReadonlySet<string>,
+  catalogProductIds: Record<string, string>,
+) {
+  return activeProductIds.has(productId) ? productId : catalogProductIds[productId] ?? productId;
 }
 
 function cachedResponse(
