@@ -13,6 +13,7 @@ import { loadManualRefreshCooldown, manualRefreshCooldownMs } from "@/lib/user-s
 import { isLocalPreviewRequest, localPrivateProductsPreview, localSyncScenarioPreview } from "@/lib/local-preview";
 import { cachedHoldingTimes } from "@/lib/holding-cache";
 import { compareProductIdentity, type ProductIdentityChange } from "@/lib/product-identity";
+import { buildSyncChangeEvents, loadProductChangeEvents, prepareProductChangeEventStatements, type ProductChangeSource, type ProductSnapshotForChanges } from "@/lib/product-change-events";
 import { prepareProductCatalogSync, resolveCatalogProductIds, type ProductCatalogSync } from "@/lib/product-catalog";
 import type { HoldingPosition, HoldingSyncState, Product } from "@/lib/domain";
 import { diagnosticErrorKind, syncDiagnostic, withSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
@@ -84,6 +85,7 @@ const privateCacheKey = "private-products";
 export async function GET(request: Request) {
   const identity = await getUserIdentity(request);
   if (!identity) return NextResponse.json({ error: "请先登录。" }, { status: 401, headers: privateResponseHeaders });
+  const ownerId = identity.userId;
   if (isLocalPreviewRequest(request)) {
     const scenario = new URL(request.url).searchParams.get("syncScenario");
     if (scenario === "product-read-error" || scenario === "both-read-error") {
@@ -101,7 +103,8 @@ export async function GET(request: Request) {
   let pending = false;
   async function reply(response: Response) {
     const body = await response.json() as Record<string, unknown>;
-    return NextResponse.json({ ...body, dailyRefreshPending: daily && pending }, {
+    const changeEvents = await loadProductChangeEvents(db, ownerId);
+    return NextResponse.json({ ...body, changeEvents, dailyRefreshPending: daily && pending }, {
       status: response.status, headers: privateResponseHeaders,
     });
   }
@@ -180,9 +183,16 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
     const { payload, catalog, retryable } = await buildPrivatePayload(db, userId, cached);
     if (options.leaseToken && !await renewRefresh(db, userId, options.leaseToken)) throw new Error("refresh lease expired");
     if (retryable && !acceptPartial) throw new Error("已配置平台未完整同步");
+    const changeEvents = buildSyncChangeEvents(
+      cached?.payload as ProductSnapshotForChanges | null | undefined,
+      payload,
+      refreshSource(options.trigger),
+      payload.fetchedAt,
+    );
     await db.batch([
       ...catalog.statements,
       ...prepareHoldingPositionStatements(db, userId, payload.holdingPositions),
+      ...prepareProductChangeEventStatements(db, userId, changeEvents),
       prepareSyncCacheSave(db, userId, privateCacheKey, payload, payload.fetchedAt),
     ]);
     progress.committed = true;
@@ -193,6 +203,12 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
     }
     throw error;
   }
+}
+
+function refreshSource(trigger: RefreshOptions["trigger"]): ProductChangeSource {
+  if (trigger === "daily") return "每日首次打开";
+  if (trigger === "scheduled") return "定时刷新";
+  return "手动刷新";
 }
 
 export async function listPrivateSyncUserIds(db: D1Database) {

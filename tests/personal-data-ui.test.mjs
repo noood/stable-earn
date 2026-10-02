@@ -55,7 +55,7 @@ test("personal read error notice has the requested copy and no retry button", ()
 
 test("personal read failure reuses the table empty state while ordinary empty portfolios retain their copy", () => {
   const failed = render("body");
-  assert.match(failed, /colSpan="4"|colspan="4"/);
+  assert.match(failed, /colSpan="5"|colspan="5"/);
   assert.match(failed, /class="empty-product-state"/);
   assert.match(failed, /服务器读取失败，数据无法显示，请刷新页面。/);
   const empty = render("body", { dataBlocked: false });

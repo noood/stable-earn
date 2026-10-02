@@ -116,7 +116,7 @@ export function userProductInputToProduct(input: UserProductInput): Product {
     manualKind: input.manualKind,
     termDays: input.termDays ?? undefined,
     tiers: [{ id: `${input.id}-tier-0`, min: 0, max: null, apr: 0 }],
-    source: { kind: "manual", label: "手动添加" },
+    source: { kind: "manual", label: "手动录入" },
     rateCoverage: "unavailable",
     identityKey: buildManualProductIdentity({
       accountId: input.accountId,

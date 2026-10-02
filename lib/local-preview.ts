@@ -1,4 +1,4 @@
-import type { HoldingMap, Product } from "./domain";
+import type { HoldingMap, Product, ProductChangeEvent } from "./domain";
 import type { ProductOverrideMap } from "./product-overrides";
 import { seedProducts } from "./seed-data";
 import { buildManualProductIdentity } from "./product-identity";
@@ -13,7 +13,7 @@ export function localPrivateProductsPreview(now = new Date()) {
     // fixed-term data. The product catalogue also includes an unavailable API
     // row below so edit mode can show the no-rate state.
     previewRate("bn-bh-usdt", [[0, 500, 6.2], [500, null, 2.5]], freshAt, "Binance Bahrain 官方账户 API"),
-    previewRate("bn-g-usdt", [[0, 500, 6.2], [500, null, 2.5]], cachedAt, "Binance.com 官方账户 API"),
+    previewRate("bn-g-usdt", [[0, 300, 5.8], [300, null, 2.5]], cachedAt, "Binance.com 官方账户 API"),
     previewRate("bn-g-usdc", [[0, 200, 5.8], [200, null, 2.2]], freshAt, "Binance.com 官方账户 API"),
     previewRate("by-g-usdc", [[0, 300, 4.2]], freshAt, "Bybit.com 官方公开 API", { rateCoverage: "base_only" }),
     previewRate("by-eu-usdt", [[0, null, 5.2]], freshAt, "Bybit EU 官方公开 API"),
@@ -132,6 +132,100 @@ export function localPrivateProductsPreview(now = new Date()) {
     "okx-usdc": 500,
     "okx-btc": 0,
   };
+  // Binance returns this position maturity through redeemAt. The timeline
+  // uses that API date directly; production fallback remains purchase date +
+  // term when redeemAt is absent.
+  const expiredBinanceRedeemAt = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const changeEvents: ProductChangeEvent[] = [
+    {
+      id: "preview-change-bn-g-usdt-rate",
+      productId: "bn-g-usdt",
+      type: "rate",
+      title: "首档 APR 下调",
+      before: "6.80%",
+      after: "5.80%",
+      observedAt: new Date(now.getTime() - 45 * 60 * 1000).toISOString(),
+      source: "定时刷新",
+      attention: true,
+    },
+    {
+      id: "preview-change-bn-g-usdt-capacity",
+      productId: "bn-g-usdt",
+      type: "capacity",
+      title: "首档额度减少",
+      before: "500 USDT",
+      after: "300 USDT",
+      observedAt: new Date(now.getTime() - 7 * 60 * 60 * 1000).toISOString(),
+      source: "每日首次打开",
+      attention: true,
+    },
+    {
+      id: "preview-change-bg-usdt-holding",
+      productId: "bg-usdt-simple",
+      type: "holding",
+      title: "持仓变化",
+      before: "280 USDT",
+      after: "300 USDT",
+      observedAt: new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString(),
+      source: "手动刷新",
+    },
+    {
+      id: "preview-change-by-eu-usdt-holding",
+      productId: "by-eu-usdt",
+      type: "holding",
+      title: "持仓变化",
+      before: "180 USDT",
+      after: "250 USDT",
+      observedAt: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+      source: "每日首次打开",
+    },
+    {
+      id: "preview-change-by-fixed-maturity",
+      productId: "preview-binance-fixed-expired-held",
+      type: "maturity",
+      title: `定期于 ${formatPreviewShortDate(expiredBinanceRedeemAt)} 到期`,
+      observedAt: new Date(now.getTime() - 30 * 60 * 1000).toISOString(),
+      source: "定时刷新",
+      attention: true,
+    },
+    {
+      id: "preview-change-bybit-usdc-rate",
+      productId: "by-g-usdc",
+      type: "rate",
+      title: "基础 APR 变化",
+      before: "4.80%",
+      after: "4.20%",
+      observedAt: new Date(now.getTime() - 3 * 60 * 60 * 1000).toISOString(),
+      source: "手动刷新",
+    },
+    {
+      id: "preview-change-manual-fixed-apr",
+      productId: "manual-preview-fixed",
+      type: "rate",
+      title: "APR 修改",
+      before: "6.20%",
+      after: "6.50%",
+      observedAt: new Date(now.getTime() - 90 * 60 * 1000).toISOString(),
+      source: "手动编辑",
+    },
+    ...Array.from({ length: 24 }, (_, index): ProductChangeEvent => {
+      const daysAgo = index + 1;
+      const observedAt = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000 - (index % 6) * 60 * 60 * 1000).toISOString();
+      const examples: Array<Pick<ProductChangeEvent, "type" | "title" | "before" | "after">> = [
+        { type: "rate", title: "首档 APR 调整", before: index % 2 ? "6.20%" : "6.80%", after: index % 2 ? "6.80%" : "6.20%" },
+        { type: "capacity", title: "首档额度调整", before: index % 2 ? "300 USDT" : "500 USDT", after: index % 2 ? "500 USDT" : "300 USDT" },
+        { type: "holding", title: "持仓变化", before: `${250 + index * 10} USDT`, after: `${260 + index * 10} USDT` },
+        { type: "availability", title: "申购状态变化", before: index % 2 ? "暂停" : "可申购", after: index % 2 ? "可申购" : "暂停" },
+      ];
+      return {
+        id: `preview-change-bn-g-usdt-history-${index + 1}`,
+        productId: "bn-g-usdt",
+        observedAt,
+        source: index % 3 === 0 ? "定时刷新" : index % 3 === 1 ? "每日首次打开" : "手动刷新",
+        ...examples[index % examples.length],
+      };
+    }),
+  ];
   return {
     products,
     rates,
@@ -165,7 +259,7 @@ export function localPrivateProductsPreview(now = new Date()) {
         positionId: "preview-binance-position-expired-held",
         amount: 300,
         purchaseAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-        redeemAt: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+        redeemAt: expiredBinanceRedeemAt,
         source: "api" as const,
         updatedAt: freshAt,
       },
@@ -174,11 +268,12 @@ export function localPrivateProductsPreview(now = new Date()) {
         positionId: "preview-binance-position-expired-zero",
         amount: 0,
         purchaseAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-        redeemAt: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+        redeemAt: expiredBinanceRedeemAt,
         source: "api" as const,
         updatedAt: freshAt,
       },
     ],
+    changeEvents,
     note: "本地测试数据：包含完整、缓存、字段缺失、资格待确认、未获取、同步失败、部分同步和两种 Bybit 持仓来源。",
     failures: ["Bybit.com 定期产品"],
     fallbackUpdatedAt: cachedAt,
@@ -402,7 +497,7 @@ function previewManualProduct(id: string, asset: Product["asset"], kind: "flexib
     manualKind: kind,
     termDays,
     tiers: [{ id: `${id}-tier-0`, min: 0, max: 200, apr: 0 }],
-    source: { kind: "manual", label: "手动添加" },
+    source: { kind: "manual", label: "手动录入" },
     rateCoverage: "unavailable",
     identityKey: buildManualProductIdentity({ accountId: account.accountId, asset, productType: kind === "fixed" ? "fixed" : "flexible", slug: id.replace(/^manual-/, "") }),
   };
@@ -412,6 +507,14 @@ function dateOnlyOffset(now: Date, days: number) {
   const date = new Date(now);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function formatPreviewShortDate(value: string) {
+  return new Date(value).toLocaleDateString("en-US", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+  });
 }
 
 function manualOverride(apr: number, firstTierLimit: number, updatedAt: string) {

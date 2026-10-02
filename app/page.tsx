@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
 import { ApiSettings } from "@/app/components/api-settings";
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
 import { AccountBadge, ActionButton, HoldingSummary, Metric, MetricSkeleton, ModalFrame, TableCell } from "@/app/components/ui";
-import { effectiveApr, formatAmount, remainingHighYield, type Account, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product } from "@/lib/domain";
+import { effectiveApr, formatAmount, remainingHighYield, type Account, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent } from "@/lib/domain";
 import { applyProductOverride, dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { holdingSyncNote, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
 import { apiFieldCapability } from "@/lib/api-capabilities";
@@ -16,6 +16,7 @@ import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/l
 import { accounts, seedProducts } from "@/lib/seed-data";
 import { highestProductApr, maximumShortTermDays, meetsOpportunityApr, minimumOpportunityApr, productHasComparableApr, productHasKnownCapacity } from "@/lib/opportunity-policy";
 import { buildManualProductIdentity } from "@/lib/product-identity";
+import { buildManualChangeEvents, sameManualProduct } from "@/lib/product-change-events";
 
 type ApiResult = {
   dailyRefreshPending?: boolean;
@@ -50,6 +51,7 @@ type ApiResult = {
   holdingFallbacks?: Record<string, string>;
   holdingSyncStates?: Record<string, HoldingSyncState>;
   holdingPositions?: HoldingPosition[];
+  changeEvents?: ProductChangeEvent[];
   partial: boolean;
   note: string;
   fetchedAt?: string;
@@ -75,6 +77,7 @@ type PortfolioChanges = {
   manualProductIds: string[];
   deletedManualProductIds: string[];
   hiddenProductIds?: string[];
+  source?: ProductChangeEvent["source"];
 };
 const emptyHoldings = Object.fromEntries(seedProducts.map((product) => [product.id, 0])) as HoldingMap;
 
@@ -143,6 +146,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const [holdingFallbacks, setHoldingFallbacks] = useState<Record<string, string>>({});
   const [holdingSyncStates, setHoldingSyncStates] = useState<ApiResult["holdingSyncStates"]>({});
   const [holdingPositions, setHoldingPositions] = useState<HoldingPosition[]>([]);
+  const [changeEvents, setChangeEvents] = useState<ProductChangeEvent[]>([]);
   const [showApiSettings, setShowApiSettings] = useState(false);
   const [loading, setLoading] = useState(false);
   const [hasSyncFailure, setHasSyncFailure] = useState(false);
@@ -342,6 +346,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       setHoldingFallbacks(data.holdingFallbacks ?? {});
       setHoldingSyncStates(data.holdingSyncStates ?? {});
       setHoldingPositions(data.holdingPositions ?? []);
+      setChangeEvents(data.changeEvents ?? []);
       // The API response is authoritative. An empty list means this account
       // has no discovered products yet; do not repopulate the old global seed
       // directory on the client.
@@ -364,6 +369,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             overrideProductIds: [],
             manualProductIds: [],
             deletedManualProductIds: [],
+            source: options?.manual ? "手动刷新" : refreshingDaily ? "每日首次打开" : "定时刷新",
           }).catch(() => {
             // The freshly read values stay visible even if the background cloud save fails.
           });
@@ -404,11 +410,12 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         changedOverrideProductIds: changes.overrideProductIds,
         manualProducts: nextManualProducts.filter((product) => manualProductIds.has(product.id)).map(manualProductPayload),
         deletedManualProductIds: changes.deletedManualProductIds,
+        source: changes.source,
         ...(changes.hiddenProductIds ? { hiddenProductIds: changes.hiddenProductIds } : {}),
       }),
     });
     if (!response.ok) throw new Error("cloud save failed");
-    return response.json() as Promise<{ updatedAt: string }>;
+    return response.json() as Promise<{ updatedAt: string; changeEvents?: ProductChangeEvent[] }>;
   }
 
   async function savePortfolio(nextHoldings: HoldingMap, nextOverrides: ProductOverrideMap, nextManualProducts: Product[], nextHiddenProductIds: string[], changes: PortfolioChanges) {
@@ -433,6 +440,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
           updatedAt: result.updatedAt,
         }])),
       }));
+      if (!isDemo) setChangeEvents(result.changeEvents ?? []);
       return true;
     } catch {
       setHoldings(previousHoldings);
@@ -497,7 +505,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       productType: "flexible",
       manualKind: "flexible",
       tiers: [{ id: `${id}-tier-0`, min: 0, max: null, apr: 0 }],
-      source: { kind: "manual", label: "手动添加" },
+      source: { kind: "manual", label: "手动录入" },
       rateCoverage: "unavailable",
       identityKey: buildManualProductIdentity({ accountId: account.id, asset, productType: "flexible", slug: id.replace(/^manual-/, "") }),
     };
@@ -565,6 +573,12 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       setManualProducts(draftManualProducts);
       setHiddenProductIds(draftHiddenProductIds);
       hiddenProductIdsRef.current = draftHiddenProductIds;
+      setChangeEvents((current) => [...buildManualChangeEvents(holdings, draftHoldings, productOverrides, draftOverrides, manualProducts, draftManualProducts, products, {
+        holdingProductIds,
+        overrideProductIds,
+        manualProductIds,
+        deletedManualProductIds,
+      }), ...current]);
       setDeletedManualProductIds([]);
       setEditing(false);
       return true;
@@ -576,10 +590,21 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       overrideProductIds,
       manualProductIds,
       deletedManualProductIds,
+      source: "手动编辑",
       ...(hiddenProductsChanged ? { hiddenProductIds: draftHiddenProductIds } : {}),
     });
     setSavingHoldings(false);
-    if (saved) setEditing(false);
+    if (saved) {
+      if (localPreview) {
+        setChangeEvents((current) => [...buildManualChangeEvents(holdings, draftHoldings, productOverrides, draftOverrides, manualProducts, draftManualProducts, products, {
+          holdingProductIds,
+          overrideProductIds,
+          manualProductIds,
+          deletedManualProductIds,
+        }), ...current]);
+      }
+      setEditing(false);
+    }
     else setHoldingSaveError(true);
     return saved;
   }
@@ -688,7 +713,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       </nav>
 
       <div className="mx-auto max-w-[1500px] px-5 py-5 lg:px-10 lg:py-6">
-        <div className="card type-caption mb-5 flex items-center justify-between gap-4 px-5 py-3.5" aria-live="polite">
+        <div className="card type-caption mb-5 flex items-center justify-between gap-4 px-5 py-3" aria-live="polite">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
             {dataBlocked
@@ -714,7 +739,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
               <h2 className="type-title font-semibold tracking-[-0.02em]">{asset} 持仓</h2>
               <p className="table-toolbar-subtitle text-muted type-caption">
                 {editing
-                  ? <>展示手动添加和 API 同步的产品，<ActionButton variant="text" className="table-toolbar-inline-action" onClick={isDemo ? openPrivateApiSettings : () => setShowApiSettings(true)}>配置 API</ActionButton></>
+                  ? <>展示手动产品和 API 产品，<ActionButton variant="text" className="table-toolbar-inline-action" onClick={isDemo ? openPrivateApiSettings : () => setShowApiSettings(true)}>配置 API</ActionButton></>
                   : `仅展示已有持仓，或 APR ≥ ${minimumOpportunityApr}% 的活期及 ${maximumShortTermDays} 天内定期产品`}
               </p>
             </div>
@@ -723,7 +748,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
               : <div key="view-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant={isDemo ? "secondary" : "primary"} onClick={beginEditing} disabled={!canEdit}>编辑持仓</ActionButton></div>}
           </div>
           {holdingSaveError && <div className="table-error-panel error-panel type-caption font-normal">保存失败，请检查网络后重试；表格中的修改仍然保留。</div>}
-          <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={initialLoading}><colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /></colgroup><thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th></tr></thead><tbody>{dataBlocked ? <tr><td colSpan={4}><EmptyProductState message={serverReadFailureMessage} /></td></tr> : initialLoading ? <ProductTableSkeleton /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
+          <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={initialLoading}><colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /><col className="product-table-col-history" /></colgroup><thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th><th>变更</th></tr></thead><tbody>{dataBlocked ? <tr><td colSpan={5}><EmptyProductState message={serverReadFailureMessage} /></td></tr> : initialLoading ? <ProductTableSkeleton /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
             const baseProduct = activeBaseProducts.find((product) => product.id === listedProduct.id) ?? listedProduct;
             const manualSettings = activeOverrides[listedProduct.id];
             const displayProduct = applyProductOverride(baseProduct, manualSettings);
@@ -739,8 +764,8 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             const apiDeleteDisabledReason = !holdingIsKnown(baseProduct) || holdingSyncStates?.[listedProduct.id] === "error" || holdingSyncStates?.[listedProduct.id] === "partial"
               ? "暂时无法确认持仓，刷新成功后才能删除"
               : (activeHoldings[listedProduct.id] ?? 0) > 0 || positivePositionProductIds.has(listedProduct.id) ? "有持仓的产品不能删除" : undefined;
-            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingPosition={holdingPositionByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} apiDeleteDisabled={apiDeleteBlocked} apiDeleteDisabledReason={apiDeleteDisabledReason} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
-          }) : <tr><td colSpan={4}><EmptyProductState /></td></tr>}</tbody></table></div>
+            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingPosition={holdingPositionByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} apiDeleteDisabled={apiDeleteBlocked} apiDeleteDisabledReason={apiDeleteDisabledReason} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} changeEvents={changeEvents.filter((event) => event.productId === listedProduct.id)} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
+          }) : <tr><td colSpan={5}><EmptyProductState /></td></tr>}</tbody></table></div>
         </section>
 
         <footer className="site-footer text-muted type-caption"><p>数据仅用于监控与比较，不构成投资建议。实际到账以平台账户为准。</p><a className="github-footer-link" href="https://github.com/noood/stable-earn" target="_blank" rel="noreferrer" aria-label="GitHub 源码仓库" title="GitHub 源码仓库"><Image src="/GitHub_Lockup_Black_Clearspace.svg" width={448} height={127} alt="" aria-hidden="true" /></a></footer>
@@ -770,7 +795,9 @@ function AssetIcon({ asset }: { asset: Asset }) {
   return <img className="asset-icon asset-icon-image" src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/46/Bitcoin.svg/1920px-Bitcoin.svg.png" alt="" aria-hidden="true" referrerPolicy="no-referrer" />;
 }
 
-function useDismissiblePopover<TTrigger extends HTMLElement, TPopover extends HTMLElement>(open: boolean, setOpen: Dispatch<SetStateAction<boolean>>, triggerRef: RefObject<TTrigger | null>, popoverRef: RefObject<TPopover | null>) {
+function useDismissiblePopover<TTrigger extends HTMLElement, TPopover extends HTMLElement>(open: boolean, setOpen: Dispatch<SetStateAction<boolean>>, triggerRef: RefObject<TTrigger | null>, popoverRef: RefObject<TPopover | null>, options: { closeOnOutside?: boolean; closeOnScroll?: boolean } = {}) {
+  const closeOnOutside = options.closeOnOutside ?? true;
+  const closeOnScroll = options.closeOnScroll ?? true;
   useEffect(() => {
     if (!open) return;
     function closeFromOutside(event: PointerEvent) {
@@ -778,16 +805,22 @@ function useDismissiblePopover<TTrigger extends HTMLElement, TPopover extends HT
       if (target instanceof Node && !triggerRef.current?.contains(target) && !popoverRef.current?.contains(target)) setOpen(false);
     }
     function closeFromEscape(event: KeyboardEvent) { if (event.key === "Escape") setOpen(false); }
-    function closeFromScroll() { setOpen(false); }
-    document.addEventListener("pointerdown", closeFromOutside);
+    function closeFromScroll(event: Event) {
+      // Scrolling the popover itself is part of the interaction. Only close
+      // when the page (or another scroll container) moves underneath it.
+      const target = event.target;
+      if (target instanceof Node && popoverRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    if (closeOnOutside) document.addEventListener("pointerdown", closeFromOutside);
     document.addEventListener("keydown", closeFromEscape);
-    window.addEventListener("scroll", closeFromScroll, true);
+    if (closeOnScroll) window.addEventListener("scroll", closeFromScroll, true);
     return () => {
-      document.removeEventListener("pointerdown", closeFromOutside);
+      if (closeOnOutside) document.removeEventListener("pointerdown", closeFromOutside);
       document.removeEventListener("keydown", closeFromEscape);
-      window.removeEventListener("scroll", closeFromScroll, true);
+      if (closeOnScroll) window.removeEventListener("scroll", closeFromScroll, true);
     };
-  }, [open, popoverRef, setOpen, triggerRef]);
+  }, [closeOnOutside, closeOnScroll, open, popoverRef, setOpen, triggerRef]);
 }
 
 function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUntil, onManualRefresh, onApiSettings }: { userEmail: string | null; demo: boolean; loading: boolean; manualRefreshCooling: boolean; cooldownUntil: string | null; onManualRefresh: () => void; onApiSettings: () => void }) {
@@ -805,7 +838,7 @@ function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUn
   return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><span aria-hidden="true">⋯</span></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}{!demo && <button type="button" disabled={loading || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-refresh">{refreshLabel}</button>}<button type="button" onClick={(event) => closeMenu(event, onApiSettings)} className="menu-item menu-item-leading">API 设置</button>{!demo && <a href="/logout" className="menu-item menu-item-danger">退出登录</a>}</div></details></div>;
 }
 
-function ProductRow({ product, baseProduct, manualSettings, holdingPosition, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, apiDeleteDisabled, apiDeleteDisabledReason, rateFallbackAt, holdingFallbackAt, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingPosition?: HoldingPosition; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; apiDeleteDisabled: boolean; apiDeleteDisabledReason?: string; rateFallbackAt?: string; holdingFallbackAt?: string; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
+function ProductRow({ product, baseProduct, manualSettings, holdingPosition, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, apiDeleteDisabled, apiDeleteDisabledReason, rateFallbackAt, holdingFallbackAt, changeEvents, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingPosition?: HoldingPosition; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; apiDeleteDisabled: boolean; apiDeleteDisabledReason?: string; rateFallbackAt?: string; holdingFallbackAt?: string; changeEvents: ProductChangeEvent[]; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
   const account = accounts.find((item) => item.id === product.accountId)!;
   const hasApiTiming = Boolean(holdingPosition?.purchaseAt);
   const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming);
@@ -821,8 +854,137 @@ function ProductRow({ product, baseProduct, manualSettings, holdingPosition, hol
       <TableCell className="type-body font-semibold tabular-nums">{holdingAvailable && productInfoIssues.length === 0 && holding > 0
         ? `${effectiveApr(product, holding).toFixed(2)}%`
         : <span className="text-subtle font-normal">—</span>}</TableCell>
+      <TableCell className="product-history-cell"><ProductHistory events={changeEvents} /></TableCell>
     </tr>
   );
+}
+
+function ProductHistory({ events }: { events: ProductChangeEvent[] }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [open, setOpen] = useState(false);
+  const [acknowledgedEventIds, setAcknowledgedEventIds] = useState<string[]>([]);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const attention = events.some((event) => event.attention && !acknowledgedEventIds.includes(event.id));
+  const sortedEvents = useMemo(() => [...events].sort((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt)), [events]);
+
+  useDismissiblePopover(open, setOpen, buttonRef, popoverRef);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const trigger = buttonRef.current;
+    const popover = popoverRef.current;
+    if (!trigger || !popover) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const popoverRect = popover.getBoundingClientRect();
+    const gutter = 12;
+    const left = Math.max(gutter, Math.min(triggerRect.right - popoverRect.width, window.innerWidth - popoverRect.width - gutter));
+    const top = window.innerHeight - triggerRect.bottom >= popoverRect.height + 8 || triggerRect.top < popoverRect.height + 8
+      ? triggerRect.bottom + 8
+      : triggerRect.top - popoverRect.height - 8;
+    setPosition((current) => current.top === top && current.left === left ? current : { top, left });
+  }, [open, sortedEvents.length]);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+  }, []);
+
+  function cancelScheduledClose() {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }
+
+  function cancelScheduledHoverOpen() {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  }
+
+  function scheduleClose() {
+    cancelScheduledClose();
+    closeTimerRef.current = setTimeout(() => setOpen(false), 180);
+  }
+
+  function openPopover() {
+    cancelScheduledClose();
+    cancelScheduledHoverOpen();
+    const attentionIds = events.filter((event) => event.attention).map((event) => event.id);
+    if (attentionIds.length > 0) setAcknowledgedEventIds((current) => [...new Set([...current, ...attentionIds])]);
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (rect) {
+      const width = Math.min(288, window.innerWidth - 24);
+      const estimatedHeight = Math.min(352, Math.max(108, sortedEvents.length * 92 + 58));
+      const left = Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12));
+      const top = window.innerHeight - rect.bottom >= estimatedHeight + 8 || rect.top < estimatedHeight + 8
+        ? rect.bottom + 8
+        : rect.top - estimatedHeight - 8;
+      setPosition({ top, left });
+    }
+    setOpen(true);
+  }
+
+  function scheduleHoverOpen() {
+    cancelScheduledHoverOpen();
+    hoverTimerRef.current = setTimeout(openPopover, 220);
+  }
+
+  function handleTriggerClick() {
+    cancelScheduledHoverOpen();
+    if (open) setOpen(false);
+    else openPopover();
+  }
+
+  return <div className="product-history">
+    <button
+      ref={buttonRef}
+      type="button"
+      className="product-history-trigger"
+      aria-label={attention ? "查看变更记录，有需要关注的变化" : "查看变更记录"}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      onMouseEnter={scheduleHoverOpen}
+      onMouseLeave={scheduleClose}
+      onFocus={(event) => { if (event.currentTarget.matches(":focus-visible")) openPopover(); }}
+      onBlur={(event) => {
+        if (!event.relatedTarget || !(event.relatedTarget instanceof Node && popoverRef.current?.contains(event.relatedTarget))) scheduleClose();
+      }}
+      onClick={handleTriggerClick}
+    >
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.8" /><path d="M10 6.4v3.9l2.6 1.6" /><path d="M10 2.1v1.4M10 16.5v1.4M2.1 10h1.4M16.5 10h1.4" /></svg>
+      {attention && <span className="product-history-dot" aria-hidden="true" />}
+    </button>
+    {open && createPortal(
+      <div
+        ref={popoverRef}
+        className="product-history-popover surface-popover"
+        role="dialog"
+        aria-label="产品变更记录"
+        style={{ top: position.top, left: position.left }}
+        onMouseEnter={() => { cancelScheduledClose(); cancelScheduledHoverOpen(); }}
+        onMouseLeave={scheduleClose}
+      >
+        <div className="product-history-header">
+          <p className="product-history-title">变更记录</p>
+        </div>
+        {sortedEvents.length === 0
+          ? <p className="product-history-empty">暂无变更记录</p>
+          : <ol className="product-history-list">{sortedEvents.map((event, index) => <li key={event.id} className="product-history-event">
+            <span className={`product-history-node ${index === 0 ? "product-history-node-latest" : ""}`} aria-hidden="true" />
+            <div className="product-history-event-copy">
+              <div className="product-history-event-meta"><time dateTime={event.observedAt}>{formatSyncDateTime(event.observedAt)}</time><span>{event.source}</span></div>
+          <p className="product-history-event-title"><span>{event.title}</span>{event.before !== undefined && event.after !== undefined && <span className="product-history-event-change"><span>{event.before}</span><span className="product-history-arrow" aria-hidden="true">→</span><strong>{event.after}</strong></span>}</p>
+            </div>
+          </li>)}</ol>}
+      </div>,
+      document.body,
+    )}
+  </div>;
 }
 
 function ManualProductIdentityEditor({ product, account, disabled, onChange, onDelete }: { product: Product; account: Account; disabled: boolean; onChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
@@ -854,7 +1016,7 @@ function EmptyProductState({ message = "吸引人的稳定理财尚未出现！"
 }
 
 function ProductTableSkeleton() {
-  const widths = ["72%", "84%", "90%", "48%"];
+  const widths = ["72%", "84%", "90%", "48%", "30%"];
   return <>{Array.from({ length: 3 }, (_, row) => <tr key={row} className="product-row" aria-hidden="true">{widths.map((width, column) => <TableCell key={column}><span className="skeleton-block skeleton-table-line" style={{ width }} /></TableCell>)}</tr>)}</>;
 }
 
@@ -880,7 +1042,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
     ? `产品信息沿用 ${formatSyncDateTime(rateFallbackAt)} 的缓存数据`
     : product.capacitySource === "cache" && product.capacityFetchedAt
       ? `额度沿用 ${formatSyncDateTime(product.capacityFetchedAt)} 的缓存数据`
-      : productInfoIssues.length === 0 && apiManaged && editing ? "来自 API" : "";
+      : productInfoIssues.length === 0 && apiManaged && editing ? "API 同步" : "";
   const termStatusText: ReactNode = apiTiming
     ? apiTermLifecycleText(product, apiTiming)
     : termStatus
@@ -1009,7 +1171,7 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
 
   return <div className="holding-column">{editing && (editable
     ? <HoldingInput value={holding} asset={product.asset} disabled={saving} onChange={onHoldingChange} />
-    : <div className="holding-editor holding-editor-readonly"><span className="text-muted flex items-baseline gap-2"><span className="type-micro font-normal">{product.asset}</span><span className="type-body font-normal tabular-nums">{holdingAvailable ? formatAmount(holding) : "未获取"}</span></span>{holdingAvailable && !holdingFallbackAt && <span className="text-muted type-micro">来自 API</span>}</div>)}{summary}</div>;
+    : <div className="holding-editor holding-editor-readonly"><span className="text-muted flex items-baseline gap-2"><span className="type-micro font-normal">{product.asset}</span><span className="type-body font-normal tabular-nums">{holdingAvailable ? formatAmount(holding) : "未获取"}</span></span>{holdingAvailable && !holdingFallbackAt && <span className="text-muted type-micro">API 同步</span>}</div>)}{summary}</div>;
 }
 
 function ManualLimitInput({ value, placeholder, asset, disabled, onChange }: { value: number | null; placeholder?: number; asset: Asset; disabled: boolean; onChange: (value: number | null) => void }) {
@@ -1170,14 +1332,6 @@ function sameOverride(left?: ProductOverride, right?: ProductOverride) {
     && (left?.firstTierLimit ?? null) === (right?.firstTierLimit ?? null)
     && (left?.termDays ?? null) === (right?.termDays ?? null)
     && (left?.purchaseDate ?? null) === (right?.purchaseDate ?? null);
-}
-
-function sameManualProduct(left: Product, right?: Product) {
-  return Boolean(right)
-    && left.accountId === right!.accountId
-    && left.asset === right!.asset
-    && (left.manualKind ?? "flexible") === (right!.manualKind ?? "flexible")
-    && (left.termDays ?? null) === (right!.termDays ?? null);
 }
 
 function sameIdSet(left: string[], right: string[]) {

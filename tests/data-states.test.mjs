@@ -23,6 +23,25 @@ test("product completeness and holdings remain independent", () => {
   assert.equal(productParticipatesInInterest(base, 0), false);
 });
 
+test("maturity history uses one resolved date instead of a before/after pair", () => {
+  const preview = localPrivateProductsPreview(new Date("2026-10-02T12:00:00Z"));
+  const event = preview.changeEvents.find((item) => item.type === "maturity");
+  assert.ok(event);
+  assert.match(event.title, /^定期于 10\/01 到期$/);
+  assert.equal(event.before, undefined);
+  assert.equal(event.after, undefined);
+});
+
+test("local preview includes a long history for scroll-boundary review", () => {
+  const preview = localPrivateProductsPreview(new Date("2026-10-02T12:00:00Z"));
+  const events = preview.changeEvents.filter((item) => item.productId === "bn-g-usdt");
+  assert.ok(events.length >= 26);
+  assert.ok(events.some((item) => item.type === "rate"));
+  assert.ok(events.some((item) => item.type === "capacity"));
+  assert.ok(events.some((item) => item.type === "holding"));
+  assert.ok(events.some((item) => item.type === "availability"));
+});
+
 test("manual missing fields, maturity and eligibility do not invent a holding state", () => {
   const manual = { ...base, productDataMode: "manual", manualKind: "limited", termDays: 180 };
   const override = { apr: 10, firstTierLimit: 500, purchaseDate: null };

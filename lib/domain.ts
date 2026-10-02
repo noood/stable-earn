@@ -74,6 +74,19 @@ export type Product = {
 
 export type HoldingMap = Record<string, number>;
 
+/** A user-visible change captured by a local preview or a committed sync. */
+export type ProductChangeEvent = {
+  id: string;
+  productId: string;
+  type: "rate" | "capacity" | "holding" | "maturity" | "availability";
+  title: string;
+  before?: string;
+  after?: string;
+  observedAt: string;
+  source: "定时刷新" | "手动刷新" | "每日首次打开" | "手动编辑";
+  attention?: boolean;
+};
+
 /** A user position normalized from an authenticated exchange response. */
 export type HoldingPosition = {
   productId: string;

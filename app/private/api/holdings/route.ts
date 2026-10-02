@@ -7,6 +7,12 @@ import { parseProductOverride } from "@/lib/product-override-input";
 import { loadUserProducts, prepareUserProductStatements, productToUserProduct, sanitizeUserProducts, userProductInputToProduct } from "@/lib/user-products";
 import { isLocalPreviewRequest, localPrivateHoldingsPreview } from "@/lib/local-preview";
 import { loadCatalogProducts } from "@/lib/product-catalog";
+import {
+  buildManualChangeEvents,
+  loadProductChangeEvents,
+  prepareProductChangeEventStatements,
+  type ProductChangeSource,
+} from "@/lib/product-change-events";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +20,7 @@ type HoldingRow = { product_id: string; amount: number };
 type OverrideRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null; updated_at: string };
 type LimitRow = { product_id: string; first_tier_limit: number | null };
 type TermRow = { product_id: string; term_days: number | null };
+type OverrideSnapshotRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null };
 type HiddenProductRow = { product_id: string };
 
 export async function GET(request: Request) {
@@ -84,18 +91,24 @@ export async function PUT(request: Request) {
 
   let body: unknown;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "持仓数据格式不正确。" }, { status: 400, headers: privateResponseHeaders }); }
-  const payload = typeof body === "object" && body !== null ? body as { holdings?: unknown; overrides?: unknown; changedHoldingProductIds?: unknown; changedOverrideProductIds?: unknown; manualProducts?: unknown; deletedManualProductIds?: unknown; hiddenProductIds?: unknown } : null;
+  const payload = typeof body === "object" && body !== null ? body as { holdings?: unknown; overrides?: unknown; changedHoldingProductIds?: unknown; changedOverrideProductIds?: unknown; manualProducts?: unknown; deletedManualProductIds?: unknown; hiddenProductIds?: unknown; source?: unknown } : null;
   const candidate = payload?.holdings ?? null;
   if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
     return NextResponse.json({ error: "缺少持仓数据。" }, { status: 400, headers: privateResponseHeaders });
   }
 
   const db = await getDatabase();
-  const [existingManualProducts, catalogProducts, holdingResult, positionResult, hiddenCatalogResult, legacyHiddenResult, syncSnapshotResult] = await Promise.all([
+  const [existingManualProducts, catalogProducts, holdingResult, positionResult, overrideResult, limitResult, termResult, hiddenCatalogResult, legacyHiddenResult, syncSnapshotResult] = await Promise.all([
     loadUserProducts(db, userId),
     loadCatalogProducts(db, userId),
     db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
     db.prepare("SELECT product_id, amount FROM holding_positions WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
+    db.prepare(`SELECT product_id, confirmed_apr, purchase_date
+      FROM product_overrides WHERE user_id = ? ORDER BY product_id`).bind(userId).all<OverrideSnapshotRow>(),
+    db.prepare(`SELECT product_id, first_tier_limit
+      FROM product_override_limits WHERE user_id = ? ORDER BY product_id`).bind(userId).all<LimitRow>(),
+    db.prepare(`SELECT product_id, term_days
+      FROM product_override_terms WHERE user_id = ? ORDER BY product_id`).bind(userId).all<TermRow>(),
     db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
     db.prepare("SELECT product_id FROM hidden_seed_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
     db.prepare("SELECT payload FROM sync_snapshots WHERE owner_id = ? AND cache_key = 'private-products'").bind(userId).all<{ payload: string | null }>(),
@@ -179,6 +192,38 @@ export async function PUT(request: Request) {
   }
 
   const updatedAt = new Date().toISOString();
+  const source = parseChangeSource(payload?.source);
+  const previousHoldings = Object.fromEntries(holdingResult.results.map((row) => [row.product_id, Number(row.amount)])) as HoldingMap;
+  const nextHoldings = { ...previousHoldings, ...Object.fromEntries(entries) } as HoldingMap;
+  const previousOverrides = buildOverrideMap(overrideResult.results, limitResult.results, termResult.results);
+  const nextOverrides = { ...previousOverrides } as ProductOverrideMap;
+  for (const entry of overrideEntries) {
+    if (entry) nextOverrides[entry.productId] = {
+      apr: entry.apr,
+      firstTierLimit: entry.firstTierLimit,
+      termDays: entry.termDays,
+      purchaseDate: entry.purchaseDate,
+      updatedAt,
+    };
+  }
+  const changeEvents = source === "手动编辑"
+    ? buildManualChangeEvents(
+      previousHoldings,
+      nextHoldings,
+      previousOverrides,
+      nextOverrides,
+      existingManualProducts,
+      manualProducts,
+      catalogProducts,
+      {
+        holdingProductIds: changedHoldingProductIds,
+        overrideProductIds: changedOverrideProductIds,
+        manualProductIds: manualProductUpdates.map((product) => product.id),
+        deletedManualProductIds,
+      },
+      updatedAt,
+    )
+    : [];
   const statements = [
     ...prepareUserProductStatements(db, userId, manualProductUpdates, deletedManualProductIds, updatedAt),
     ...(hiddenProductsProvided ? [
@@ -215,9 +260,29 @@ export async function PUT(request: Request) {
         DO UPDATE SET term_days = excluded.term_days,
           updated_at = excluded.updated_at`)
       .bind(userId, entry.productId, entry.termDays, updatedAt)] : []),
+    ...prepareProductChangeEventStatements(db, userId, changeEvents),
   ];
   if (statements.length > 0) await db.batch(statements);
-  return NextResponse.json({ saved: entries.length, manualUpdated: overrideEntries.length, productUpdated: manualProductUpdates.length, productDeleted: deletedManualProductIds.length, productHidden: hiddenProductsProvided ? hiddenProductIds.length : 0, updatedAt }, { headers: privateResponseHeaders });
+  const storedChangeEvents = await loadProductChangeEvents(db, userId);
+  return NextResponse.json({ saved: entries.length, manualUpdated: overrideEntries.length, productUpdated: manualProductUpdates.length, productDeleted: deletedManualProductIds.length, productHidden: hiddenProductsProvided ? hiddenProductIds.length : 0, updatedAt, changeEvents: storedChangeEvents }, { headers: privateResponseHeaders });
+}
+
+function parseChangeSource(value: unknown): ProductChangeSource {
+  return value === "定时刷新" || value === "手动刷新" || value === "每日首次打开" || value === "手动编辑"
+    ? value
+    : "手动编辑";
+}
+
+function buildOverrideMap(overrides: OverrideSnapshotRow[], limits: LimitRow[], terms: TermRow[]) {
+  const limitMap = new Map(limits.map((row) => [row.product_id, row.first_tier_limit]));
+  const termMap = new Map(terms.map((row) => [row.product_id, row.term_days]));
+  return Object.fromEntries(overrides.map((row) => [row.product_id, {
+    apr: row.confirmed_apr === null ? null : Number(row.confirmed_apr),
+    firstTierLimit: limitMap.get(row.product_id) ?? null,
+    termDays: termMap.get(row.product_id) ?? null,
+    purchaseDate: row.purchase_date,
+    updatedAt: null,
+  }])) as ProductOverrideMap;
 }
 
 function sanitizeChangedProductIds(value: unknown, productIds: Set<string>) {
