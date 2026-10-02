@@ -40,9 +40,10 @@ WITH source AS (
   SELECT
     *,
     CASE
-      -- The original built-in rows represent one default product per account
-      -- and asset. Do not turn the account/asset id into a second identity slug.
-      WHEN lower_product_id = account_id || '-' || LOWER(asset) THEN 'default'
+      -- All pre-manual-* catalog rows are built-in seed products. Each seed
+      -- account/asset pair represents its default manual product; the old
+      -- migration's substr(product_id, 8) created truncated slugs instead.
+      WHEN lower_product_id NOT LIKE 'manual-%' THEN 'default'
       WHEN lower_product_id LIKE 'manual-%' THEN
         TRIM(REPLACE(REPLACE(REPLACE(REPLACE(SUBSTR(lower_product_id, 8), '_', '-'), ' ', '-'), ':', '-'), '/', '-'), '-')
       ELSE

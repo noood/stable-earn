@@ -42,7 +42,9 @@ test("manual identity repair maps legacy account-asset ids to the default slug",
     VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`);
   for (const [id, accountId, asset] of [
     ["mexc-ph-usdt", "mexc-ph", "USDT"],
-    ["okx-usdt", "okx", "USDT"],
+    ["okx-usdt", "okx-global", "USDT"],
+    ["by-eu-usdc", "bybit-eu", "USDC"],
+    ["bg-usdgo", "bitget-global", "USDGO"],
   ]) {
     insert.run("user", id, id, id, null, JSON.stringify({
       id, accountId, asset, productType: "flexible", productDataMode: "manual", identityKey: id,
@@ -51,8 +53,10 @@ test("manual identity repair maps legacy account-asset ids to the default slug",
   db.sqlite.exec(migrationSql);
   const rows = db.sqlite.prepare("SELECT product_id, identity_key FROM product_catalog ORDER BY product_id").all().map((row) => ({ ...row }));
   assert.deepEqual(rows, [
+    { product_id: "bg-usdgo", identity_key: "bitget-global:USDGO:flexible:manual:default" },
+    { product_id: "by-eu-usdc", identity_key: "bybit-eu:USDC:flexible:manual:default" },
     { product_id: "mexc-ph-usdt", identity_key: "mexc-ph:USDT:flexible:manual:default" },
-    { product_id: "okx-usdt", identity_key: "okx:USDT:flexible:manual:default" },
+    { product_id: "okx-usdt", identity_key: "okx-global:USDT:flexible:manual:default" },
   ]);
   assert.equal(db.sqlite.prepare("SELECT product_id FROM product_identity_aliases WHERE alias = ?").get("mexc-ph-usdt").product_id, "mexc-ph-usdt");
 });

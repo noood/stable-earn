@@ -291,6 +291,7 @@ input:focus-visible,
 .product-table th:last-child,
 .product-table td:last-child { text-align: center; }
 .product-table th:last-child { padding-inline: var(--space-3); }
+.product-table td:last-child .skeleton-table-line { margin-inline: auto; }
 .table-toolbar { display: flex; min-height: 5.25rem; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-5) var(--space-6); }
 .table-toolbar-copy { display: grid; min-height: 2.875rem; align-content: center; gap: var(--space-1); }
 .table-toolbar-subtitle { min-height: var(--leading-caption); }

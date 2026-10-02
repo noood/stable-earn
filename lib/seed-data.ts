@@ -63,7 +63,7 @@ function product(
   return {
     id, accountId, exchange, region, asset, name, productType: "flexible", source, rateCoverage: "complete", ...dataMode,
     identityKey: dataMode.productDataMode === "manual"
-      ? buildManualProductIdentity({ accountId, asset, productType: "flexible", slug: id })
+      ? buildManualProductIdentity({ accountId, asset, productType: "flexible", slug: "default" })
       : id,
     tiers: tiers.map(([min, max, apr], index) => ({ id: `${id}-tier-${index}`, min, max, apr })),
   };
