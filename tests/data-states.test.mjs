@@ -50,7 +50,14 @@ test("banner distinguishes whole failure, interface scope and page network failu
   assert.equal(sanitizeSyncFailure("Bitget（USDT:1382948397058678784、USDT:1488775596992425984 持仓未返回）"), "Bitget（部分数据未返回）");
   assert.equal(sanitizeSyncFailure("Bitget USDT:1382948397058678784 持仓未返回"), "Bitget（部分数据未返回）");
   assert.equal(syncFailureSummary(["Bitget（USDT:1382948397058678784、USDT:1488775596992425984 持仓未返回）"]), "Bitget 部分数据未返回；下次更新将重试。");
-  assert.match(syncFailureSummary(["Bybit.com 定期产品", "Bybit.com 定期持仓"]), /定期产品、Bybit.com 定期持仓/);
+  assert.equal(
+    syncFailureSummary(["Bitget（持仓接口未完整返回）", "OKX（连接失败，原因待检查）"]),
+    "Bitget 持仓 API 暂不可用、OKX API 暂不可用；下次更新将重试。",
+  );
+  assert.equal(
+    syncFailureSummary(["Bybit.com 定期产品", "Bybit.com 定期持仓"]),
+    "Bybit.com 定期产品 API 暂不可用、Bybit.com 定期持仓 API 暂不可用；下次更新将重试。",
+  );
   assert.equal(syncFailureSummary(["Bitget（USDGO 产品未返回）"]), "Bitget USDGO 产品未返回；下次更新将重试。");
   assert.match(syncFailureSummary(["产品和持仓数据更新失败"]), /^本次产品和持仓数据更新失败/);
   assert.equal(syncFailureSummary(["页面数据读取失败"]), "服务器读取失败，数据无法显示，请刷新页面。");

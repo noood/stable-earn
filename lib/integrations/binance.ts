@@ -195,11 +195,14 @@ export async function fetchBinanceLockedSnapshot(
   // fields needed for lifecycle decisions; never emit the raw response.
   syncDiagnostic("binance_locked_rows", {
     account,
+    productRowCount: productRows.length,
+    positionRowCount: positionRows.length,
     productRows: productRows.flatMap((row) => {
       const detail = row.detail;
       const asset = String(detail?.asset ?? "").toUpperCase();
       return supported.has(asset) ? [{
-        productId: String(row.projectId ?? "").trim() || null,
+        // This is Binance's upstream projectId, not our database product_id.
+        externalProjectId: String(row.projectId ?? "").trim() || null,
         asset,
         duration: positiveNumber(detail?.duration),
         apr: parseBinanceApr(detail?.apr ?? detail?.apy ?? detail?.annualPercentageRate ?? detail?.interestRate),
@@ -211,7 +214,8 @@ export async function fetchBinanceLockedSnapshot(
       const asset = String(row.asset ?? "").toUpperCase();
       return supported.has(asset) ? [{
         positionId: row.positionId === undefined ? null : String(row.positionId),
-        productId: String(row.projectId ?? "").trim() || null,
+        // This is Binance's upstream projectId, not our database product_id.
+        externalProjectId: String(row.projectId ?? "").trim() || null,
         asset,
         amount: finiteNumber(row.amount ?? row.principal),
         duration: positiveNumber(row.duration),

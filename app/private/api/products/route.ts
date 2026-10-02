@@ -695,10 +695,20 @@ function buildNote(failures: string[]) {
   if (failures.length === 0) return "";
   const incomplete = failures.filter((failure) => failure.includes("未返回"));
   const actualFailures = failures.filter((failure) => !failure.includes("未返回"));
+  if (failures.some((failure) => failure === "公开交易所" || failure.includes("数据更新失败"))) {
+    return "本次产品和持仓数据更新失败；下次更新将重试。";
+  }
+  const incompleteText = incomplete.map((failure) => sanitizeSyncFailure(failure)).join("、");
+  const actualTargets = [...new Set(actualFailures.map((failure) => failure.replace(/（.*$/, "").trim()).filter(Boolean))];
+  const actualText = actualFailures.length
+    ? (actualTargets.map((target) => `${target} API 暂不可用`).join("、") || "交易所 API 暂不可用")
+    : "";
   return [
-    actualFailures.length ? `${actualFailures.join("、")} API 获取失败。` : "",
-    incomplete.length ? `${incomplete.join("、")}；下次更新将重试。` : "",
-  ].filter(Boolean).join(" ");
+    incompleteText,
+    actualText,
+  ].filter(Boolean).length
+    ? `${[incompleteText, actualText].filter(Boolean).join("；")}；下次更新将重试。`
+    : "";
 }
 
 function legacyFailures(note: string) {

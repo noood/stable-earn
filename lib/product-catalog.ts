@@ -1,9 +1,10 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import type { Product } from "./domain";
 import type { LiveRate } from "./live-rates";
-import { productHasComparableApr, productShouldBeActive } from "./opportunity-policy";
+import { highestProductApr, productHasComparableApr, productQualifiesAsOpportunity, productShouldBeActive } from "./opportunity-policy";
 import { resolveProductWithoutApiData } from "./product-status";
 import { catalogProductTemplates } from "./seed-data";
+import { syncDiagnostic } from "./sync-diagnostics";
 
 /**
  * The catalogue is user-scoped because authenticated APIs may expose a
@@ -81,6 +82,7 @@ export async function prepareProductCatalogSync(
   const transformedRates: LiveRate[] = [];
   const statements: D1PreparedStatement[] = [];
   const selectedByCanonical = new Map<string, Set<string>>();
+  const binanceCatalogDecisions: Array<Record<string, unknown>> = [];
   const normalizedIncomingRates = deduplicateRates(incomingRates);
   const incomingIdentityKeys = new Set(normalizedIncomingRates
     .map((rate) => rate.identityKey ?? rate.canonicalProductId ?? rate.productId));
@@ -127,7 +129,29 @@ export async function prepareProductCatalogSync(
 
     const product = productFromRate(base, rate, id, identityKey);
     const evidence = holdingEvidence(product, rate, id, freshHoldings, persistedHoldings, completeAccounts);
-    const active = productShouldBeActive(product, evidence, selectedCurrent?.status === "active");
+    const alreadyActive = selectedCurrent?.status === "active";
+    const active = productShouldBeActive(product, evidence, alreadyActive);
+    if (isBinanceLockedProduct(product)) {
+      binanceCatalogDecisions.push({
+        branch: "incoming_rate",
+        productId: id,
+        canonicalProductId,
+        identityKey,
+        externalProjectId: product.externalProductId ?? null,
+        accountId: product.accountId,
+        asset: product.asset,
+        termDays: product.termDays ?? null,
+        highestApr: highestProductApr(product),
+        availability: product.availability ?? null,
+        eligibilityStatus: product.eligibilityStatus ?? null,
+        holdingKnown: evidence.known,
+        holdingAmount: evidence.amount,
+        completeAccount: completeAccounts.has(product.accountId),
+        previousStatus: selectedCurrent?.status ?? null,
+        active,
+        reason: productActivityReason(product, evidence, alreadyActive, active),
+      });
+    }
     mapProductIds(productIds, rate, canonicalProductId, identityKey, id);
 
     const selected = selectedByCanonical.get(canonicalProductId) ?? new Set<string>();
@@ -163,12 +187,31 @@ export async function prepareProductCatalogSync(
         && (persistedHoldings.get(row.product_id) ?? 0) <= 0) {
         planned.set(row.product_id, { product, status: "archived" });
         statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
+        recordBinanceCatalogDecision(binanceCatalogDecisions, product, {
+          branch: "duplicate_identity",
+          productId: row.product_id,
+          selectedProductId: selectedForIdentity.product_id,
+          holdingKnown: persistedHoldings.has(row.product_id),
+          holdingAmount: persistedHoldings.get(row.product_id) ?? 0,
+          completeAccount: completeAccounts.has(product.accountId),
+          active: false,
+          reason: "duplicate_identity_zero_holding",
+        });
         continue;
       }
       const evidence = existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeAccounts);
       if (!evidence.known || evidence.amount > 0) continue;
       planned.set(row.product_id, { product, status: "archived" });
       statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
+      recordBinanceCatalogDecision(binanceCatalogDecisions, product, {
+        branch: "omitted_identity",
+        productId: row.product_id,
+        holdingKnown: evidence.known,
+        holdingAmount: evidence.amount,
+        completeAccount: completeAccounts.has(product.accountId),
+        active: false,
+        reason: "omitted_identity_zero_holding",
+      });
     }
   }
 
@@ -184,6 +227,15 @@ export async function prepareProductCatalogSync(
     if (!evidence.known || evidence.amount > 0) continue;
     planned.set(row.product_id, { product, status: "archived" });
     statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
+    recordBinanceCatalogDecision(binanceCatalogDecisions, product, {
+      branch: "complete_account_absent",
+      productId: row.product_id,
+      holdingKnown: evidence.known,
+      holdingAmount: evidence.amount,
+      completeAccount: true,
+      active: false,
+      reason: "complete_account_absent_zero_holding",
+    });
   }
 
   // Some account APIs return holdings without product-rate rows. A positive
@@ -223,6 +275,10 @@ export async function prepareProductCatalogSync(
   const products = [...planned.values()]
     .flatMap((entry) => entry.status === "active" && entry.product ? [resolveProductWithoutApiData(entry.product)] : [])
     .sort((left, right) => left.id.localeCompare(right.id));
+  syncDiagnostic("binance_catalog_decisions", {
+    completeAccounts: [...completeAccounts].filter((accountId) => accountId.startsWith("binance-")),
+    decisions: binanceCatalogDecisions,
+  });
   return { products, rates: transformedRates, productIds, statements };
 }
 
@@ -560,6 +616,45 @@ function parseProduct(payload: string) {
   } catch {
     return [];
   }
+}
+
+function isBinanceLockedProduct(product: Product) {
+  return product.exchange === "binance" && product.productType === "fixed";
+}
+
+function productActivityReason(
+  product: Product,
+  holding: HoldingEvidence,
+  alreadyActive: boolean,
+  active: boolean,
+) {
+  if (holding.known && holding.amount > 0) return "positive_holding";
+  if (product.availability === "unavailable" || product.eligibilityStatus === "ineligible") {
+    return active && !holding.known
+      ? "unavailable_or_ineligible_holding_unknown_preserved"
+      : "unavailable_or_ineligible";
+  }
+  if (active && !holding.known && alreadyActive) return "holding_unknown_preserved";
+  if (productQualifiesAsOpportunity(product)) return "opportunity_qualified";
+  return holding.known ? "zero_holding_opportunity_rule" : "holding_unknown_not_qualified";
+}
+
+function recordBinanceCatalogDecision(
+  decisions: Array<Record<string, unknown>>,
+  product: Product,
+  decision: Record<string, unknown>,
+) {
+  if (!isBinanceLockedProduct(product)) return;
+  decisions.push({
+    canonicalProductId: product.identityKey.split(":")[0] ?? product.identityKey,
+    identityKey: product.identityKey,
+    externalProjectId: product.externalProductId ?? null,
+    accountId: product.accountId,
+    asset: product.asset,
+    termDays: product.termDays ?? null,
+    highestApr: highestProductApr(product),
+    ...decision,
+  });
 }
 
 function catalogProductId(canonicalProductId: string, identityKey: string, fingerprint: string | null) {

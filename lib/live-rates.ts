@@ -1,6 +1,7 @@
 import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import type { EligibilityStatus, Product, ProductAvailability, RateCoverage } from "@/lib/domain";
 import { buildProductIdentity } from "@/lib/product-identity";
+import { syncDiagnostic } from "@/lib/sync-diagnostics";
 
 export type LiveRate = {
   productId: string;
@@ -96,10 +97,39 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
       const response = await exchangeFetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
       const body = await readExchangeJson<{
         retCode?: number;
-        result?: { list?: Array<{ productId?: string; estimateApr?: string; status?: string }> };
+        result?: { list?: Array<{
+          productId?: string;
+          coin?: string;
+          estimateApr?: string;
+          estimateApy?: string;
+          apr?: string;
+          apy?: string;
+          bonusApr?: string;
+          extraApr?: string;
+          status?: string;
+        }> };
       }>(response);
       if (!response.ok || body.retCode !== 0) throw new Error(`Bybit returned ${response.status}/${body.retCode ?? "unknown"}`);
-      const item = body.result?.list?.find((candidate) => candidate.status === "Available") ?? body.result?.list?.[0];
+      const candidates = body.result?.list ?? [];
+      const item = candidates.find((candidate) => candidate.status === "Available") ?? candidates[0];
+      syncDiagnostic("bybit_flexible_rows", {
+        platform: endpoint.platform,
+        coin: endpoint.coin,
+        rowCount: candidates.length,
+        rows: candidates.map((candidate) => ({
+          productId: candidate.productId ?? null,
+          coin: candidate.coin ?? null,
+          status: candidate.status ?? null,
+          estimateApr: candidate.estimateApr ?? null,
+          estimateApy: candidate.estimateApy ?? null,
+          apr: candidate.apr ?? null,
+          apy: candidate.apy ?? null,
+          bonusApr: candidate.bonusApr ?? null,
+          extraApr: candidate.extraApr ?? null,
+        })),
+        selectedProductId: item?.productId ?? null,
+        selectedApr: item?.estimateApr ?? null,
+      });
       const baseApr = parsePercent(item?.estimateApr);
       if (!Number.isFinite(baseApr)) throw new Error("Bybit returned no APR");
       const externalProductId = item?.productId;

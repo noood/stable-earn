@@ -105,9 +105,10 @@ export default function Home() {
   return <Dashboard mode="demo" />;
 }
 
-export function Dashboard({ mode, localPreview = false }: { mode: "demo" | "private"; localPreview?: boolean }) {
+export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: "demo" | "private"; localPreview?: boolean; initialAsset?: Asset }) {
   const isDemo = mode === "demo";
   const [asset, setAsset] = useState<Asset>(() => {
+    if (initialAsset) return initialAsset;
     if (typeof window === "undefined") return "USDT";
     const value = new URLSearchParams(window.location.search).get("asset")?.toUpperCase();
     return value === "USDT" || value === "USDC" || value === "USDGO" || value === "BTC" ? value : "USDT";
@@ -837,6 +838,11 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
   const manualApr = productNeedsManualApr(baseProduct);
   const manualLimit = productNeedsManualLimit(baseProduct);
   const manualTerm = productNeedsManualTerm(baseProduct);
+  // Historical manual catalog rows may omit manualKind. Treat an omitted
+  // kind as flexible, matching the editor's default, instead of showing a
+  // fixed-term input for every old flexible product.
+  const manualKind = baseProduct.manualKind ?? "flexible";
+  const manualProductTerm = manualProduct && manualKind !== "flexible";
   const fixedFacts = product.productType === "fixed" || product.manualKind === "limited" ? fixedProductFacts(product) : [];
   const durationDays = productTermDays(product);
   const apiManaged = baseProduct.productDataMode === "api";
@@ -874,16 +880,16 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
   const lifecycleValue = <>{lifecycleDateLabel}{termStatusText && <><span className="product-fact-separator">｜</span><span className={lifecycleStatusWarning ? "product-fact-warning" : "product-fact-note"}>{termStatusText}</span></>}</>;
 
   return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
-    {fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
+    {(!editing || !manualProduct) && fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
     {!editing && manualTerm && <ProductFact label="活动期限" value={durationDays ? formatTerm(durationDays) : "待填写"} />}
     {sourceText && <ProductMeta text={sourceText} warning={Boolean(rateFallbackAt)} />}
     {incompleteText && <ProductMeta text={incompleteText} warning={holding > 0} />}
-    {editing && (manualApr || manualLimit || manualTerm || (manualProduct && baseProduct.manualKind !== "flexible") || (productNeedsPurchaseDate(product) && Boolean(durationDays))) && <div className="manual-fields">
+    {editing && (manualApr || manualLimit || manualTerm || manualProductTerm || (productNeedsPurchaseDate(product) && Boolean(durationDays))) && <div className="manual-fields">
       {manualLimit && <ManualLimitInput value={manualSettings?.firstTierLimit ?? null} asset={product.asset} disabled={saving} onChange={(firstTierLimitValue) => onOverrideChange({ firstTierLimit: firstTierLimitValue })} />}
       {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
       {manualTerm && <ManualTermInput label="活动期限" value={manualSettings?.termDays ?? null} disabled={saving} onChange={(termDays) => onOverrideChange({ termDays })} />}
-      {manualProduct && baseProduct.manualKind !== "flexible" && <ManualTermInput value={baseProduct.termDays ?? null} disabled={saving} onChange={(termDays) => onManualProductChange({ termDays: termDays ?? undefined })} />}
+      {manualProductTerm && <ManualTermInput label={manualKind === "limited" ? "活动期限" : "锁定期限"} value={baseProduct.termDays ?? null} disabled={saving} onChange={(termDays) => onManualProductChange({ termDays: termDays ?? undefined })} />}
       {!apiDateSupported && productNeedsPurchaseDate(product) && durationDays && <PurchaseDateInput value={manualSettings?.purchaseDate ?? null} durationDays={durationDays} disabled={saving} onChange={(purchaseDate) => onOverrideChange({ purchaseDate })} />}
     </div>}
   </div>;

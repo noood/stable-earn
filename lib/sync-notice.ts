@@ -35,16 +35,16 @@ export function syncFailureSummary(failures: string[]): string {
   if (failures.includes("页面数据读取失败")) return serverReadFailureMessage;
   const incomplete = failures.filter((value) => value.includes("未返回"));
   const actualFailures = failures.filter((value) => !value.includes("未返回"));
-  if (incomplete.length > 0) {
-    const prefix = `${incomplete.map(formatIncompleteFailure).join("、")}；下次更新将重试。`;
-    if (actualFailures.length === 0) return prefix;
-    return `${prefix}${syncFailureSummary(actualFailures)}`;
-  }
   if (failures.some((value) => value === "公开交易所" || value.includes("数据更新失败"))) {
     return "本次产品和持仓数据更新失败；下次更新将重试。";
   }
-  const targets = [...new Set(failures.map(failureTarget).filter(Boolean))];
-  return `${targets.length ? targets.join("、") : "交易所"} API 暂不可用；下次更新将重试。`;
+  const messages = [
+    incomplete.length ? incomplete.map(formatIncompleteFailure).join("、") : "",
+    actualFailures.length
+      ? ([...new Set(actualFailures.map(failureTarget).filter(Boolean))].map((target) => `${target} API 暂不可用`).join("、") || "交易所 API 暂不可用")
+      : "",
+  ].filter(Boolean);
+  return `${messages.join("；")}；下次更新将重试。`;
 }
 
 function formatIncompleteFailure(value: string) {
