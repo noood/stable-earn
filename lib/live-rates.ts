@@ -46,6 +46,19 @@ type BybitEndpoint = {
   label: string;
 };
 
+type BybitFlexibleRow = {
+  productId?: string;
+  coin?: string;
+  estimateApr?: string;
+  estimateApy?: string;
+  apr?: string;
+  apy?: string;
+  bonusApr?: string;
+  extraApr?: string;
+  status?: string;
+  [key: string]: unknown;
+};
+
 const bybitEndpoints: BybitEndpoint[] = [
   { bases: ["https://api.bybit.com", "https://api.bytick.com"], platform: "Bybit.com", productId: "by-g-usdc", coin: "USDC", label: "Bybit 官方公开 API" },
   { bases: ["https://api.bybit.eu"], platform: "Bybit EU", productId: "by-eu-usdt", coin: "USDT", label: "Bybit EU 官方公开 API" },
@@ -97,17 +110,7 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
       const response = await exchangeFetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
       const body = await readExchangeJson<{
         retCode?: number;
-        result?: { list?: Array<{
-          productId?: string;
-          coin?: string;
-          estimateApr?: string;
-          estimateApy?: string;
-          apr?: string;
-          apy?: string;
-          bonusApr?: string;
-          extraApr?: string;
-          status?: string;
-        }> };
+        result?: { list?: BybitFlexibleRow[] };
       }>(response);
       if (!response.ok || body.retCode !== 0) throw new Error(`Bybit returned ${response.status}/${body.retCode ?? "unknown"}`);
       const candidates = body.result?.list ?? [];
@@ -126,6 +129,8 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
           apy: candidate.apy ?? null,
           bonusApr: candidate.bonusApr ?? null,
           extraApr: candidate.extraApr ?? null,
+          responseKeys: Object.keys(candidate).sort(),
+          rateFields: safeBybitRateFields(candidate),
         })),
         selectedProductId: item?.productId ?? null,
         selectedApr: item?.estimateApr ?? null,
@@ -155,6 +160,30 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
     }
   }
   throw lastError ?? new Error("Bybit public API unavailable");
+}
+
+/**
+ * Keep the diagnostic useful for account-specific reward fields without
+ * logging a raw upstream response. Only fields whose names describe APR/APY,
+ * rewards, or rate tiers are retained; values are bounded and recursively
+ * sanitized.
+ */
+function safeBybitRateFields(candidate: BybitFlexibleRow) {
+  return Object.fromEntries(Object.entries(candidate)
+    .filter(([key]) => /apr|apy|reward|rate|tier/i.test(key))
+    .map(([key, value]) => [key, sanitizeBybitRateValue(value)]));
+}
+
+function sanitizeBybitRateValue(value: unknown, depth = 0): unknown {
+  if (depth > 3) return "[truncated]";
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "string") return value.length <= 80 ? value : `${value.slice(0, 77)}...`;
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitizeBybitRateValue(item, depth + 1));
+  if (!value || typeof value !== "object") return null;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([key]) => /apr|apy|reward|rate|tier|min|max/i.test(key))
+    .slice(0, 30)
+    .map(([key, nested]) => [key, sanitizeBybitRateValue(nested, depth + 1)]));
 }
 
 function parsePercent(value: string | undefined) {

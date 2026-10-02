@@ -133,6 +133,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const [hiddenProductIds, setHiddenProductIds] = useState<string[]>([]);
   const [draftHiddenProductIds, setDraftHiddenProductIds] = useState<string[]>([]);
   const [showAssetSwitchWarning, setShowAssetSwitchWarning] = useState(false);
+  const [pendingAsset, setPendingAsset] = useState<Asset | null>(null);
   const [pendingDeleteProductId, setPendingDeleteProductId] = useState<string | null>(null);
   const [savingHoldings, setSavingHoldings] = useState(false);
   const [holdingSaveError, setHoldingSaveError] = useState(false);
@@ -554,7 +555,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     const hiddenProductsChanged = !sameIdSet(draftHiddenProductIds, hiddenProductIds);
     if (holdingProductIds.length === 0 && overrideProductIds.length === 0 && manualProductIds.length === 0 && deletedManualProductIds.length === 0 && !hiddenProductsChanged) {
       setEditing(false);
-      return;
+      return true;
     }
     if (isDemo) {
       setHoldings(draftHoldings);
@@ -564,7 +565,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       hiddenProductIdsRef.current = draftHiddenProductIds;
       setDeletedManualProductIds([]);
       setEditing(false);
-      return;
+      return true;
     }
     setSavingHoldings(true);
     setHoldingSaveError(false);
@@ -578,6 +579,17 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     setSavingHoldings(false);
     if (saved) setEditing(false);
     else setHoldingSaveError(true);
+    return saved;
+  }
+
+  async function saveAndLeaveAssetSwitch() {
+    if (!pendingAsset || savingHoldings) return;
+    const nextAsset = pendingAsset;
+    const saved = await finishEditing();
+    if (!saved) return;
+    setPendingAsset(null);
+    setShowAssetSwitchWarning(false);
+    setAsset(nextAsset);
   }
 
   const activeHoldings = editing ? draftHoldings : holdings;
@@ -657,7 +669,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       <nav className="top-nav sticky top-0 z-20 px-5 backdrop-blur lg:px-10" aria-label="主导航">
         <div className="mx-auto flex min-h-14 max-w-[1500px] flex-wrap items-center gap-x-4 sm:flex-nowrap">
           <div className="flex items-center py-2"><p className="type-title font-semibold tracking-[-0.025em]">Stable Earn</p></div>
-          <div className="order-3 h-11 w-full self-stretch sm:order-none sm:ml-8 sm:h-auto sm:w-auto"><AssetSwitch asset={asset} onChange={(nextAsset) => { if (nextAsset === asset) return; if (editing) setShowAssetSwitchWarning(true); else setAsset(nextAsset); }} /></div>
+          <div className="order-3 h-11 w-full self-stretch sm:order-none sm:ml-8 sm:h-auto sm:w-auto"><AssetSwitch asset={asset} onChange={(nextAsset) => { if (nextAsset === asset) return; if (editing) { setPendingAsset(nextAsset); setShowAssetSwitchWarning(true); } else setAsset(nextAsset); }} /></div>
           <HeaderMenu
             userEmail={userEmail}
             demo={isDemo}
@@ -723,7 +735,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       </div>
 
       {!isDemo && showApiSettings && <ApiSettings onClose={() => setShowApiSettings(false)} onCooldownChange={() => setManualRefreshAvailableAt(null)} />}
-      {showAssetSwitchWarning && <ModalFrame ariaLabel="请先完成编辑" title="请先完成编辑" onClose={() => setShowAssetSwitchWarning(false)}><p className="text-secondary type-body">请先保存或取消当前修改，再切换币种。</p><div className="mt-5 flex justify-end"><ActionButton onClick={() => setShowAssetSwitchWarning(false)}>知道了</ActionButton></div></ModalFrame>}
+      {showAssetSwitchWarning && <ModalFrame ariaLabel="请先完成编辑" title="请先完成编辑" onClose={() => { if (!savingHoldings) { setPendingAsset(null); setShowAssetSwitchWarning(false); } }}><p className="text-secondary type-body">请先完成当前编辑，再切换币种。</p><div className="mt-5 flex justify-end gap-2"><ActionButton variant="secondary" onClick={() => { if (savingHoldings) return; setPendingAsset(null); setShowAssetSwitchWarning(false); }} disabled={savingHoldings}>取消</ActionButton><ActionButton onClick={() => void saveAndLeaveAssetSwitch()} disabled={savingHoldings || !pendingAsset}>{savingHoldings ? "保存中…" : "保存并离开"}</ActionButton></div></ModalFrame>}
       {pendingDeleteProductId && <ModalFrame ariaLabel="删除产品" title="删除产品" onClose={() => setPendingDeleteProductId(null)}><p className="text-secondary type-body">删除后暂不在列表中展示；已有持仓和产品资料会保留，是否继续？</p><div className="mt-5 flex justify-end gap-2"><ActionButton variant="secondary" onClick={() => setPendingDeleteProductId(null)}>取消</ActionButton><ActionButton variant="danger" onClick={() => deleteDraftProduct(pendingDeleteProductId)}>删除产品</ActionButton></div></ModalFrame>}
     </main>
   );

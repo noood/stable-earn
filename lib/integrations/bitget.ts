@@ -45,6 +45,26 @@ type BitgetResponse<Data> = {
   data?: Data;
 };
 
+type BitgetAssetPage = {
+  resultList?: BitgetAssetRow[];
+  endId?: string;
+};
+
+type BitgetAssetPageDiagnostic = {
+  page: number;
+  requestedLimit: number;
+  rowCount: number;
+  responseKeys: string[];
+  endId: string | null;
+};
+
+type BitgetAssetCollection = {
+  rows: BitgetAssetRow[];
+  complete: boolean;
+  pageCount: number;
+  pages: BitgetAssetPageDiagnostic[];
+};
+
 export type BitgetSavingsSnapshot = {
   rates: LiveRate[];
   holdings: Record<string, number>;
@@ -65,6 +85,9 @@ const baseProductIds = {
   USDGO: ["bg-usdgo"],
 } as const;
 
+const bitgetAssetPageSize = 100;
+const maxBitgetAssetPages = 50;
+
 type SupportedAsset = keyof typeof baseProductIds;
 
 export async function fetchBitgetSavingsSnapshot(
@@ -80,11 +103,7 @@ export async function fetchBitgetSavingsSnapshot(
       new URLSearchParams({ coin: asset, filter: "available_and_held" }),
       credentials,
     ))),
-    Promise.allSettled([signedGet<{ resultList?: BitgetAssetRow[] }>(
-      "/api/v2/earn/savings/assets",
-      new URLSearchParams({ periodType: "flexible", limit: "100" }),
-      credentials,
-    )]),
+    Promise.allSettled([fetchBitgetAssetPages(credentials)]),
   ]);
   const assetsResult = assetResults[0];
   const failedProduct = productResults.find((result) => result.status === "rejected");
@@ -96,7 +115,8 @@ export async function fetchBitgetSavingsSnapshot(
   const fetchedAt = new Date().toISOString();
   const rates: BitgetSavingsSnapshot["rates"] = [];
   const productRows = productResults.flatMap((result) => result.status === "fulfilled" ? result.value.data ?? [] : []);
-  const assetRows = assetsResult.status === "fulfilled" ? assetsResult.value.data?.resultList ?? [] : [];
+  const assetCollection = assetsResult.status === "fulfilled" ? assetsResult.value : null;
+  const assetRows = assetCollection?.rows ?? [];
 
   // Temporary, sanitized trace for comparing Bitget's product-list IDs with
   // the IDs returned by the assets/holdings endpoint. Keep only controlled
@@ -120,6 +140,11 @@ export async function fetchBitgetSavingsSnapshot(
   // credentials, signatures, request headers, or the full upstream payload.
   syncDiagnostic("bitget_assets_rows", {
     fetchedAt,
+    requestedLimit: bitgetAssetPageSize,
+    pageCount: assetCollection?.pageCount ?? 0,
+    rowCount: assetRows.length,
+    complete: assetCollection?.complete ?? false,
+    pages: assetCollection?.pages ?? [],
     rows: assetRows
       .filter((row) => ["USDT", "USDC", "USDGO"].includes(row.productCoin ?? ""))
       .map((row) => ({
@@ -181,13 +206,22 @@ export async function fetchBitgetSavingsSnapshot(
           holdings[externalProductId] = (holdings[externalProductId] ?? 0) + finiteNumber(row.holdAmount);
         });
       }
-      // An absent position row is not proof of a zero balance. Leave that
-      // product out so the dashboard can keep the last successful API cache
-      // instead of presenting an API-synced 0. This is per offer, not per
-      // coin, so a missing 0–300 row cannot consume the 0–100000 row.
-      for (const rate of assetRates) {
-        if (!matchingRows.some((row, index) => bitgetRowExternalId(row, index) === rate.externalProductId)) {
-          missingHoldingAssets.push(`${asset}:${rate.externalProductId ?? "unknown"}`);
+      // Bitget's assets endpoint is a paged list of current holdings, not a
+      // copy of the product list. Once every page has been read, an offer
+      // absent from this list is an authoritative zero. Before pagination is
+      // complete, keep it unknown so a truncated response cannot erase a
+      // previously known holding.
+      if (assetCollection?.complete) {
+        for (const rate of assetRates) {
+          if (!matchingRows.some((row, index) => bitgetRowExternalId(row, index) === rate.externalProductId)) {
+            holdings[rate.externalProductId ?? rate.productId] = 0;
+          }
+        }
+      } else {
+        for (const rate of assetRates) {
+          if (!matchingRows.some((row, index) => bitgetRowExternalId(row, index) === rate.externalProductId)) {
+            missingHoldingAssets.push(`${asset}:${rate.externalProductId ?? "unknown"}`);
+          }
         }
       }
     }
@@ -206,13 +240,63 @@ export async function fetchBitgetSavingsSnapshot(
     holdings,
     sync: {
       products: requiredProductResults.every((result) => result.status === "fulfilled") && missingRequiredAssets.length === 0,
-      holdings: assetsResult.status === "fulfilled" && missingHoldingAssets.length === 0,
+      holdings: assetsResult.status === "fulfilled" && assetCollection?.complete === true && missingHoldingAssets.length === 0,
       productDiagnostic: failedRequiredProduct ? endpointDiagnostic(failedRequiredProduct.reason) : missingRequiredAssets.length > 0 ? `missing_${missingRequiredAssets.join("_")}` : undefined,
       holdingsDiagnostic: assetsResult.status === "rejected"
         ? endpointDiagnostic(assetsResult.reason)
-        : missingHoldingAssets.length > 0 ? `missing_${missingHoldingAssets.join("_")}` : undefined,
+        : !assetCollection?.complete ? "pagination_incomplete" : missingHoldingAssets.length > 0 ? `missing_${missingHoldingAssets.join("_")}` : undefined,
     },
   };
+}
+
+async function fetchBitgetAssetPages(credentials: BitgetCredentials): Promise<BitgetAssetCollection> {
+  const rows: BitgetAssetRow[] = [];
+  const pages: BitgetAssetPageDiagnostic[] = [];
+  const seenEndIds = new Set<string>();
+  let endId: string | undefined;
+  let complete = false;
+
+  for (let page = 1; page <= maxBitgetAssetPages; page += 1) {
+    const query = new URLSearchParams({ periodType: "flexible", limit: String(bitgetAssetPageSize) });
+    if (endId) query.set("idLessThan", endId);
+    const response = await signedGet<BitgetAssetPage>(
+      "/api/v2/earn/savings/assets",
+      query,
+      credentials,
+    );
+    const data = response.data ?? {};
+    const pageRows = Array.isArray(data.resultList) ? data.resultList : [];
+    const nextEndId = normalizeExternalProductId(data.endId);
+    rows.push(...pageRows);
+    pages.push({
+      page,
+      requestedLimit: bitgetAssetPageSize,
+      rowCount: pageRows.length,
+      responseKeys: Object.keys(data).sort(),
+      endId: nextEndId ?? null,
+    });
+
+    // No endId means Bitget has no next page. A short page is also terminal;
+    // this protects us from an upstream response that repeats a terminal
+    // cursor instead of omitting it.
+    if (!nextEndId || pageRows.length < bitgetAssetPageSize) {
+      complete = true;
+      break;
+    }
+    if (seenEndIds.has(nextEndId)) break;
+    seenEndIds.add(nextEndId);
+    endId = nextEndId;
+  }
+
+  syncDiagnostic("bitget_assets_pagination", {
+    requestedLimit: bitgetAssetPageSize,
+    pageCount: pages.length,
+    rowCount: rows.length,
+    complete,
+    pages,
+  }, !complete);
+
+  return { rows, complete, pageCount: pages.length, pages };
 }
 
 function normalizeTiers(rows: BitgetApyRow[] | undefined) {

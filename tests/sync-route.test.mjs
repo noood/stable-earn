@@ -273,15 +273,14 @@ test("manual cooldown must not hide the previous total failure", async () => {
   assert.ok(response.holdingFallbacks["bg-usdc"]);
 });
 
-test("successful sparse Bitget response cannot turn an absent holding into zero", async () => {
+test("complete sparse Bitget response treats an absent holding as zero", async () => {
   const f = fixture();
-  const sourceTime = f.now();
   await f.refresh();
   f.step("sparse");
   await f.refresh();
   const response = await f.read();
-  assert.equal(response.holdingUpdates["bg-usdc"], 299.64);
-  assert.equal(response.holdingFallbacks["bg-usdc"], sourceTime);
+  assert.equal(response.holdingUpdates["bg-usdc"], 0);
+  assert.equal(response.holdingFallbacks["bg-usdc"], undefined);
   assert.deepEqual(response.failures, []);
 });
 

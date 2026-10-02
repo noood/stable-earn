@@ -72,9 +72,13 @@ type BinanceTier = {
 export type BinanceFlexibleSnapshot = {
   rates: LiveRate[];
   holdings: Record<string, number>;
+  productListsComplete: boolean;
+  positionListsComplete: boolean;
 };
 
-export type BinanceLockedSnapshot = BinanceFlexibleSnapshot & {
+export type BinanceLockedSnapshot = {
+  rates: LiveRate[];
+  holdings: Record<string, number>;
   positions: Array<Omit<HoldingPosition, "productId" | "updatedAt" | "source"> & {
     sourceProductId: string;
     asset: Product["asset"];
@@ -105,7 +109,7 @@ export async function fetchBinanceFlexibleSnapshot(
   const accountConfig = accounts[account];
   const fetchedAt = new Date().toISOString();
   const results = await Promise.all(assets.map(async (asset) => {
-    const [products, positions] = await Promise.all([
+    const [productPage, positionPage] = await Promise.all([
       signedGet<PageResponse<FlexibleProductRow>>(
         "/sapi/v1/simple-earn/flexible/list",
         { asset, current: 1, size: 100 },
@@ -118,6 +122,10 @@ export async function fetchBinanceFlexibleSnapshot(
       ),
     ]);
 
+    const [products, positions] = await Promise.all([
+      collectBinancePages("/sapi/v1/simple-earn/flexible/list", productPage, credentials, { asset }),
+      collectBinancePages("/sapi/v1/simple-earn/flexible/position", positionPage, credentials, { asset }),
+    ]);
     const product = products.rows?.find((row) => row.asset === asset) ?? products.rows?.[0];
     const positionRows = positions.rows?.filter((row) => row.asset === asset) ?? [];
     const position = positionRows[0];
@@ -153,12 +161,16 @@ export async function fetchBinanceFlexibleSnapshot(
       },
       productId: accountConfig.productIds[asset],
       holding,
+      productListComplete: products.complete,
+      positionListComplete: positions.complete,
     };
   }));
 
   return {
     rates: results.map((result) => result.rate),
     holdings: Object.fromEntries(results.map((result) => [result.productId, result.holding])),
+    productListsComplete: results.every((result) => result.productListComplete),
+    positionListsComplete: results.every((result) => result.positionListComplete),
   };
 }
 
@@ -441,6 +453,7 @@ async function collectBinancePages<Row>(
   path: string,
   firstPage: PageResponse<Row>,
   credentials: Credentials,
+  baseParams: Record<string, string | number> = {},
 ) {
   const rows = [...(firstPage.rows ?? [])];
   const reportedTotal = finiteOptional(firstPage.total);
@@ -453,7 +466,7 @@ async function collectBinancePages<Row>(
   while (current < (totalPages ?? maxBinancePages)
     && (totalPages !== undefined || lastPageSize === binancePageSize)) {
     current += 1;
-    const page = await signedGet<PageResponse<Row>>(path, { current, size: binancePageSize }, credentials);
+    const page = await signedGet<PageResponse<Row>>(path, { ...baseParams, current, size: binancePageSize }, credentials);
     const pageRows = page.rows ?? [];
     rows.push(...pageRows);
     lastPageSize = pageRows.length;

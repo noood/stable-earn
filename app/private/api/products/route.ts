@@ -366,17 +366,23 @@ async function buildPrivatePayload(
   const fallbackRates = cached?.payload?.rates ?? [];
   const completeAccountIds = [
     binanceGlobalStatus === "synced"
+      && binanceGlobal?.productListsComplete
+      && binanceGlobal?.positionListsComplete
       && binanceGlobal?.lockedProductListComplete
       && binanceGlobal?.lockedPositionListComplete ? "binance-global" : null,
     binanceBahrainStatus === "synced"
+      && binanceBahrain?.productListsComplete
+      && binanceBahrain?.positionListsComplete
       && binanceBahrain?.lockedProductListComplete
       && binanceBahrain?.lockedPositionListComplete ? "binance-bahrain" : null,
     // Bybit's public product rows share this account id with private rows, so
     // only treat the account as complete when both private and public reads
     // succeeded. A public endpoint failure must not archive a cached product.
     bybitGlobalStatus === "synced" && publicFailures.length === 0 ? "bybit-global" : null,
-    // Bitget's sparse holding response does not prove zero for absent rows.
-    // Keep explicit values (including 0), but do not infer an empty account.
+    // Bitget's holding response is sparse. The adapter marks the account
+    // complete only after every assets page has been read, so an absent
+    // flexible offer is then an authoritative zero.
+    bitgetStatus === "synced" && bitget?.sync.products && bitget?.sync.holdings ? "bitget-global" : null,
     okxResult.status === "synced" ? "okx-global" : null,
   ].filter((accountId): accountId is string => Boolean(accountId));
   const catalog = await prepareProductCatalogSync(db, userId, freshRates, freshHoldingUpdates, completeAccountIds);
@@ -635,6 +641,8 @@ async function fetchBinanceAccountSnapshot(
     sync: { flexible: flexible.status === "fulfilled", locked: locked.status === "fulfilled" },
     lockedProductListComplete: locked.status === "fulfilled" ? locked.value.productListComplete : false,
     lockedPositionListComplete: locked.status === "fulfilled" ? locked.value.positionListComplete : false,
+    productListsComplete: flexible.status === "fulfilled" ? flexible.value.productListsComplete : false,
+    positionListsComplete: flexible.status === "fulfilled" ? flexible.value.positionListsComplete : false,
   };
 }
 
