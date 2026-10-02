@@ -1,6 +1,7 @@
 import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import { buildProductIdentity } from "@/lib/product-identity";
 import type { Product } from "@/lib/domain";
+import { apiAssetsFor } from "@/lib/platform-capabilities";
 
 type BybitCredentials = {
   apiKey: string;
@@ -53,12 +54,16 @@ const productIds = {
 
 type SupportedAsset = keyof typeof productIds;
 
-const supportedFixedAssets = new Set<Product["asset"]>(["USDT", "USDC", "USDGO", "BTC"]);
+const supportedFixedAssets = new Set<Product["asset"]>(apiAssetsFor("bybit-global", "fixed", "productApi"));
 
 export async function fetchBybitFlexibleHoldings(
   credentials: BybitCredentials,
   account: "global" | "eu",
-  assets: readonly SupportedAsset[] = ["USDT", "USDC"],
+  assets: readonly SupportedAsset[] = apiAssetsFor(
+    account === "global" ? "bybit-global" : "bybit-eu",
+    "flexible",
+    "holdingApi",
+  ).filter((asset): asset is SupportedAsset => asset in productIds),
 ) {
   const holdings: Record<string, number> = {};
   const results = await Promise.allSettled(assets.map(async (asset) => {

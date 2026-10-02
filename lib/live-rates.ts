@@ -2,6 +2,7 @@ import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import type { EligibilityStatus, Product, ProductAvailability, RateCoverage } from "@/lib/domain";
 import { buildProductIdentity } from "@/lib/product-identity";
 import { syncDiagnostic } from "@/lib/sync-diagnostics";
+import { publicProductAssetsFor } from "@/lib/platform-capabilities";
 
 export type LiveRate = {
   productId: string;
@@ -65,10 +66,16 @@ type BybitFlexibleRow = {
   [key: string]: unknown;
 };
 
-const bybitEndpoints: BybitEndpoint[] = [
+const bybitEndpointDefinitions: BybitEndpoint[] = [
+  { bases: ["https://api.bybit.com", "https://api.bytick.com"], platform: "Bybit.com", productId: "by-g-usdt", coin: "USDT", label: "Bybit 官方公开 API" },
   { bases: ["https://api.bybit.com", "https://api.bytick.com"], platform: "Bybit.com", productId: "by-g-usdc", coin: "USDC", label: "Bybit 官方公开 API" },
   { bases: ["https://api.bybit.eu"], platform: "Bybit EU", productId: "by-eu-usdt", coin: "USDT", label: "Bybit EU 官方公开 API" },
 ];
+
+const bybitEndpoints = bybitEndpointDefinitions.filter((endpoint) => {
+  const accountId = endpoint.platform === "Bybit.com" ? "bybit-global" : "bybit-eu";
+  return publicProductAssetsFor(accountId, "flexible").includes(endpoint.coin as "USDT" | "USDC" | "USDGO" | "BTC");
+});
 
 export async function fetchPublicRateSnapshot() {
   const jobs = [
@@ -83,9 +90,8 @@ export async function fetchPublicRateSnapshot() {
 
 export function summarizePublicFailures(failures: string[]) {
   const expectedAssets: Record<string, string[]> = {
-    "Bybit.com": ["USDT", "USDC"],
-    "Bybit EU": ["USDT", "USDC"],
-    OKX: ["USDT", "USDC", "BTC"],
+    "Bybit.com": publicProductAssetsFor("bybit-global", "flexible"),
+    "Bybit EU": publicProductAssetsFor("bybit-eu", "flexible"),
   };
   const grouped = new Map<string, Set<string>>();
 

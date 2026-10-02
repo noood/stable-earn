@@ -1,6 +1,7 @@
 import { exchangeFetch, logExchangePayload, readExchangeJson, readExchangeText } from "@/lib/exchange-fetch";
 import { buildProductIdentity } from "@/lib/product-identity";
 import { syncDiagnostic } from "@/lib/sync-diagnostics";
+import { apiAssetsFor } from "@/lib/platform-capabilities";
 import type { LiveRate } from "@/lib/live-rates";
 
 type BitgetCredentials = {
@@ -92,7 +93,7 @@ type SupportedAsset = keyof typeof baseProductIds;
 
 export async function fetchBitgetSavingsSnapshot(
   credentials: BitgetCredentials,
-  assets: readonly SupportedAsset[] = ["USDT", "USDC", "USDGO"],
+  assets: readonly SupportedAsset[] = apiAssetsFor("bitget-global", "flexible", "productApi") as SupportedAsset[],
 ): Promise<BitgetSavingsSnapshot> {
   // Bitget documents `coin` as required for the product-list endpoint. Fetch
   // each monitored coin separately so an empty or unavailable coin cannot
@@ -229,17 +230,14 @@ export async function fetchBitgetSavingsSnapshot(
 
   syncDiagnostic("bitget_holdings_normalized", { holdings });
 
-  // USDGO is still queried for diagnostics, but its current absence is a known
-  // manually maintained product and not a failure of the USDT/USDC connector.
-  const requiredProductResults = productResults.filter((_, index) => assets[index] !== "USDGO");
-  const failedRequiredProduct = requiredProductResults.find((result) => result.status === "rejected");
-  const missingRequiredAssets = assets.filter((asset) => asset !== "USDGO" && !rates.some((rate) => rate.catalog?.asset === asset));
+  const failedRequiredProduct = productResults.find((result) => result.status === "rejected");
+  const missingRequiredAssets = assets.filter((asset) => !rates.some((rate) => rate.catalog?.asset === asset));
 
   return {
     rates,
     holdings,
     sync: {
-      products: requiredProductResults.every((result) => result.status === "fulfilled") && missingRequiredAssets.length === 0,
+      products: productResults.every((result) => result.status === "fulfilled") && missingRequiredAssets.length === 0,
       holdings: assetsResult.status === "fulfilled" && assetCollection?.complete === true && missingHoldingAssets.length === 0,
       productDiagnostic: failedRequiredProduct ? endpointDiagnostic(failedRequiredProduct.reason) : missingRequiredAssets.length > 0 ? `missing_${missingRequiredAssets.join("_")}` : undefined,
       holdingsDiagnostic: assetsResult.status === "rejected"

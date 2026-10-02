@@ -3,6 +3,7 @@ import { buildProductIdentity } from "@/lib/product-identity";
 import type { LiveRate } from "@/lib/live-rates";
 import type { HoldingPosition, Product } from "@/lib/domain";
 import { syncDiagnostic } from "@/lib/sync-diagnostics";
+import { apiAssetsFor } from "@/lib/platform-capabilities";
 
 type Credentials = {
   apiKey: string;
@@ -104,7 +105,11 @@ type SupportedAsset = keyof typeof accounts.global.productIds;
 export async function fetchBinanceFlexibleSnapshot(
   credentials: Credentials,
   account: BinanceAccount = "global",
-  assets: readonly SupportedAsset[] = ["USDT", "USDC"],
+  assets: readonly SupportedAsset[] = apiAssetsFor(
+    account === "global" ? "binance-global" : "binance-bahrain",
+    "flexible",
+    "productApi",
+  ) as SupportedAsset[],
 ): Promise<BinanceFlexibleSnapshot> {
   const accountConfig = accounts[account];
   const fetchedAt = new Date().toISOString();
@@ -183,7 +188,11 @@ export async function fetchBinanceFlexibleSnapshot(
 export async function fetchBinanceLockedSnapshot(
   credentials: Credentials,
   account: BinanceAccount = "global",
-  assets: readonly string[] = ["USDT", "USDC", "USDGO", "BTC"],
+  assets: readonly string[] = apiAssetsFor(
+    account === "global" ? "binance-global" : "binance-bahrain",
+    "fixed",
+    "productApi",
+  ),
 ): Promise<BinanceLockedSnapshot> {
   const accountConfig = accounts[account];
   const supported = new Set(assets.map((asset) => asset.toUpperCase()));

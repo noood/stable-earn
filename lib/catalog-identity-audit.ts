@@ -13,6 +13,9 @@ type CatalogAuditRow = {
 type ProductReferenceRow = {
   owner_id: string;
   product_id: string;
+  amount?: number | null;
+  confirmed_apr?: number | null;
+  purchase_date?: string | null;
 };
 
 type SnapshotRow = {
@@ -25,7 +28,14 @@ export type CatalogIdentityAudit = {
   duplicateIdentityGroups: CatalogAuditRow[][];
   activeCanonicalGroups: CatalogAuditRow[][];
   generatedProductIds: CatalogAuditRow[];
-  orphanReferences: Array<{ source: string; ownerId: string; productId: string }>;
+  orphanReferences: Array<{
+    source: string;
+    ownerId: string;
+    productId: string;
+    amount?: number | null;
+    confirmedApr?: number | null;
+    purchaseDate?: string | null;
+  }>;
   summary: {
     owners: number;
     catalogRows: number;
@@ -47,25 +57,36 @@ export type CatalogIdentityAudit = {
 export async function auditCatalogIdentities(db: D1Database, ownerId?: string): Promise<CatalogIdentityAudit> {
   const scope = ownerId ? " WHERE owner_id = ?" : "";
   const args = ownerId ? [ownerId] : [];
-  const [catalogResult, holdingResult, positionResult, overrideResult, hiddenResult, hiddenSeedResult, snapshotResult] = await Promise.all([
+  const [catalogResult, userProductResult, holdingResult, positionResult, overrideResult, hiddenResult, hiddenSeedResult, snapshotResult] = await Promise.all([
     db.prepare(`SELECT owner_id, product_id, canonical_product_id, identity_key,
         identity_fingerprint, status, payload
         FROM product_catalog${scope} ORDER BY owner_id, identity_key, product_id`).bind(...args).all<CatalogAuditRow>(),
-    db.prepare(`SELECT user_id AS owner_id, product_id FROM holdings${ownerId ? " WHERE user_id = ?" : ""}`).bind(...args).all<ProductReferenceRow>(),
-    db.prepare(`SELECT user_id AS owner_id, product_id FROM holding_positions${ownerId ? " WHERE user_id = ?" : ""}`).bind(...args).all<ProductReferenceRow>(),
-    db.prepare(`SELECT user_id AS owner_id, product_id FROM product_overrides${ownerId ? " WHERE user_id = ?" : ""}`).bind(...args).all<ProductReferenceRow>(),
+    db.prepare(`SELECT user_id AS owner_id, product_id FROM user_products${ownerId ? " WHERE user_id = ?" : ""}`).bind(...args).all<ProductReferenceRow>(),
+    db.prepare(`SELECT user_id AS owner_id, product_id, amount FROM holdings${ownerId ? " WHERE user_id = ?" : ""}`).bind(...args).all<ProductReferenceRow>(),
+    db.prepare(`SELECT user_id AS owner_id, product_id, amount FROM holding_positions${ownerId ? " WHERE user_id = ?" : ""}`).bind(...args).all<ProductReferenceRow>(),
+    db.prepare(`SELECT user_id AS owner_id, product_id, confirmed_apr, purchase_date FROM product_overrides${ownerId ? " WHERE user_id = ?" : ""}`).bind(...args).all<ProductReferenceRow>(),
     db.prepare(`SELECT user_id AS owner_id, product_id FROM hidden_products${ownerId ? " WHERE user_id = ?" : ""}`).bind(...args).all<ProductReferenceRow>(),
     db.prepare(`SELECT user_id AS owner_id, product_id FROM hidden_seed_products${ownerId ? " WHERE user_id = ?" : ""}`).bind(...args).all<ProductReferenceRow>(),
     db.prepare(`SELECT owner_id, payload FROM sync_snapshots WHERE cache_key = 'private-products'${ownerId ? " AND owner_id = ?" : ""}`).bind(...args).all<SnapshotRow>(),
   ]);
   const rows = catalogResult.results ?? [];
-  const catalogKeys = new Set(rows.map((row) => `${row.owner_id}\u0000${row.product_id}`));
+  const catalogKeys = new Set([
+    ...rows.map((row) => `${row.owner_id}\u0000${row.product_id}`),
+    ...(userProductResult.results ?? []).map((row) => `${row.owner_id}\u0000${row.product_id}`),
+  ]);
   const orphanReferences: CatalogIdentityAudit["orphanReferences"] = [];
 
   const checkReferences = (source: string, references: ProductReferenceRow[]) => {
     for (const reference of references) {
       if (!catalogKeys.has(`${reference.owner_id}\u0000${reference.product_id}`)) {
-        orphanReferences.push({ source, ownerId: reference.owner_id, productId: reference.product_id });
+        orphanReferences.push({
+          source,
+          ownerId: reference.owner_id,
+          productId: reference.product_id,
+          ...(reference.amount !== undefined ? { amount: reference.amount } : {}),
+          ...(reference.confirmed_apr !== undefined ? { confirmedApr: reference.confirmed_apr } : {}),
+          ...(reference.purchase_date !== undefined ? { purchaseDate: reference.purchase_date } : {}),
+        });
       }
     }
   };

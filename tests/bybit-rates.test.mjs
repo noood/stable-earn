@@ -11,21 +11,26 @@ test("Bybit public flexible APR keeps the complete tier ladder", async () => {
         headers: new Headers(),
         url,
       }),
-      readExchangeJson: async () => ({
-        retCode: 0,
-        result: {
-          list: [{
-            productId: "2",
-            coin: "USDC",
-            status: "Available",
-            estimateApr: "2.44%",
-            tierAprDetails: [
-              { min: "0", max: "200", estimateApr: "5.44%" },
-              { min: "200", max: "-1", estimateApr: "2.44%" },
-            ],
-          }],
-        },
-      }),
+      readExchangeJson: async (response) => {
+        const coin = new URL(response.url).searchParams.get("coin");
+        return {
+          retCode: 0,
+          result: {
+            list: [{
+              productId: coin === "USDC" ? "2" : "1",
+              coin,
+              status: "Available",
+              estimateApr: coin === "USDC" ? "2.44%" : "2.1%",
+              tierAprDetails: coin === "USDC"
+                ? [
+                  { min: "0", max: "200", estimateApr: "5.44%" },
+                  { min: "200", max: "-1", estimateApr: "2.44%" },
+                ]
+                : [{ min: "0", max: "-1", estimateApr: "2.1%" }],
+            }],
+          },
+        };
+      },
     },
     "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
   });
@@ -34,6 +39,7 @@ test("Bybit public flexible APR keeps the complete tier ladder", async () => {
   const rate = result.rates.find((item) => item.productId === "by-g-usdc");
 
   assert.equal(result.failures.length, 0);
+  assert.ok(result.rates.find((item) => item.productId === "by-g-usdt"));
   assert.ok(rate);
   assert.equal(rate.apr, 5.44);
   assert.deepEqual(rate.tiers, [
