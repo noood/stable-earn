@@ -75,6 +75,37 @@ test("Bybit public flexible APR keeps all product IDs and each complete tier lad
   assert.ok(result.rates.find((item) => item.identityKey === "bybit-eu:USDT:flexible:eu-usdt"));
 });
 
+test("Bybit EU fixed product probe checks the public endpoint once and distinguishes reused IDs by duration", async () => {
+  const requests = [];
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => {
+        requests.push(new URL(url));
+        return { ok: true, status: 200, headers: new Headers(), url };
+      },
+      readExchangeJson: async () => ({
+        retCode: 0,
+        result: { list: [
+          { productId: "same-id", coin: "USDT", duration: "7d", status: "Available", tieredApyList: [{ min: "0", max: "100", apy: "7%" }] },
+          { productId: "same-id", coin: "USDT", duration: "90d", status: "Available", tieredApyList: [{ min: "0", max: "-1", apy: "4%" }] },
+          { productId: "usdgo-id", coin: "USDGO", duration: "30d", status: "Available", tieredApyList: [] },
+        ] },
+      }),
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { probeBybitFixedProducts } = load("@/lib/integrations/bybit");
+
+  const rows = await probeBybitFixedProducts("bybit-eu");
+
+  assert.deepEqual(rows.map((row) => row.externalProductId), ["same-id@7d", "same-id@90d", "usdgo-id@30d"]);
+  assert.deepEqual(requests.map((url) => [url.hostname, url.pathname]), [
+    ["api.bybit.eu", "/v5/earn/fixed-term/product"],
+  ]);
+  assert.equal(rows[0].tierCount, 1);
+  assert.equal(JSON.stringify(rows).includes("7%"), false);
+});
+
 test("Bybit fixed sync emits a sanitized product-to-position ID summary", async () => {
   const diagnostics = [];
   const load = moduleLoader({

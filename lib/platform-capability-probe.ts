@@ -1,6 +1,6 @@
 import { fetchBinanceFlexibleSnapshot, fetchBinanceLockedSnapshot } from "@/lib/integrations/binance";
 import { probeBitgetAssets } from "@/lib/integrations/bitget";
-import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, fetchBybitShortFixedSnapshots, probeBybitFlexibleProducts } from "@/lib/integrations/bybit";
+import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, fetchBybitShortFixedSnapshots, probeBybitFixedProducts, probeBybitFlexibleProducts } from "@/lib/integrations/bybit";
 import { fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
 import { apiAssetsFor, monitoredAssets, platformCapabilities, type CapabilityProductType, type PlatformApiMode } from "@/lib/platform-capabilities";
 import { collectSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
@@ -116,6 +116,34 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
         })());
       }
     }
+
+    jobs.push((async () => {
+      try {
+        const rows = await probeBybitFixedProducts("bybit-eu");
+        for (const asset of monitoredAssets) {
+          const assetRows = rows.filter((row) => row.coin === asset);
+          setResult("bybit-eu", asset, "fixed", "productApi", {
+            status: assetRows.length ? "returned" : "empty",
+            ids: assetRows.map((row) => row.externalProductId),
+            rows: assetRows.map((row) => ({
+              id: row.externalProductId,
+              status: row.status ?? undefined,
+              duration: row.duration,
+              tierCount: row.tierCount,
+              isVip: row.isVip,
+              specialUserGroupRequired: row.specialUserGroupRequired,
+            })),
+            rowCount: assetRows.length,
+            complete: true,
+            note: "本次通过公开接口只读检查；Bybit EU 定期常规同步尚未接入。",
+          });
+        }
+      } catch {
+        for (const asset of monitoredAssets) {
+          setResult("bybit-eu", asset, "fixed", "productApi", { status: "error", complete: false });
+        }
+      }
+    })());
 
     for (const [accountId, region] of [["binance-global", "global"], ["binance-bahrain", "bahrain"]] as const) {
       const credential = credentials[accountId];

@@ -52,6 +52,9 @@ function loadProbe() {
       probeBybitFlexibleProducts: async (accountId, asset) => asset === "USDGO"
         ? []
         : [{ productId: `by-flex-${accountId}-${asset}`, status: "Available", tierCount: 1 }],
+      probeBybitFixedProducts: async (accountId) => accountId === "bybit-eu"
+        ? [{ externalProductId: "eu-fixed-1@90d", coin: "USDC", duration: "90d", status: "Available", tierCount: 1, isVip: false, specialUserGroupRequired: false }]
+        : [],
       fetchBybitFlexibleHoldings: async (_credential, account, assets) => {
         const accountId = account === "eu" ? "bybit-eu" : "bybit-global";
         return {
@@ -112,6 +115,8 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   assert.equal(scope("bybit-global", "USDGO", "flexible").holdingApi.status, "returned");
   assert.equal(scope("bybit-eu", "USDC", "flexible").productApi.status, "returned");
   assert.equal(scope("bybit-eu", "USDC", "flexible").holdingApi.status, "returned");
+  assert.equal(scope("bybit-eu", "USDC", "fixed").productApi.status, "returned");
+  assert.equal(scope("bybit-eu", "USDC", "fixed").holdingApi.status, "not_integrated");
   assert.equal(scope("bitget-global", "BTC", "flexible").productApi.status, "returned");
   assert.equal(scope("bitget-global", "BTC", "flexible").holdingApi.status, "returned");
   assert.equal(scope("bitget-global", "USDT", "fixed").productApi.status, "returned");

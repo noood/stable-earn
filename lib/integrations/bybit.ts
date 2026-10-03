@@ -135,6 +135,33 @@ export async function probeBybitFlexibleProducts(accountId: "bybit-global" | "by
     }));
 }
 
+/** Public, read-only check for Bybit fixed-term product/APR rows by account region. */
+export async function probeBybitFixedProducts(accountId: "bybit-global" | "bybit-eu") {
+  const baseUrls = accountId === "bybit-eu" ? ["https://api.bybit.eu"] : bybitGlobalApiBases;
+  const response = await publicGet<BybitFixedProductRow>(
+    "/v5/earn/fixed-term/product",
+    new URLSearchParams(),
+    baseUrls,
+  );
+  return (response.result?.list ?? [])
+    .filter((row) => supportedFixedAssets.has(row.coin?.toUpperCase() as Product["asset"]))
+    .flatMap((row) => {
+      const productId = row.productId?.trim();
+      const duration = normalizeBybitDuration(row.duration);
+      const coin = row.coin?.toUpperCase() as Product["asset"];
+      if (!productId || !duration || !supportedFixedAssets.has(coin)) return [];
+      return [{
+        externalProductId: `${productId}@${duration}`,
+        coin,
+        duration,
+        status: row.status ?? null,
+        tierCount: fixedProductTiers(row).length,
+        isVip: Boolean(row.isVip),
+        specialUserGroupRequired: Boolean(row.specialUserGroupRequired),
+      }];
+    });
+}
+
 export async function fetchBybitShortFixedSnapshots(credentials: BybitCredentials) {
   const [productResult, positionResult] = await Promise.allSettled([
     publicGet<BybitFixedProductRow>(
