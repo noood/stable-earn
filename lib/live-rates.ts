@@ -9,6 +9,8 @@ export type LiveRate = {
   canonicalProductId?: string;
   name?: string;
   apr: number;
+  /** Shape of the rate data returned by the product API, for diagnostics. */
+  rateShape?: "single_rate" | "tiered_rate" | "no_rate";
   tierAprs?: number[];
   tiers?: Array<{ min: number; max: number | null; apr: number }>;
   fetchedAt: string;
@@ -152,6 +154,7 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate[]> {
           productId: identity.identityKey,
           ...identity,
           apr,
+          rateShape: tiers.length > 0 ? "tiered_rate" : Number.isFinite(baseApr) ? "single_rate" : "no_rate",
           ...(tiers.length > 0 ? { tiers } : {}),
           fetchedAt,
           sourceLabel: endpoint.label,

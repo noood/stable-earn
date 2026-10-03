@@ -1,12 +1,14 @@
 import { fetchBinanceFlexibleSnapshot, fetchBinanceLockedSnapshot } from "@/lib/integrations/binance";
 import { probeBitgetAssets } from "@/lib/integrations/bitget";
-import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, fetchBybitShortFixedSnapshots, probeBybitFixedProducts, probeBybitFlexibleProducts } from "@/lib/integrations/bybit";
+import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, fetchBybitShortFixedSnapshots, probeBybitFixedHoldings, probeBybitFixedProducts, probeBybitFlexibleProducts } from "@/lib/integrations/bybit";
 import { fetchOkxOnchainOffers, fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
+import type { LiveRate } from "@/lib/live-rates";
 import { apiAssetsFor, monitoredAssets, platformCapabilities, type CapabilityProductType, type PlatformApiMode } from "@/lib/platform-capabilities";
 import { collectSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
 
 type ProbeCredential = { apiKey: string; apiSecret: string; passphrase?: string };
 type ProbeStatus = "not_integrated" | "not_configured" | "not_checked" | "returned" | "empty" | "partial" | "error";
+type RateShape = "single_rate" | "tiered_rate" | "no_rate";
 type SafeApiRow = {
   id: string | null;
   status?: string;
@@ -15,6 +17,7 @@ type SafeApiRow = {
   period?: string;
   duration?: string;
   tierCount?: number;
+  rateShape?: RateShape;
   eligibleForMonitoring?: boolean;
   hasPositiveHolding?: boolean;
   isVip?: boolean;
@@ -23,7 +26,6 @@ type SafeApiRow = {
   protocol?: string;
   protocolType?: string;
   term?: string;
-  apy?: string;
 };
 type ApiProbe = {
   mode: PlatformApiMode;
@@ -31,6 +33,7 @@ type ApiProbe = {
   rowCount: number | null;
   ids: string[];
   rows: SafeApiRow[];
+  rateSummary?: { singleRateRows: number; tieredRateRows: number; noRateRows: number; unknownRateRows: number };
   complete: boolean | null;
   note?: string;
 };
@@ -110,12 +113,17 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
   ) => {
     const scope = findScope(accountId, asset, productType);
     if (!scope) return;
+    const allRows = result.rows
+      ? mergeSafeApiRows(scope[field].rows, result.rows)
+      : (result.ids ?? []).map((id) => ({ id }));
+    const rows = allRows.slice(0, reportIdLimit);
     scope[field] = {
       ...scope[field],
       status: result.status,
       rowCount: result.rowCount ?? result.ids?.length ?? 0,
       ids: limitedUnique(result.ids ?? []),
-      rows: (result.rows ?? (result.ids ?? []).map((id) => ({ id }))).slice(0, reportIdLimit),
+      rows,
+      ...(field === "productApi" ? { rateSummary: summarizeRateShapes(allRows) } : {}),
       complete: result.complete ?? (result.status === "returned" || result.status === "empty"),
       ...(result.note ? { note: result.note } : {}),
     };
@@ -144,6 +152,7 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
                 id: row.productId,
                 ...(row.status ? { status: row.status } : {}),
                 ...(row.tierCount !== undefined ? { tierCount: row.tierCount } : {}),
+                rateShape: row.rateShape ?? (row.tiers?.length ? "tiered_rate" : row.apr !== undefined || row.apy !== undefined ? "single_rate" : "no_rate"),
               })),
               rowCount: rows.length,
               complete: true,
@@ -169,6 +178,7 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
               status: row.status ?? undefined,
               duration: row.duration,
               tierCount: row.tierCount,
+              rateShape: row.rateShape ?? (row.tierCount > 0 ? "tiered_rate" : row.apy !== undefined ? "single_rate" : "no_rate"),
               isVip: row.isVip,
               specialUserGroupRequired: row.specialUserGroupRequired,
             })),
@@ -199,6 +209,7 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
             setResult(accountId, asset, "flexible", "productApi", {
               status: result.productListsComplete ? rates.length ? "returned" : "empty" : "partial",
               ids: rates.map((rate) => rate.externalProductId).filter((id): id is string => Boolean(id)),
+              rows: rates.map((rate) => safeLiveRateRow(rate)),
               rowCount: rates.length,
               complete: result.productListsComplete,
               ...(!apiAssetsFor(accountId, "flexible", "productApi").includes(asset)
@@ -228,6 +239,7 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
             setResult(accountId, asset, "fixed", "productApi", {
               status: result.productListComplete ? rates.length ? "returned" : "empty" : "partial",
               ids: rates.map((rate) => rate.externalProductId).filter((id): id is string => Boolean(id)),
+              rows: rates.map((rate) => safeLiveRateRow(rate)),
               rowCount: rates.length,
               complete: result.productListComplete,
             });
@@ -280,6 +292,7 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
             setResult("bybit-global", asset, "fixed", "productApi", {
               status: result.sync.products ? rates.length ? "returned" : "empty" : "error",
               ids: rates.map((rate) => rate.externalProductId).filter((id): id is string => Boolean(id)),
+              rows: rates.map((rate) => safeLiveRateRow(rate)),
               rowCount: rates.length,
               complete: result.sync.products,
             });
@@ -334,6 +347,52 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
       }));
     }
 
+    if (!credentialReady("bybit-eu")) {
+      for (const asset of monitoredAssets) {
+        setResult("bybit-eu", asset, "fixed", "holdingApi", {
+          status: "not_configured",
+          complete: false,
+          note: "Bybit EU 定期持仓检查需要该区域带 Earn 只读权限的 API 凭证；目前仅做一次性只读检查，不会启用日常同步。",
+        });
+      }
+    } else {
+      jobs.push(withSyncPlatform("bybit-eu", async () => {
+        try {
+          const rows = await probeBybitFixedHoldings({
+            apiKey: bybitEuCredential!.apiKey,
+            apiSecret: bybitEuCredential!.apiSecret,
+            baseUrls: ["https://api.bybit.eu"],
+          });
+          for (const asset of monitoredAssets) {
+            const assetRows = rows.filter((row) => row.coin === asset);
+            const identityIncomplete = assetRows.some((row) => !row.productId || !row.duration);
+            const outputRows = assetRows.map((row) => ({
+              id: bybitFixedIdentityId(row.productId, row.duration),
+              ...(row.duration ? { duration: row.duration } : {}),
+              ...(row.status ? { status: row.status } : {}),
+              hasPositiveHolding: row.hasPositiveHolding,
+            }));
+            setResult("bybit-eu", asset, "fixed", "holdingApi", {
+              status: identityIncomplete ? "partial" : assetRows.length ? "returned" : "empty",
+              ids: outputRows.map((row) => row.id).filter((id): id is string => Boolean(id)),
+              rows: outputRows,
+              rowCount: assetRows.length,
+              complete: !identityIncomplete,
+              note: "本次签名只读检查；不会返回持仓金额，也不会启用日常同步。",
+            });
+          }
+        } catch {
+          for (const asset of monitoredAssets) {
+            setResult("bybit-eu", asset, "fixed", "holdingApi", {
+              status: "error",
+              complete: false,
+              note: "Bybit EU 定期持仓请求失败；检查凭证是否包含 Earn 只读权限。",
+            });
+          }
+        }
+      }));
+    }
+
     const bitgetCredential = credentials["bitget-global"];
     if (credentialReady("bitget-global")) {
       jobs.push(withSyncPlatform("bitget-global", async () => {
@@ -350,7 +409,7 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
             setResult("bitget-global", asset, productType, "productApi", {
               status: result.productApi.status === "error" ? "error" : productRows.length ? "returned" : "empty",
               ids: productRows.map((row) => row.productId).filter((id): id is string => Boolean(id)),
-              rows: sanitizeApiRows(productRows, "productId", false),
+              rows: sanitizeApiRows(productRows, "productId", false, "apy"),
               rowCount: productRows.length,
               complete: result.productApi.status !== "error",
               ...(productMode === "manual" ? { note: "本次为只读探测；常规同步尚未接入此范围。" } : {}),
@@ -639,23 +698,52 @@ function bybitFixedIdentityId(value: unknown, durationValue: unknown) {
   return duration && /^\d+(?:\.\d+)?[dhm]$/.test(duration) ? `${productId}@${duration}` : productId;
 }
 
-function sanitizeApiRows(rows: Array<Record<string, unknown>>, idKey: string, holding: boolean): SafeApiRow[] {
+function safeLiveRateRow(rate: LiveRate): SafeApiRow {
+  const tierCount = rate.rateShape === "single_rate" ? 0 : rate.tiers?.length ?? 0;
+  const hasBaseRate = rate.rateCoverage
+    ? rate.rateCoverage !== "unavailable"
+    : Number.isFinite(rate.apr);
+  const row: SafeApiRow = { id: rate.externalProductId ?? null };
+  if (rate.availability) row.status = rate.availability;
+  row.rateShape = rate.rateShape ?? (tierCount ? "tiered_rate" : hasBaseRate ? "single_rate" : "no_rate");
+  if (tierCount) row.tierCount = tierCount;
+  if (rate.termDays !== undefined) row.duration = String(rate.termDays);
+  return row;
+}
+
+function mergeSafeApiRows(previous: SafeApiRow[], incoming: SafeApiRow[]) {
+  const previousById = new Map(previous.map((row) => [row.id, row]));
+  return incoming.map((row) => {
+    const old = previousById.get(row.id);
+    if (!old) return row;
+    return {
+      ...old,
+      ...row,
+      rateShape: row.rateShape ?? old.rateShape,
+      tierCount: row.tierCount ?? old.tierCount,
+    };
+  });
+}
+
+function sanitizeApiRows(rows: Array<Record<string, unknown>>, idKey: string, holding: boolean, rateKind?: "apr" | "apy"): SafeApiRow[] {
   return rows.map((row) => {
     const id = typeof row[idKey] === "string" && row[idKey] ? row[idKey] as string : null;
-    const tiers = Array.isArray(row.tiers)
-      ? row.tiers.length
-      : Array.isArray(row.tierAnnualPercentageRate)
-        ? row.tierAnnualPercentageRate.length
-        : row.tierAnnualPercentageRate && typeof row.tierAnnualPercentageRate === "object"
-          ? Object.keys(row.tierAnnualPercentageRate).length
-          : undefined;
     const safe: SafeApiRow = { id };
     if (typeof row.status === "string") safe.status = row.status;
     if (typeof row.productLevel === "string") safe.productLevel = row.productLevel;
     if (typeof row.periodType === "string") safe.periodType = row.periodType;
     if (typeof row.period === "string" || typeof row.period === "number") safe.period = String(row.period);
     if (typeof row.duration === "string" || typeof row.duration === "number") safe.duration = String(row.duration);
-    if (tiers !== undefined) safe.tierCount = tiers;
+    if (!holding) {
+      const tierCount = countRateTiers(row);
+      const tieredRateReturned = hasRateInTiers(row, rateKind);
+      const baseRateReturned = [row.apr, row.estimateApr, row.apy, row.estimateApy, row.latestAnnualPercentageRate]
+        .some((value) => safeNumber(value) !== undefined);
+      if (tierCount !== undefined) safe.tierCount = tierCount;
+      safe.rateShape = row.rateShape === "single_rate" || row.rateShape === "tiered_rate" || row.rateShape === "no_rate"
+        ? row.rateShape
+        : tieredRateReturned ? "tiered_rate" : baseRateReturned ? "single_rate" : "no_rate";
+    }
     if (typeof row.eligibleForMonitoring === "boolean") safe.eligibleForMonitoring = row.eligibleForMonitoring;
     if (typeof row.isVip === "boolean") safe.isVip = row.isVip;
     if (typeof row.specialUserGroupRequired === "boolean") safe.specialUserGroupRequired = row.specialUserGroupRequired;
@@ -666,6 +754,56 @@ function sanitizeApiRows(rows: Array<Record<string, unknown>>, idKey: string, ho
     }
     return safe;
   });
+}
+
+function countRateTiers(row: Record<string, unknown>) {
+  const raw = Array.isArray(row.tiers)
+    ? row.tiers
+    : Array.isArray(row.tierAprDetails)
+      ? row.tierAprDetails
+      : Array.isArray(row.tieredApyList)
+        ? row.tieredApyList
+        : Array.isArray(row.tierAnnualPercentageRate)
+          ? row.tierAnnualPercentageRate
+          : row.tierAnnualPercentageRate && typeof row.tierAnnualPercentageRate === "object"
+            ? Object.keys(row.tierAnnualPercentageRate)
+            : undefined;
+  return raw?.length;
+}
+
+function hasRateInTiers(row: Record<string, unknown>, rateKind?: "apr" | "apy") {
+  const raw = Array.isArray(row.tiers)
+    ? row.tiers
+    : Array.isArray(row.tierAprDetails)
+      ? row.tierAprDetails
+      : Array.isArray(row.tieredApyList)
+        ? row.tieredApyList
+        : Array.isArray(row.tierAnnualPercentageRate)
+          ? row.tierAnnualPercentageRate
+        : [];
+  return raw.some((value) => {
+    if (!value || typeof value !== "object") return false;
+    const tier = value as Record<string, unknown>;
+    const apr = safeNumber(tier.apr ?? tier.estimateApr);
+    const apy = safeNumber(tier.apy ?? tier.estimateApy ?? tier.currentApy);
+    return rateKind === "apy" ? apy !== undefined || apr !== undefined : apr !== undefined || apy !== undefined;
+  });
+}
+
+function safeNumber(value: unknown): number | undefined {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const parsed = Number(value.replaceAll(",", "").replaceAll("%", ""));
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function summarizeRateShapes(rows: SafeApiRow[]) {
+  return {
+    singleRateRows: rows.filter((row) => row.rateShape === "single_rate").length,
+    tieredRateRows: rows.filter((row) => row.rateShape === "tiered_rate").length,
+    noRateRows: rows.filter((row) => row.rateShape === "no_rate").length,
+    unknownRateRows: rows.filter((row) => !row.rateShape).length,
+  };
 }
 
 function externalIdFromScoped(value: string) {

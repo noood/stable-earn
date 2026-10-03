@@ -55,7 +55,20 @@ type BybitFlexibleProductRow = {
   productId?: string;
   coin?: string;
   status?: string;
-  tierAprDetails?: unknown[];
+  estimateApr?: string | number;
+  estimateApy?: string | number;
+  apr?: string | number;
+  apy?: string | number;
+  minStakeAmount?: string | number;
+  maxStakeAmount?: string | number;
+  tierAprDetails?: Array<{
+    min?: string | number;
+    max?: string | number;
+    estimateApr?: string | number;
+    apr?: string | number;
+    estimateApy?: string | number;
+    apy?: string | number;
+  }>;
 };
 
 const supportedFixedAssets = new Set<Product["asset"]>(apiAssetsFor("bybit-global", "fixed", "productApi"));
@@ -127,12 +140,30 @@ export async function probeBybitFlexibleProducts(accountId: "bybit-global" | "by
   const response = await publicGet<BybitFlexibleProductRow>("/v5/earn/product", query, baseUrls);
   return (response.result?.list ?? [])
     .filter((row) => !row.coin || row.coin.toUpperCase() === asset)
-    .map((row) => ({
-      productId: row.productId?.trim() || null,
-      coin: row.coin?.toUpperCase() || asset,
-      status: row.status ?? null,
-      tierCount: row.tierAprDetails?.length,
-    }));
+    .map((row) => {
+      const tiers = (row.tierAprDetails ?? []).flatMap((tier) => {
+        const min = probeNumber(tier.min);
+        const rawMax = probeNumber(tier.max);
+        const apr = probePercent(tier.estimateApr ?? tier.apr);
+        const apy = probePercent(tier.estimateApy ?? tier.apy);
+        if (min === undefined || (apr === undefined && apy === undefined)) return [];
+        return [{ min, max: rawMax === -1 ? null : rawMax !== undefined && rawMax > min ? rawMax : null, ...(apr !== undefined ? { apr } : {}), ...(apy !== undefined ? { apy } : {}) }];
+      });
+      const apr = probePercent(row.estimateApr ?? row.apr);
+      const apy = probePercent(row.estimateApy ?? row.apy);
+      return {
+        productId: row.productId?.trim() || null,
+        coin: row.coin?.toUpperCase() || asset,
+        status: row.status ?? null,
+        tierCount: tiers.length,
+        rateShape: tiers.length ? "tiered_rate" as const : apr !== undefined || apy !== undefined ? "single_rate" as const : "no_rate" as const,
+        ...(apr !== undefined ? { apr } : {}),
+        ...(apy !== undefined ? { apy } : {}),
+        ...(tiers.length ? { tiers } : {}),
+        ...(probeNumber(row.minStakeAmount) !== undefined ? { minAmount: probeNumber(row.minStakeAmount) } : {}),
+        ...(probeAmountLimit(row.maxStakeAmount) !== undefined ? { maxAmount: probeAmountLimit(row.maxStakeAmount) } : {}),
+      };
+    });
 }
 
 /** Public, read-only check for Bybit fixed-term product/APR rows by account region. */
@@ -150,16 +181,40 @@ export async function probeBybitFixedProducts(accountId: "bybit-global" | "bybit
       const duration = normalizeBybitDuration(row.duration);
       const coin = row.coin?.toUpperCase() as Product["asset"];
       if (!productId || !duration || !supportedFixedAssets.has(coin)) return [];
+      const tiers = fixedProductTiers(row);
+      const hasTieredRate = (row.tieredApyList ?? []).some((tier) => Number.isFinite(parsePercent(tier.apy)));
       return [{
         externalProductId: `${productId}@${duration}`,
         coin,
         duration,
         status: row.status ?? null,
-        tierCount: fixedProductTiers(row).length,
+        tierCount: row.tieredApyList?.length ?? 0,
+        rateShape: hasTieredRate ? "tiered_rate" as const : tiers.length ? "single_rate" as const : "no_rate" as const,
+        ...(tiers.length ? { apy: tiers[0].apr, tiers: tiers.map((tier) => ({ min: tier.min, max: tier.max, apy: tier.apr })) } : {}),
+        ...(probeNumber(row.minStakeAmount) !== undefined ? { minAmount: probeNumber(row.minStakeAmount) } : {}),
+        ...(probeAmountLimit(row.maxStakeAmount) !== undefined ? { maxAmount: probeAmountLimit(row.maxStakeAmount) } : {}),
         isVip: Boolean(row.isVip),
         specialUserGroupRequired: Boolean(row.specialUserGroupRequired),
       }];
     });
+}
+
+/** One-off, read-only check for product-scoped fixed-term holdings in either region. */
+export async function probeBybitFixedHoldings(credentials: BybitCredentials) {
+  const response = await signedGet<BybitFixedPositionRow>(
+    "/v5/earn/fixed-term/position",
+    new URLSearchParams(),
+    credentials,
+  );
+  return (response.result?.list ?? [])
+    .filter((row) => supportedFixedAssets.has(row.coin?.toUpperCase() as Product["asset"]))
+    .map((row) => ({
+      productId: row.productId?.trim() || null,
+      coin: row.coin?.toUpperCase() ?? null,
+      duration: normalizeBybitDuration(row.duration) ?? null,
+      status: row.status ?? null,
+      hasPositiveHolding: finiteNumber(row.amount) > 0,
+    }));
 }
 
 export async function fetchBybitShortFixedSnapshots(credentials: BybitCredentials) {
@@ -209,6 +264,9 @@ export async function fetchBybitShortFixedSnapshots(credentials: BybitCredential
         status: row.status ?? null,
         isVip: Boolean(row.isVip),
         specialUserGroupRequired: Boolean(row.specialUserGroupRequired),
+        rateShape: (row.tieredApyList ?? []).some((tier) => Number.isFinite(parsePercent(tier.apy)))
+          ? "tiered_rate"
+          : fixedProductTiers(row).length ? "single_rate" : "no_rate",
         tiers: fixedProductTiers(row),
       }];
     }),
@@ -275,6 +333,9 @@ function fixedProductRate(row: BybitFixedProductRow) {
     legacyIdentityKey: `bybit-global:${asset}:fixed:${sourceProductId}`,
     name: `Fixed Saving · ${formatDuration(row.duration)}`,
     apr: tiers[0]?.apr ?? 0,
+    rateShape: (row.tieredApyList ?? []).some((tier) => Number.isFinite(parsePercent(tier.apy)))
+      ? "tiered_rate" as const
+      : tiers.length ? "single_rate" as const : "no_rate" as const,
     tiers,
     fetchedAt: new Date().toISOString(),
     sourceLabel: "Bybit 官方固定期限产品与账户持仓 API",
@@ -359,6 +420,25 @@ function fixedProductTiers(row: BybitFixedProductRow) {
   const max = finiteNumber(row.maxStakeAmount);
   if (apr <= 0) return [];
   return [{ min: 0, max: row.maxStakeAmount === "-1" ? null : max > 0 ? max : null, apr }];
+}
+
+function probeNumber(value: string | number | undefined) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "string" || value.trim() === "") return undefined;
+  const parsed = Number(value.replaceAll(",", ""));
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function probeAmountLimit(value: string | number | undefined) {
+  const parsed = probeNumber(value);
+  return parsed === -1 ? null : parsed;
+}
+
+function probePercent(value: string | number | undefined) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "string" || value.trim() === "") return undefined;
+  const parsed = Number.parseFloat(value.replaceAll("%", "").replaceAll(",", ""));
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 async function publicGet<Row>(path: string, query: URLSearchParams, baseUrls: readonly string[]) {

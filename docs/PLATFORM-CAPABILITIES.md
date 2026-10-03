@@ -24,21 +24,24 @@
 | Binance Global | 常规账户 API：USDT、USDC；一次性探针另见 BTC 产品 | 常规账户 API：USDT、USDC | 账户 API：USDT、USDC、USDGO、BTC | 账户 API：四种资产 | 活期 BTC 产品接口本次返回 1 行、两档利率，但还未接入常规同步；USDT/USDC 产品持仓 ID 本次匹配 |
 | Binance Bahrain | 常规账户 API：USDT、USDC；一次性探针另见 BTC 产品 | 常规账户 API：USDT、USDC | 账户 API：四种资产 | 账户 API：四种资产 | 活期 BTC 产品接口本次返回 1 行、两档利率，但还未接入常规同步；账号身份包含 Bahrain，避免与 Global 串行 |
 | Bybit Global | 公开 API：USDT、USDC | 账户 API：USDT、USDC | 公开 API：四种资产 | 账户 API：四种资产 | 活期公开产品列表和账户持仓分别保留产品 ID，并以平台账号、币种、期限和产品 ID 建立身份 |
-| Bybit EU | 常规同步：公开 API USDT；只读探针可查四币活期与四币定期 | 常规同步未接入；用户提供的 API 权限页未显示 Earn 只读权限，因此当前凭证无法验证 Earn 持仓 | 官方文档有公开定期产品接口；常规同步未接入 | 定期持仓未接入；权限页也未显示 Earn 只读权限 | 活期 USDGO 返回 180002（官方定义 Invalid coin）；定期 USDGO 为成功但空，不能把活期错误外推到其他 Earn 类别 |
+| Bybit EU | 常规同步：公开 API USDT；只读公开查询可查四币活期与四币定期。最近检查确认 USDT、USDC、BTC 各有 1 行且为单一利率（无阶梯） | 常规同步当前未接入；现有 EU Key 未显示 Earn 只读权限，尚不能确认私有持仓接口实测结果 | 官方公开定期产品接口可用；本项目常规同步未接入 | 官方私有定期持仓接口有；常规同步未接入，新增一次性只读探针，需部署后用 EU 凭证实测 | 活期 USDGO 返回 180002（官方定义 Invalid coin）；定期 USDGO 为成功但空，不能把活期错误外推到其他 Earn 类别 |
 | Bitget Global | 账户 API：USDT、USDC | 账户 API：USDT、USDC | 官方 Savings 产品 API 有 `flexible`、`fixed` 与 `period` 字段；线上探针 USDT 返回 3 行，常规同步尚未接入 | 官方 Savings Assets API 支持 `periodType=fixed`；2026-10-04 01:09 线上探针已完整查询四币定期持仓，本次均为空 | USDT 定期产品本次 3 行（1 普通、2 VIP）；持仓成功但为空，不代表端点不支持或其他账号没有持仓。USDGO、BTC 活期/定期产品本次成功但空，不等于交易所不支持 |
-| OKX Global | 未接入 | 账户 API：USDT、USDC、BTC | 官方文档列出 On-chain Earn offers，但这不是简单 Savings；Stable Rewards 文档示例币种是 USDG（非 USDGO），且产品资料没有 APR | 未接入 | On-chain offers 是否适合纳入本项目 Earn 范围需单独分类；已知公开 `savings-rate-summary` 不在当前官方 API 文档目录中 |
-| MEXC PH | 未接入 | 未接入 | 官方 API 目录未找到 Earn/Savings 产品接口 | 未接入 | 仅能确认当前公开目录未列相关接口，不能证明绝无未公开/区域专用接口 |
-| MEXC UK | 未接入 | 未接入 | 官方 API 目录未找到 Earn/Savings 产品接口 | 未接入 | 与 PH 一样尚无官方文档端点或线上 API 响应可判定支持情况 |
+| OKX Global | **没有本项目可用的普通 Savings 产品/APR API**，按人工维护 | 储蓄余额 API：USDT、USDC、BTC；是币种级余额，不是逐产品持仓 | **没有本项目可用的普通 Savings 定期产品/APR API**，按人工维护 | **没有本项目可用的普通 Savings 定期持仓 API**，按人工维护 | 官方 On-chain Earn offers 属于另一类产品；Stable Rewards 文档示例为 USDG（不是 USDGO），且产品资料没有 APR。网页端非文档化 `savings-rate-summary` 不作为本项目 API 来源 |
+| MEXC PH | 项目 API 不支持，人工维护 | 项目 API 不支持，人工维护 | 项目 API 不支持，人工维护 | 项目 API 不支持，人工维护 | 按项目标准：当前没有可用 Earn API；本次未做线上请求 |
+| MEXC UK | 项目 API 不支持，人工维护 | 项目 API 不支持，人工维护 | 项目 API 不支持，人工维护 | 项目 API 不支持，人工维护 | 按项目标准：当前没有可用 Earn API；本次未做线上请求 |
 
 ### 按平台账号 × 币种 × 数据类型展开
 
-按用户建议，表头分三级：平台账号；四种币种分组；每种币下再分活期、定期。每个平台账号下面以“产品”和“持仓”作为行标题。下表是最新线上检查（2026-10-04 01:09）的结果，同时显示常规接入与这次探针的区别。
+按用户建议，表头分三级：平台账号；四种币种分组；每种币下再分活期、定期。每个平台账号下面以“产品”和“持仓”作为行标题。下表以 2026-10-04 02:54 的全量线上检查为基础，并补入 04:32 Bybit EU 活期 APR 直查结果；同时显示常规接入与一次性探针的区别。
 
-- `鉴·N` / `公·N`：常规同步已接入鉴权 API / 公开 API，本次返回 N 行；`鉴·空` / `公·空`：请求成功但本次无行。
-- `未接探针N` / `未接探针空`：常规同步未接入，但本次诊断额外请求并得到 N 行 / 成功空结果。
-- `错180002`：Bybit API 明确拒绝该币种参数；`未配置`：缺该账号凭证；Bybit EU 持仓未配置的背景是用户权限截图里未见 Earn 只读项，并非零持仓；`未接入`：该格还没有实现探针。
-- `未请求`：当前这份线上报告没有检查这个格；不是“接口不支持”。
-- 空结果只代表本次；`manual` / 未接入不等于交易所不支持。
+- `鉴·N` / `公·N`：已接入日常同步的鉴权/公开 API，本次返回 N 行；`鉴·空` / `公·空`：请求成功且完整，但本次没有行。
+- `探针N` / `探针空`：一次性只读检查返回 N 行 / 成功空；常规同步未接入该格。
+- `单一利率`：产品行返回了一个可用 APR/APY，但没有阶梯利率；`阶梯利率`：至少有一个有效利率档；`无可用利率`：产品行存在，但基础利率和有效档位都没有。单看 `tierCount=0` 有歧义，所以报告另外给 `rateShape` 和汇总计数；不需要保存或展示具体 APR 数字。
+- `错180002`：Bybit 对该 USDGO 活期参数返回明确错误；`项目当前无法通过 API 获取 Earn 持仓` 是统一状态，括号中再说明原因：EU 活期是 Key 无 Earn 权限，定期是项目未接入。
+- `官方接口有、本项目未接入`：官方接口已确认，但当前代码没有调用它；这是后续开发项，不是“交易所没有 API”。
+- `无普通Savings API（人工）`：当前找不到可用于本项目的普通 Savings 产品/APR 或定期持仓接口，按项目标准由人工维护；不把 On-chain Earn 等其他类别混入。
+- `未请求*`：MEXC 本次没有请求；官方目录未找到 Earn/Savings 端点，按项目口径归为当前 API 不支持/人工维护，而非声称做过实际请求。
+- 空结果只表示该次、该账号和币种下没有行；不能把空列表说成请求失败，也不能据此证明交易所没有任何此类 API。
 
 <table>
   <thead>
@@ -47,26 +50,26 @@
     <tr><th>活期</th><th>定期</th><th>活期</th><th>定期</th><th>活期</th><th>定期</th><th>活期</th><th>定期</th></tr>
   </thead>
   <tbody>
-    <tr><th rowspan="2">Binance Global</th><th scope="row">产品</th><td>鉴·1</td><td>鉴·空</td><td>鉴·1</td><td>鉴·空</td><td>未接探针空</td><td>鉴·空</td><td>未接探针1</td><td>鉴·空</td></tr>
-    <tr><th scope="row">持仓</th><td>鉴·1（正额）</td><td>鉴·空</td><td>鉴·1（正额）</td><td>鉴·空</td><td>未接探针空</td><td>鉴·空</td><td>未接探针空</td><td>鉴·空</td></tr>
-    <tr><th rowspan="2">Binance Bahrain</th><th scope="row">产品</th><td>鉴·1</td><td>鉴·空</td><td>鉴·1</td><td>鉴·空</td><td>未接探针空</td><td>鉴·空</td><td>未接探针1</td><td>鉴·空</td></tr>
-    <tr><th scope="row">持仓</th><td>鉴·1（正额）</td><td>鉴·空</td><td>鉴·1（正额）</td><td>鉴·空</td><td>未接探针空</td><td>鉴·空</td><td>未接探针空</td><td>鉴·空</td></tr>
-    <tr><th rowspan="2">Bybit Global</th><th scope="row">产品</th><td>公·1</td><td>公·6</td><td>公·1</td><td>公·1</td><td>错180002</td><td>公·空</td><td>未接探针1</td><td>公·2</td></tr>
-    <tr><th scope="row">持仓</th><td>鉴·空</td><td>鉴·空</td><td>鉴·1（无正额）</td><td>鉴·空</td><td>错180002</td><td>鉴·空</td><td>未接探针空</td><td>鉴·空</td></tr>
-    <tr><th rowspan="2">Bybit EU</th><th scope="row">产品</th><td>公·1</td><td>未接探针空</td><td>未接探针1</td><td>未接探针2</td><td>错180002</td><td>未接探针空</td><td>未接探针1</td><td>未接探针3</td></tr>
-    <tr><th scope="row">持仓</th><td>未配置；权限页未见 Earn</td><td>未接入；权限页未见 Earn</td><td>未配置；权限页未见 Earn</td><td>未接入；权限页未见 Earn</td><td>未配置；权限页未见 Earn</td><td>未接入；权限页未见 Earn</td><td>未配置；权限页未见 Earn</td><td>未接入；权限页未见 Earn</td></tr>
-    <tr><th rowspan="2">Bitget Global</th><th scope="row">产品</th><td>鉴·3</td><td>未接探针3</td><td>鉴·3</td><td>未接探针空</td><td>未接探针空</td><td>未接探针空</td><td>未接探针空</td><td>未接探针空</td></tr>
-    <tr><th scope="row">持仓</th><td>鉴·1（正额）</td><td>未接探针空</td><td>鉴·1（正额）</td><td>未接探针空</td><td>未接探针空</td><td>未接探针空</td><td>未接探针空</td><td>未接探针空</td></tr>
-    <tr><th rowspan="2">OKX Global</th><th scope="row">产品</th><td>未接入</td><td>未接入</td><td>未接入</td><td>未接入</td><td>未接入</td><td>未接入</td><td>未接入</td><td>未接入</td></tr>
-    <tr><th scope="row">持仓</th><td>鉴·空（余额）</td><td>未接入</td><td>鉴·1（余额）</td><td>未接入</td><td>鉴·空（余额）</td><td>未接入</td><td>鉴·空（余额）</td><td>未接入</td></tr>
-    <tr><th rowspan="2">MEXC PH</th><th scope="row">产品</th><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td></tr>
-    <tr><th scope="row">持仓</th><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td></tr>
-    <tr><th rowspan="2">MEXC UK</th><th scope="row">产品</th><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td></tr>
-    <tr><th scope="row">持仓</th><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td><td>未请求</td></tr>
+    <tr><th rowspan="2">Binance Global</th><th scope="row">产品</th><td>鉴·1</td><td>鉴·空</td><td>鉴·1</td><td>鉴·空</td><td>探针空</td><td>鉴·空</td><td>探针1</td><td>鉴·空</td></tr>
+    <tr><th scope="row">持仓</th><td>鉴·1（正额）</td><td>鉴·空</td><td>鉴·1（正额）</td><td>鉴·空</td><td>探针空</td><td>鉴·空</td><td>探针空</td><td>鉴·空</td></tr>
+    <tr><th rowspan="2">Binance Bahrain</th><th scope="row">产品</th><td>鉴·1</td><td>鉴·空</td><td>鉴·1</td><td>鉴·空</td><td>探针空</td><td>鉴·空</td><td>探针1</td><td>鉴·空</td></tr>
+    <tr><th scope="row">持仓</th><td>鉴·1（正额）</td><td>鉴·空</td><td>鉴·1（正额）</td><td>鉴·空</td><td>探针空</td><td>鉴·空</td><td>探针空</td><td>鉴·空</td></tr>
+    <tr><th rowspan="2">Bybit Global</th><th scope="row">产品</th><td>公·1</td><td>公·6</td><td>公·1</td><td>公·1</td><td>错180002</td><td>公·空</td><td>探针1</td><td>公·2</td></tr>
+    <tr><th scope="row">持仓</th><td>鉴·空</td><td>鉴·空</td><td>鉴·1（无正额）</td><td>鉴·空</td><td>错180002</td><td>鉴·空</td><td>探针空</td><td>鉴·空</td></tr>
+    <tr><th rowspan="2">Bybit EU</th><th scope="row">产品</th><td>公·1（单一利率）</td><td>探针空</td><td>探针1（单一利率）</td><td>探针2</td><td>错180002</td><td>探针空</td><td>探针1（单一利率）</td><td>探针3</td></tr>
+    <tr><th scope="row">持仓</th><td>常规未接入；凭证权限待实测</td><td>常规未接入；新探针待实测</td><td>常规未接入；凭证权限待实测</td><td>常规未接入；新探针待实测</td><td>常规未接入；凭证权限待实测</td><td>常规未接入；新探针待实测</td><td>常规未接入；凭证权限待实测</td><td>常规未接入；新探针待实测</td></tr>
+    <tr><th rowspan="2">Bitget Global</th><th scope="row">产品</th><td>鉴·3</td><td>探针3</td><td>鉴·3</td><td>探针空</td><td>探针空</td><td>探针空</td><td>探针空</td><td>探针空</td></tr>
+    <tr><th scope="row">持仓</th><td>鉴·1（正额）</td><td>探针空</td><td>鉴·1（正额）</td><td>探针空</td><td>探针空</td><td>探针空</td><td>探针空</td><td>探针空</td></tr>
+    <tr><th rowspan="2">OKX Global</th><th scope="row">产品</th><td>无普通Savings API（人工）</td><td>无普通Savings API（人工）</td><td>无普通Savings API（人工）</td><td>无普通Savings API（人工）</td><td>无普通Savings API（人工）</td><td>无普通Savings API（人工）</td><td>无普通Savings API（人工）</td><td>无普通Savings API（人工）</td></tr>
+    <tr><th scope="row">持仓</th><td>鉴·空（储蓄余额）</td><td>无普通Savings API（人工）</td><td>鉴·1（储蓄余额）</td><td>无普通Savings API（人工）</td><td>探针空（余额）</td><td>无普通Savings API（人工）</td><td>鉴·空（储蓄余额）</td><td>无普通Savings API（人工）</td></tr>
+    <tr><th rowspan="2">MEXC PH / UK</th><th scope="row">产品</th><td>未请求*</td><td>未请求*</td><td>未请求*</td><td>未请求*</td><td>未请求*</td><td>未请求*</td><td>未请求*</td><td>未请求*</td></tr>
+    <tr><th scope="row">持仓</th><td>未请求*</td><td>未请求*</td><td>未请求*</td><td>未请求*</td><td>未请求*</td><td>未请求*</td><td>未请求*</td><td>未请求*</td></tr>
   </tbody>
 </table>
 
-**读表结论：**矩阵有 8 个账号环境 × 4 种资产 × 2 种期限，共 64 个检查范围；每个范围分别记“产品/APR”和“持仓”，因此展开表有 128 个结果格。并非所有格都已请求或验证。最新报告中 OKX 只返回了余额观察（USDC 一行），没有产品/APR 证据；MEXC 两个区域都未请求。2026-10-03 统一只读探针提供了 Bybit Global 定期、Bitget USDGO/BTC 与 USDT 定期的单次结果；2026-10-04 补查官方文档确认了 Bybit 活期/定期公开产品接口、Bitget 定期持仓端点、OKX On-chain Earn/Stable Rewards 的范围，以及 MEXC 当前文档目录没有 Earn/Savings 产品 API 分类。实际线上结果与文档范围的边界详见本文“2026-10-04 官方 API 文档复核”。
+**读表结论：**完整检查报告覆盖 8 个账号环境 × 4 种资产 × 2 种期限，共 64 个检查范围、128 个产品/持仓字段。Bybit EU 活期公开接口最近一次检查确认 USDT、USDC、BTC 各返回 1 个 Available 产品，且都返回单一利率、无阶梯；这里仅保留“是否有利率及其形态”，不记录具体利率数字。Bybit EU 持仓的日常同步尚未接入：活期凭证权限此前未能确认；定期官方私有接口存在，现增加一次性只读探针，部署后可用 EU 凭证验证。OKX 普通 Savings 产品/APR 与定期持仓均无本项目可用 API，按人工维护；其币种级储蓄余额不等于逐产品持仓。MEXC PH/UK 按既定项目标准人工维护。
+
+**探针字段范围：**能力检查报告不输出具体 APR/APY 数值或额度。产品行保留产品 ID、状态、期限、利率形态（`single_rate` / `tiered_rate` / `no_rate`）和档位数量，并汇总各形态的行数；持仓行只保留产品 ID、期限/状态和“是否有正持仓”，不返回持仓金额。这样既能判断 API 是否返回产品和可用利率，也能区分“无阶梯但有单一利率”与“产品行没有利率”，无需收集完整利率明细。OKX On-chain offers 属于单独类别，不并入普通 Savings 能力格。
 
 早先受限网络环境下，普通终端请求曾遇到 DNS 失败；2026-10-04 用户开启代理后，通过官方文档页面和获准的只读 HTTPS 请求完成了 Bybit 公开接口实测，并通过线上应用的“检查平台 API”完成了新一轮 64 格检查。报告声明 `dataChangesCommitted=false`、`includesHoldingAmounts=false`：没有写数据库或返回持仓金额；鉴权持仓响应仍会在服务器内存中处理，以计算是否有正持仓等摘要字段。
 
@@ -81,9 +84,9 @@
 | 成功但为空 | 请求成功，但这一次没有返回符合范围的产品；不等于 API 不支持 |
 | 请求失败/结果不完整 | 权限、网络、限流、分页等问题；不能据此判定不支持，也不能据此归档持仓产品 |
 | 尚未核实 | 未查清官方接口或未取得真实响应 |
-| 确认不支持 | 有明确官方资料或可重复证据证明该范围没有可用接口 |
+| 本项目 API 不支持 | 当前找不到或无法使用覆盖该范围的 API，因此产品/持仓由人工维护；这是项目可用性结论，不宣称交易所绝无任何未公开或区域专用接口 |
 
-探测结果是观察记录，不应自动改写代码能力标记。只有“已接入”才表示常规同步会请求；“尚未核实”不能被标成“确认不支持”。
+探测结果是观察记录，不应自动改写代码能力标记。只有“已接入”才表示常规同步会请求；一次 `empty` 不足以定为“不支持”，但盘点确认当前没有可用接口时，可按项目标准直接归为“本项目 API 不支持/人工维护”，不必证明交易所绝对没有该能力。
 
 ## 2026-10-03 统一只读探针结果
 

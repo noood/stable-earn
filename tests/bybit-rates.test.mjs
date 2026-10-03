@@ -103,6 +103,8 @@ test("Bybit EU fixed product probe checks the public endpoint once and distingui
     ["api.bybit.eu", "/v5/earn/fixed-term/product"],
   ]);
   assert.equal(rows[0].tierCount, 1);
+  assert.equal(rows[0].apy, 7);
+  assert.deepEqual(rows[0].tiers, [{ min: 0, max: 100, apy: 7 }]);
   assert.equal(JSON.stringify(rows).includes("7%"), false);
 });
 
@@ -197,7 +199,19 @@ test("Bybit capability probe can check any monitored flexible coin on global and
       },
       readExchangeJson: async () => ({
         retCode: 0,
-        result: { list: [{ productId: "offer-1", coin: "USDGO", status: "Available", tierAprDetails: [{ min: "0" }] }] },
+        result: { list: [
+          {
+            productId: "offer-1",
+            coin: "USDGO",
+            status: "Available",
+            estimateApr: "2.15%",
+            minStakeAmount: "1",
+            maxStakeAmount: "-1",
+            tierAprDetails: [{ min: "0", max: "-1", estimateApr: "2.15%" }],
+          },
+          { productId: "base-only", coin: "USDGO", status: "Available", estimateApr: "0.8%", tierAprDetails: [] },
+          { productId: "missing-rate", coin: "USDGO", status: "Available", tierAprDetails: [] },
+        ] },
       }),
     },
     "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
@@ -208,9 +222,55 @@ test("Bybit capability probe can check any monitored flexible coin on global and
   const euRows = await probeBybitFlexibleProducts("bybit-eu", "USDGO");
 
   assert.equal(globalRows[0].productId, "offer-1");
+  assert.equal(globalRows[0].apr, 2.15);
+  assert.equal(globalRows[0].minAmount, 1);
+  assert.equal(globalRows[0].maxAmount, null);
+  assert.deepEqual(globalRows[0].tiers, [{ min: 0, max: null, apr: 2.15 }]);
+  assert.equal(globalRows[1].rateShape, "single_rate");
+  assert.equal(globalRows[1].tierCount, 0);
+  assert.equal(globalRows[2].rateShape, "no_rate");
   assert.equal(euRows[0].coin, "USDGO");
   assert.deepEqual(requests.map((url) => [url.hostname, url.searchParams.get("coin")]), [
     ["api.bybit.com", "USDGO"],
     ["api.bybit.eu", "USDGO"],
   ]);
+});
+
+test("Bybit EU fixed-holding capability probe checks the signed endpoint and returns no amounts", async () => {
+  const requests = [];
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url, options) => {
+        requests.push({ url: new URL(url), headers: options.headers });
+        return { ok: true, status: 200, headers: new Headers(), url };
+      },
+      readExchangeJson: async () => ({
+        retCode: 0,
+        result: { list: [
+          { productId: "eu-fixed", coin: "USDC", duration: "90d", amount: "23.5", status: "Active" },
+          { productId: "unmonitored", coin: "ETH", duration: "30d", amount: "99", status: "Active" },
+        ] },
+      }),
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { probeBybitFixedHoldings } = load("@/lib/integrations/bybit");
+  const rows = await probeBybitFixedHoldings({
+    apiKey: "secret-key",
+    apiSecret: "secret-value",
+    baseUrls: ["https://api.bybit.eu"],
+  });
+
+  assert.deepEqual(rows, [{
+    productId: "eu-fixed",
+    coin: "USDC",
+    duration: "90d",
+    status: "Active",
+    hasPositiveHolding: true,
+  }]);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url.hostname, "api.bybit.eu");
+  assert.equal(requests[0].url.pathname, "/v5/earn/fixed-term/position");
+  assert.equal(requests[0].headers["X-BAPI-API-KEY"], "secret-key");
+  assert.equal(JSON.stringify(rows).includes("23.5"), false);
 });

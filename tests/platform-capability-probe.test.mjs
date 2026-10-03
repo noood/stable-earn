@@ -8,7 +8,14 @@ function loadProbe() {
     "@/lib/integrations/binance": {
       fetchBinanceFlexibleSnapshot: async (_credential, region, assets) => {
         const account = accountId(region);
-        const rates = assets.map((asset) => ({ externalProductId: `bn-flex-${region}-${asset}`, catalog: { asset } }));
+        const rates = assets.map((asset) => ({
+          externalProductId: `bn-flex-${region}-${asset}`,
+          apr: 6.4,
+          rateShape: "tiered_rate",
+          tiers: [{ min: 0, max: 300, apr: 6.4 }, { min: 300, max: null, apr: 3.1 }],
+          minimumAmount: 1,
+          catalog: { asset },
+        }));
         const holdings = Object.fromEntries(rates.map((rate) => [`api:${account}:${rate.catalog.asset}:flexible:${rate.externalProductId}`, 123.456]));
         return { rates, holdings, productListsComplete: true, positionListsComplete: true };
       },
@@ -16,6 +23,10 @@ function loadProbe() {
         const account = accountId(region);
         const rates = ["USDT", "USDC", "USDGO", "BTC"].map((asset) => ({
           externalProductId: `bn-fixed-${region}-${asset}`,
+          apr: 3.2,
+          rateShape: "single_rate",
+          tiers: [{ min: 0, max: 5000, apr: 3.2 }],
+          minimumAmount: 10,
           catalog: { asset },
         }));
         const positions = rates.map((rate) => ({
@@ -34,8 +45,8 @@ function loadProbe() {
             rowCount: 2,
             eligibleFlexibleCount: 1,
             rows: [
-              { productId: `bg-flex-${asset}`, periodType: "flexible", eligibleForMonitoring: true, tiers: [] },
-              { productId: `bg-fixed-${asset}`, periodType: "fixed", period: "7d", eligibleForMonitoring: false, tiers: [] },
+              { productId: `bg-flex-${asset}`, periodType: "flexible", eligibleForMonitoring: true, tiers: [{ min: 0, max: 300, apr: 7.79 }, { min: 300, max: null, apr: 3.13 }] },
+              { productId: `bg-fixed-${asset}`, periodType: "fixed", period: "7d", eligibleForMonitoring: false, tiers: [{ min: 0, max: 5000, apr: 2.5 }] },
             ],
           },
           holdingsApi: {
@@ -58,9 +69,16 @@ function loadProbe() {
       bybitGlobalApiBases: ["https://api.bybit.com"],
       probeBybitFlexibleProducts: async (accountId, asset) => asset === "USDGO"
         ? []
-        : [{ productId: `by-flex-${accountId}-${asset}`, status: "Available", tierCount: 1 }],
+        : [{
+          productId: `by-flex-${accountId}-${asset}`,
+          status: "Available",
+          tierCount: accountId === "bybit-eu" && asset === "USDC" ? 0 : 1,
+          rateShape: accountId === "bybit-eu" && asset === "USDC" ? "single_rate" : accountId === "bybit-eu" && asset === "BTC" ? "no_rate" : "tiered_rate",
+          ...(accountId === "bybit-eu" && asset === "BTC" ? {} : { apr: 1.4 }),
+          tiers: accountId === "bybit-eu" && asset === "USDC" ? [] : [{ min: 0, max: 1000, apr: 1.4 }],
+        }],
       probeBybitFixedProducts: async (accountId) => accountId === "bybit-eu"
-        ? [{ externalProductId: "eu-fixed-1@90d", coin: "USDC", duration: "90d", status: "Available", tierCount: 1, isVip: false, specialUserGroupRequired: false }]
+        ? [{ externalProductId: "eu-fixed-1@90d", coin: "USDC", duration: "90d", status: "Available", tierCount: 1, apy: 4.1, rateShape: "tiered_rate", tiers: [{ min: 0, max: 10000, apy: 4.1 }], isVip: false, specialUserGroupRequired: false }]
         : [],
       fetchBybitFlexibleHoldings: async (_credential, account, assets) => {
         const accountId = account === "eu" ? "bybit-eu" : "bybit-global";
@@ -72,11 +90,15 @@ function loadProbe() {
       fetchBybitShortFixedSnapshots: async () => ({
         rates: ["USDT", "USDC", "USDGO", "BTC"].map((asset) => ({
           externalProductId: `by-fixed-${asset}`,
+          apr: 3.4,
+          rateShape: "single_rate",
+          tiers: [{ min: 0, max: 1000, apr: 3.4 }],
           catalog: { asset },
         })),
         holdings: Object.fromEntries(["USDT", "USDC", "USDGO", "BTC"].map((asset) => [`bybit-global:${asset}:fixed:by-fixed-${asset}`, 10.25])),
         sync: { products: true, holdings: true },
       }),
+      probeBybitFixedHoldings: async () => [{ productId: "eu-fixed-1", coin: "USDC", duration: "90d", status: "InProgress", hasPositiveHolding: true }],
     },
     "@/lib/integrations/okx": {
       fetchOkxSavingsHoldings: async () => ({ holdings: { "okx-usdt": 0 }, observedAssets: ["USDT", "USDGO"] }),
@@ -123,15 +145,31 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   ));
   assert.deepEqual(scope("binance-global", "USDT", "flexible").idMatch.matchedIds, ["bn-flex-global-USDT"]);
   assert.equal(scope("binance-global", "BTC", "flexible").productApi.status, "returned");
+  assert.equal(scope("binance-global", "USDT", "flexible").productApi.rows[0].rateShape, "tiered_rate");
+  assert.equal(scope("binance-global", "USDT", "flexible").productApi.rows[0].tierCount, 2);
+  assert.equal(scope("binance-global", "USDT", "flexible").productApi.rateSummary.tieredRateRows, 1);
+  assert.equal(scope("binance-global", "USDT", "fixed").productApi.rows[0].rateShape, "single_rate");
   assert.equal(scope("bybit-global", "USDGO", "flexible").productApi.status, "empty");
   assert.equal(scope("bybit-global", "USDGO", "flexible").holdingApi.status, "returned");
   assert.equal(scope("bybit-eu", "USDC", "flexible").productApi.status, "returned");
+  assert.equal(scope("bybit-eu", "USDC", "flexible").productApi.rows[0].tierCount, 0);
+  assert.equal(scope("bybit-eu", "USDC", "flexible").productApi.rows[0].rateShape, "single_rate");
+  assert.equal(scope("bybit-eu", "USDC", "flexible").productApi.rateSummary.singleRateRows, 1);
+  assert.equal(scope("bybit-eu", "BTC", "flexible").productApi.status, "returned");
+  assert.equal(scope("bybit-eu", "BTC", "flexible").productApi.rows[0].rateShape, "no_rate");
+  assert.equal(scope("bybit-eu", "BTC", "flexible").productApi.rateSummary.noRateRows, 1);
   assert.equal(scope("bybit-eu", "USDC", "flexible").holdingApi.status, "returned");
   assert.equal(scope("bybit-eu", "USDC", "fixed").productApi.status, "returned");
-  assert.equal(scope("bybit-eu", "USDC", "fixed").holdingApi.status, "not_integrated");
+  assert.equal(scope("bybit-eu", "USDC", "fixed").productApi.rows[0].rateShape, "tiered_rate");
+  assert.equal(scope("bybit-global", "USDT", "fixed").productApi.rows[0].rateShape, "single_rate");
+  assert.equal(scope("bybit-eu", "USDC", "fixed").holdingApi.status, "returned");
+  assert.deepEqual(scope("bybit-eu", "USDC", "fixed").idMatch.matchedIds, ["eu-fixed-1@90d"]);
   assert.equal(scope("bitget-global", "BTC", "flexible").productApi.status, "returned");
   assert.equal(scope("bitget-global", "BTC", "flexible").holdingApi.status, "returned");
   assert.equal(scope("bitget-global", "USDT", "fixed").productApi.status, "returned");
+  assert.equal(scope("bitget-global", "USDT", "flexible").productApi.rows[0].rateShape, "tiered_rate");
+  assert.equal(scope("bitget-global", "USDT", "flexible").productApi.rows[0].tierCount, 2);
+  assert.equal("apy" in scope("bitget-global", "USDT", "flexible").productApi.rows[0], false);
   assert.equal(scope("bitget-global", "USDT", "fixed").holdingApi.status, "returned");
   assert.equal(scope("bitget-global", "USDT", "fixed").holdingApi.rows[0].period, "7d");
   assert.equal(scope("okx-global", "USDGO", "flexible").holdingApi.status, "returned");
@@ -149,6 +187,7 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   ));
   assert.equal(euHoldingScope.holdingApi.status, "not_configured");
   assert.match(euHoldingScope.holdingApi.note, /只读 API 凭证/);
+  assert.equal(withoutCredentials.scopes.find((entry) => entry.accountId === "bybit-eu" && entry.asset === "USDC" && entry.productType === "fixed").holdingApi.status, "not_configured");
   const okxOffersWithoutCredential = withoutCredentials.additionalProbes.find((entry) => entry.id === "okx-onchain-earn-offers");
   assert.equal(okxOffersWithoutCredential.assets.every((entry) => entry.status === "not_configured"), true);
 });

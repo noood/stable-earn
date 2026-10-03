@@ -142,12 +142,17 @@ export async function fetchBinanceFlexibleSnapshot(
       productListComplete: products.complete,
       productTotal: products.total ?? null,
       productRowCount: productRows.length,
-      productRows: productRows.map((row) => ({
-        productId: String(row.productId ?? "").trim() || null,
-        asset: row.asset ?? null,
-        latestAnnualPercentageRate: row.latestAnnualPercentageRate ?? null,
-        tierAnnualPercentageRate: parseBinanceTiers(asset, row.latestAnnualPercentageRate, row.tierAnnualPercentageRate),
-      })),
+      productRows: productRows.map((row) => {
+        const tiers = parseBinanceTiers(asset, row.latestAnnualPercentageRate, row.tierAnnualPercentageRate);
+        const hasApr = hasBinanceApr(row);
+        return {
+          productId: String(row.productId ?? "").trim() || null,
+          asset: row.asset ?? null,
+          latestAnnualPercentageRate: row.latestAnnualPercentageRate ?? null,
+          rateShape: !hasApr ? "no_rate" : tiers.length > 1 ? "tiered_rate" : "single_rate",
+          tierAnnualPercentageRate: tiers,
+        };
+      }),
       positionListComplete: positions.complete,
       positionTotal: positions.total ?? null,
       positionRowCount: positionRows.length,
@@ -221,6 +226,7 @@ export async function fetchBinanceFlexibleSnapshot(
         productId: identity.identityKey,
         ...identity,
         apr: tiers[0]?.apr ?? 0,
+        rateShape: !hasApr ? "no_rate" : tiers.length > 1 ? "tiered_rate" : "single_rate",
         tiers,
         fetchedAt,
         sourceLabel: product
@@ -441,6 +447,7 @@ function lockedRate(
     ...identity,
     name: `Simple Earn Locked · ${formatLockedDuration(duration)}`,
     apr,
+    rateShape: "single_rate",
     tiers: [{ min: 0, max: maximum && maximum > 0 ? maximum : null, apr }],
     fetchedAt,
     sourceLabel: accountConfig.sourceLabel.replace("账户 API", "定期账户 API"),
