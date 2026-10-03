@@ -22,11 +22,11 @@
 | Binance Global | 常规账户 API：USDT、USDC；一次性探针另见 BTC 产品 | 常规账户 API：USDT、USDC | 账户 API：USDT、USDC、USDGO、BTC | 账户 API：四种资产 | 活期 BTC 产品接口本次返回 1 行、两档利率，但还未接入常规同步；USDT/USDC 产品持仓 ID 本次匹配 |
 | Binance Bahrain | 常规账户 API：USDT、USDC；一次性探针另见 BTC 产品 | 常规账户 API：USDT、USDC | 账户 API：四种资产 | 账户 API：四种资产 | 活期 BTC 产品接口本次返回 1 行、两档利率，但还未接入常规同步；账号身份包含 Bahrain，避免与 Global 串行 |
 | Bybit Global | 公开 API：USDT、USDC | 账户 API：USDT、USDC | 公开 API：四种资产 | 账户 API：四种资产 | 活期公开产品列表和账户持仓分别保留产品 ID，并以平台账号、币种、期限和产品 ID 建立身份 |
-| Bybit EU | 常规同步：公开 API USDT；只读探针可查四币活期与四币定期 | 常规同步未接入；EU 专用凭证可检查活期持仓，本次未配置 | 定期持仓未接入 | 14:47 UTC 活期 USDT/USDC/BTC 有产品行但未读到 APR 档位；定期 USDC/BTC 有产品档位；USDGO 活期仍报错，原因待安全摘要确认 |
-| Bitget Global | 账户 API：USDT、USDC | 账户 API：USDT、USDC | 产品列表探针本次返回 USDT 3 行，常规同步尚未接入 | 未接入 | USDT 定期期限字段/持仓路径仍需确认；USDGO、BTC 活期产品探针本次成功但为空，不等于交易所不支持 |
-| OKX Global | 未接入 | 账户 API：USDT、USDC、BTC | 未接入 | 未接入 | USDGO 是否有产品/APR 接口、其他产品组合均待核实；当前持仓映射不含 USDGO |
-| MEXC PH | 未接入 | 未接入 | 未接入 | 未接入 | 仍按手动维护；官方 API 能力尚未完成盘点 |
-| MEXC UK | 未接入 | 未接入 | 未接入 | 未接入 | 仍按手动维护；官方 API 能力尚未完成盘点 |
+| Bybit EU | 常规同步：公开 API USDT；只读探针可查四币活期与四币定期 | 常规同步未接入；EU 专用凭证可检查活期持仓，本次未配置 | 官方文档有公开定期产品接口；常规同步未接入 | 定期持仓未接入 | 活期 USDGO 返回 180002（官方定义 Invalid coin）；定期 USDGO 为成功但空，不能把活期错误外推到其他 Earn 类别 |
+| Bitget Global | 账户 API：USDT、USDC | 账户 API：USDT、USDC | 官方 Savings 产品 API 有 `flexible`、`fixed` 与 `period` 字段；线上探针 USDT 返回 3 行，常规同步尚未接入 | 官方 Savings Assets API 支持 `periodType=fixed`；本地诊断现已加入定期持仓读取，尚待部署后的线上结果 | 线上探针此前只查了活期持仓；USDGO、BTC 活期产品探针成功但空，不等于交易所不支持 |
+| OKX Global | 未接入 | 账户 API：USDT、USDC、BTC | 官方文档列出 On-chain Earn offers，但这不是简单 Savings；Stable Rewards 文档示例币种是 USDG（非 USDGO），且产品资料没有 APR | 未接入 | On-chain offers 是否适合纳入本项目 Earn 范围需单独分类；已知公开 `savings-rate-summary` 不在当前官方 API 文档目录中 |
+| MEXC PH | 未接入 | 未接入 | 官方 API 目录未找到 Earn/Savings 产品接口 | 未接入 | 仅能确认当前公开目录未列相关接口，不能证明绝无未公开/区域专用接口 |
+| MEXC UK | 未接入 | 未接入 | 官方 API 目录未找到 Earn/Savings 产品接口 | 未接入 | 与 PH 一样尚无官方文档端点或线上 API 响应可判定支持情况 |
 
 ### 按平台账号 × 币种展开
 
@@ -36,22 +36,22 @@
 - `线上有行`、`线上空`、`线上成功`：仅表示标注日期的单次样本；本次统一只读探针结果见下文。
 - `代码未逐币实测`：矩阵启用了接口，但没有对应的逐币实测记录。
 - `待核`：既未接入常规 API，也没有足够证据判断交易所是否支持。
-- Bitget 定期的产品结果来自统一只读探针；定期处理和持仓接口尚未接入，不能视为已经支持定期监控。
+- Bitget 定期产品和持仓接口均有官方文档；统一只读探针已经增加 `periodType=fixed` 持仓请求，但要部署并运行后才有该账户的定期持仓实测结果。
 
 | 平台账号 | USDT | USDC | USDGO | BTC |
 |---|---|---|---|---|
 | Binance Global | 活 鉴权/鉴权（USDT/USDC 各 1 行且 ID 匹配）；定 鉴权/鉴权（探针成功但产品/持仓均空） | 活 鉴权/鉴权（USDT/USDC 各 1 行且 ID 匹配）；定 鉴权/鉴权（探针成功但产品/持仓均空） | 活 —/—（探针成功但产品/持仓空）；定 鉴权/鉴权（探针成功但产品/持仓均空） | 活 —/—（产品探针 1 行、两档利率；持仓空，未接常规）；定 鉴权/鉴权（探针成功但产品/持仓均空） |
 | Binance Bahrain | 活 鉴权/鉴权（USDT/USDC 各 1 行且 ID 匹配）；定 鉴权/鉴权（探针成功但产品/持仓均空） | 活 鉴权/鉴权（USDT/USDC 各 1 行且 ID 匹配）；定 鉴权/鉴权（探针成功但产品/持仓均空） | 活 —/—（探针成功但产品/持仓空）；定 鉴权/鉴权（探针成功但产品/持仓均空） | 活 —/—（产品探针 1 行、两档利率；持仓空，未接常规）；定 鉴权/鉴权（探针成功但产品/持仓均空） |
-| Bybit Global | 活 公开/鉴权（USDT/USDC/BTC 产品有行；USDGO 报错）；定 公开/鉴权（USDT 6 行、USDC 1 行、BTC 2 行，ID 按期限区分） | 活 公开/鉴权（USDC 有行且匹配；USDT/BTC 空；USDGO 报错）；定 公开/鉴权（四币均成功但空） | 活 —/—（探针报错，原因未知）；定 公开/鉴权（探针成功但为空） | 活 —/—（产品有行、持仓空）；定 公开/鉴权（产品 2 行、持仓空） |
-| Bybit EU | 活 公开/—（探针有产品行，APR 档位未读到；持仓未配置）；定 公开探针/—（空；持仓未接入） | 活 公开探针/—（探针有产品行，APR 档位未读到；持仓未配置）；定 公开探针/—（2 行、各 1 档；持仓未接入） | 活 公开探针/—（探针报错，原因未知；持仓未配置）；定 公开探针/—（成功但空；持仓未接入） | 活 公开探针/—（探针有产品行，APR 档位未读到；持仓未配置）；定 公开探针/—（3 行、各 1 档；持仓未接入） |
+| Bybit Global | 活 公开/鉴权（USDT/USDC/BTC 产品有行；USDGO 返回 180002）；定 公开/鉴权（USDT 6 行、USDC 1 行、BTC 2 行，ID 按期限区分） | 活 公开/鉴权（USDC 有行且匹配；USDT/BTC 空；USDGO 返回 180002）；定 公开/鉴权（四币均成功但空） | 活 —/—（探针 API 拒绝，码 180002）；定 公开/鉴权（探针成功但为空） | 活 —/—（产品有行、持仓空）；定 公开/鉴权（产品 2 行、持仓空） |
+| Bybit EU | 活 公开/—（探针有产品行，APR 档位未读到；持仓未配置）；定 公开探针/—（空；持仓未接入） | 活 公开探针/—（探针有产品行，APR 档位未读到；持仓未配置）；定 公开探针/—（2 行、各 1 档；持仓未接入） | 活 公开探针/—（产品 API 返回 180002；持仓未配置）；定 公开探针/—（成功但空；持仓未接入） | 活 公开探针/—（探针有产品行，APR 档位未读到；持仓未配置）；定 公开探针/—（3 行、各 1 档；持仓未接入） |
 | Bitget Global | 活 鉴权/鉴权（探针产品 3 行、持仓 1 行且 ID 匹配）；定 —/—（只读探针产品 3 行、持仓接口未接入） | 活 鉴权/鉴权（探针产品 3 行、持仓 1 行且 ID 匹配）；定 —/—（探针成功但为空、持仓接口未接入） | 活 —/—（只读探针成功但产品/持仓均为空）；定 —/—（探针成功但产品为空、持仓接口未接入） | 活 —/—（只读探针成功但产品/持仓均为空）；定 —/—（探针成功但产品为空、持仓接口未接入） |
 | OKX Global | 活 —/鉴权（余额探针成功，本次无 USDT 行）；定 —/—（待核） | 活 —/鉴权（余额探针返回 USDC）；定 —/—（待核） | 活 —/—（余额探针成功，本次无 USDGO 行；产品 API 未探测）；定 —/—（待核） | 活 —/鉴权（余额探针成功，本次无 BTC 行）；定 —/—（待核） |
 | MEXC PH | 活 —/—（待核）；定 —/—（待核） | 活 —/—（待核）；定 —/—（待核） | 活 —/—（待核）；定 —/—（待核） | 活 —/—（待核）；定 —/—（待核） |
 | MEXC UK | 活 —/—（待核）；定 —/—（待核） | 活 —/—（待核）；定 —/—（待核） | 活 —/—（待核）；定 —/—（待核） | 活 —/—（待核）；定 —/—（待核） |
 
-**读表结论：**这张表覆盖 8 个账号环境 × 4 种资产 × 2 种期限（64 格），但不是 64 格都完成了交易所能力验证。2026-10-03 统一只读探针已经运行，结果见下节：它补上了 Bybit Global 定期、Bitget USDGO/BTC、Bitget USDT 定期等本次返回情况。Bybit 官方文档确认定期产品列表为公开接口、持仓接口需要 Earn 权限，但没有说明产品 ID 是否跨期限唯一；MEXC 已查到的官方文档范围是 Spot V3，未找到 Earn/Savings API。OKX 产品/APR 仍未探测。官方资料的完整缺口及本轮核对记录见“官方文档核对进度”。
+**读表结论：**这张表覆盖 8 个账号环境 × 4 种资产 × 2 种期限（64 格），但不是 64 格都完成了交易所能力验证。2026-10-03 统一只读探针提供了 Bybit Global 定期、Bitget USDGO/BTC 与 USDT 定期的单次结果；2026-10-04 补查官方文档确认了 Bybit 活期/定期公开产品接口、Bitget 定期持仓端点、OKX On-chain Earn/Stable Rewards 的范围，以及 MEXC 当前文档目录没有 Earn/Savings 产品 API 分类。实际线上结果与文档范围的边界详见本文“2026-10-04 官方 API 文档复核”。
 
-官方文档访问结果：Bybit 和 MEXC Spot V3 页面可读；Binance、OKX 文档请求超时，Bitget 文档连接被重置。网络失败不作为交易所不支持的证据。
+早先受限网络环境下，普通终端请求曾遇到 DNS 失败；2026-10-04 用户开启代理后，通过官方文档页面和获准的只读 HTTPS 请求完成了 Bybit 公开接口实测，并通过线上应用的“检查平台 API”完成了新一轮 64 格检查。线上检查报告声明 `dataChangesCommitted=false`、`includesHoldingAmounts=false`；未改数据库，也未读取/返回持仓金额。
 
 ### 盘点结论的状态词
 
@@ -89,13 +89,13 @@
 
 | 平台 | 官方资料核对结果 | 对本次评估的意义 |
 |---|---|---|
-| Bybit Global / EU | [固定期限产品信息](https://bybit-exchange.github.io/docs/v5/finance/earn/fixed-saving/product)说明 `GET /v5/earn/fixed-term/product` 无需鉴权；[固定期限持仓信息](https://bybit-exchange.github.io/docs/v5/finance/earn/fixed-saving/position)说明持仓查询需要 Earn API 权限。两页的响应字段均包含 `productId`、`duration`。 | 产品 API 公开，持仓 API 需 Earn 权限。文档没有承诺 `productId` 跨期限唯一；线上样本确实重复，因此代码现以 ID + 期限作为匹配身份。Bybit EU 活期 USDT 本次已有公开产品返回。 |
-| MEXC PH / UK | [MEXC Spot V3 官方 API 文档](https://mexcdevelop.github.io/apidocs/spot_v3_en/)可访问；在该文档范围检索不到 Earn、Savings、interest 等产品接口说明。 | 只能记为“Spot V3 文档未列出 Earn API；其他官方文档/区域接口仍待核”，不能据此确认 MEXC 不支持。 |
-| Binance | 官方开发者文档站本轮连接超时；线上探针已确认两账号活期 USDT/USDC 产品和持仓 ID 匹配，定期四币接口本次完整但为空。 | 线上样本证明已接入接口本次有调用结果；定期空结果不足以判断公开能力或区域供给。 |
-| Bitget | 官方文档站本轮连接被重置；线上探针已直接取得活期 USDT/USDC 与一次性定期产品列表结果，另对 USDGO/BTC 得到成功空结果。 | 已有具体产品 API 返回证据；定期持仓 API 尚未接入，USDGO/BTC 空结果不等于无 API。 |
-| OKX | 官方开发者文档站及公开 Savings 利率端点本轮连接超时；线上探针只检查了储蓄余额接口，没有产品/APR 查询。 | OKX 产品/APR 能力仍待官方资料与实时响应核对；余额接口结果不能回答它是否提供对应产品 API。 |
+| Bybit Global / EU | [活期产品资料](https://bybit-exchange.github.io/docs/v5/finance/earn/easy-onchain/product-info)说明 `GET /v5/earn/product` 无需鉴权；[定期产品资料](https://bybit-exchange.github.io/docs/v5/finance/earn/fixed-saving/product)说明 `GET /v5/earn/fixed-term/product` 无需鉴权，响应有产品币种、期限、APY 档、状态和 VIP 字段。官方[错误码表](https://bybit-exchange.github.io/docs/v5/error)将 `180002` 定义为 `Invalid coin`。 | 标准活期/定期产品端点都已明确；Global/EU USDGO 活期不被接受，定期 USDGO 是成功但空。On-chain/Advanced Earn 等不同类别未并入本项目简单 Savings 范围。 |
+| MEXC PH / UK | [当前官方 API 目录](https://www.mexc.com/api-docs/spot-v3/introduction)列 Spot、Futures、Broker、P2P、CLI；所查目录中没有 Earn/Savings 产品端点。 | 只能记为“当前公开官方目录未列出”，不能据此确认 MEXC 不支持；也没有可用端点给用户配置凭证实测。 |
+| Binance | 官方开发者文档站本轮仍不可读；线上探针已确认两账号活期 USDT/USDC 产品和持仓 ID 匹配，定期四币接口本次完整但为空。 | 线上样本证明已接入接口本次有调用结果；定期空结果不足以判断公开能力或区域供给。 |
+| Bitget | [Classic Earn Savings 官方文档](https://www.bitget.com/docs/catalog/earn-classic-savings/classic-earn-savings)已可读，列有产品和活期/定期持仓端点，产品结构包含期限字段。 | 线上探针已取得活期 USDT/USDC 和定期 USDT 产品行；新版本诊断补充定期持仓查询，需部署后再获取账户实测。USDGO/BTC 成功空不等于无 API。 |
+| OKX | [官方 Financial Product 文档](https://www.okx.com/docs-v5/en/#financial-product)已可读，列出 On-chain Earn offers 和 Stable Rewards 产品资料。 | On-chain offers 有 APY 但属于另一产品类别且未标为 Public；Stable Rewards 示例为 USDG、产品资料没有 APY。普通 Savings APR 仍不能仅凭之前观察到的非文档化 `savings-rate-summary` 算作正式 API 覆盖。 |
 
-本轮尝试读取官方资料是只读操作。无法访问的平台先保留为“待核”，不将网络失败记成交易所不支持。
+本轮尝试读取官方资料是只读操作。MEXC 公开目录没有列出 Earn 接口，故保留为“未证实”；不将文档缺项或网络失败记成交易所明确不支持。
 
 ## 统一只读探针（2026-10-03）
 
@@ -111,8 +111,8 @@
 此前 2026-10-03 12:25 的线上 JSON 仍是旧范围结果；14:34 UTC 的新 JSON 已覆盖当前公开产品探针范围，但多个平台返回了笼统的 `error`。检查接口当时没有把上游失败原因带回 JSON，因此单靠该文件不能判断是权限、区域、IP 白名单、限流还是网络问题。无需搜索 Cloudflare 运行日志；本地已补充脱敏的 `apiFailureSummary`，会按平台、接口、币种归纳 HTTP 状态和安全错误类别，不包含密钥或原始响应。此项后端改动尚待部署，部署后重跑检查即可读到原因摘要。接下来仍需处理三类能力缺口：
 
 1. **Bybit 定期身份修复**：官方字段和线上重复 ID 已支持用 `productId + duration` 区分；本地代码及迁移兼容已通过回归测试。当前这次检查的定期接口报错，尚未取得可用的线上复核结果。
-2. **Bitget 定期持仓**：本次产品列表对 USDT 返回 3 行，但没有调用/接入定期持仓端点。需要先通过官方文档核实端点和期限字段，再做只读探测；不猜测地请求未确认接口。
-3. **OKX 产品/APR、MEXC PH/UK 产品及持仓**：OKX 这份报告只确认余额接口；产品/APR 未接入。MEXC 所有格子仍为 `not_integrated`，本次没有请求。尚未得到足以确认候选 API 的官方资料或实时响应；查到具体端点后，公开接口可直接探测，鉴权接口仅在对应账号的只读凭证已配置时实测。
+2. **Bitget 定期持仓**：官方端点和期限字段已核实；本地探针现已扩展到 fixed 持仓及 `period`。缺的是部署新版本并取得此次账户真实的定期持仓行，不是再找一次接口文档。
+3. **OKX 产品/APR、MEXC PH/UK 产品及持仓**：OKX 官方文档已找到 On-chain Earn offers，但需与普通 Savings 分开并用已保存只读凭证实测四币返回；MEXC 官方目录未列 Earn/Savings API，目前没有可安全调用的候选端点，不能通过补 API 凭证替代文档依据。
 
 ## 已有线上返回证据
 
@@ -158,7 +158,33 @@
 | OKX Global | 产品/APR 未接入；定期未接入 | 活期余额 USDC 返回 1，USDT、USDGO、BTC 本次为空 | 仍只有余额/持仓证据，没有产品/APR 证据 |
 | MEXC PH、UK | 本次均未请求 | 本次均未请求 | 仍待官方接口盘点；`not_integrated` 不代表不支持 |
 
-这次只剩三个范围字段报错：Bybit Global USDGO 活期产品和持仓、Bybit EU USDGO 活期产品。当前 JSON 没有错误摘要字段，因此尚不能判断是 USDGO 参数被交易所拒绝、区域限制或其他原因。后端新增的 `apiFailureSummary` 尚未出现在这次导出中；部署含该字段的版本后再运行一次，可读取脱敏的失败类别。无需为此先改权限或提交密钥。
+这次只剩三个范围字段报错：Bybit Global USDGO 活期产品和持仓、Bybit EU USDGO 活期产品。14:47 导出未含 `apiFailureSummary`，所以当时原因未知；下一次运行见下节。
+
+## 2026-10-03 14:59 UTC USDGO 错误摘要
+
+用户随后再次运行检查（上海时间 22:59），新报告已包含 `apiFailureSummary`，且仍为只读、不写入数据。错误集中在 Bybit USDGO 活期：
+
+| 平台与接口 | 本次返回 | 可得结论 |
+|---|---|---|
+| Bybit Global `/v5/earn/product` | `api.bybit.com` 与备用主机 `api.bytick.com` 均 HTTP 200、API 码 `180002` | 不是网络超时或 HTTP 层拒绝；交易所应用层拒绝了 `coin=USDGO` 的产品请求 |
+| Bybit Global `/v5/earn/position` | 两个主机均 HTTP 200、API 码 `180002` | 账户持仓接口同样拒绝 USDGO 请求；不能把它当成成功且零持仓 |
+| Bybit EU `/v5/earn/product` | HTTP 200、API 码 `180002` | EU 公开产品接口也拒绝 USDGO 请求 |
+
+该检查没有原始 `retMsg`，但已核对 Bybit 官方[错误码表](https://bybit-exchange.github.io/docs/v5/error)：`180002` 的定义是 `Invalid coin`。因此可确认：**当前 Bybit Global 和 EU 的活期 Earn 产品/持仓请求不接受 USDGO 作为币种参数**，不是成功返回空列表。Bybit 定期 USDGO 本次为成功但空；这只说明定期接口本次没有产品行，不能推断所有 Bybit Earn/API 都不支持 USDGO。暂时不需要用户改 API 权限或重配密钥。
+
+## 2026-10-03 15:04 UTC 重复确认
+
+用户再次导出同一只读检查（上海时间 23:04）。与 14:59 报告逐格比较，64 个范围的产品/持仓状态、数量、ID、ID 匹配结果以及 `apiFailureSummary` 均未变化；仍为 `dataChangesCommitted=false`、`includesHoldingAmounts=false`。没有新的产品行或能力结论，但重复确认了 Bybit USDGO 活期失败：Global 产品与持仓请求在主机 `api.bybit.com`、备用主机 `api.bytick.com` 均为 HTTP 200 / API 码 `180002`，EU 产品请求在 `api.bybit.eu` 同样为 HTTP 200 / `180002`。该码已在官方错误码表中核实为 `Invalid coin`，因此对上述活期接口可以明确记为“不接受 USDGO”；不扩大到 Bybit 所有 Earn 产品或定期接口。
+
+## 仍待完成的 API 评估（负责人）
+
+| 范围 | 当前证据与缺口 | 下一步 / 负责人 |
+|---|---|---|
+| OKX Global 产品/APR（四币、活期/定期） | 官方文档含 `GET /api/v5/finance/staking-defi/offers`，但它是 On-chain Earn；无 Key 实测返回 HTTP 401 / `50103`。正式 API 文档目录仍未找到普通 Savings 的产品/APR 清单端点。Stable Rewards 的 `USDG` 不是 `USDGO`，且没有 APR。 | **Codex：**如要把 On-chain Earn 也纳入评估，先实现独立只读 offers 检查；**用户：**部署后再运行一次。若当前目标仅限普通 Savings，可把 OKX 标记为“未发现官方产品/APR API”，无需额外操作。 |
+| MEXC PH、UK 产品/APR 与持仓 | 官方 API 文档目录当前列 Spot、Futures、Broker、P2P、CLI，没有 Earn/Savings 产品接口。文档缺项不是“不支持”的证明；当前也没有 MEXC API 凭证入口可做账户侧探测。 | 我已完成公开文档目录核对；继续以手动维护记录为“官方 API 尚未证实”。若用户能在 MEXC 官方 API 产品目录/支持处找到财富 API 文档，再给链接即可，不用发送密钥。 |
+| Bitget 定期持仓与期限 | 官方 `/api/v2/earn/savings/product` 明确有 `periodType`、`period`、APY 档和状态；`/api/v2/earn/savings/assets` 接受 `periodType=flexible|fixed` 并返回产品 ID 和期限。旧线上报告的定期持仓没有查询；当前诊断实现只曾取 flexible。 | 本地已扩展只读探针同时取 flexible 与 fixed 持仓，并把产品/持仓的 `period` 写进脱敏摘要；回归测试通过。需部署该版本并运行“检查平台 API”才可得到固定持仓的账号实测结果。 |
+| Bybit EU 持仓 | 产品查询走公开接口；EU 持仓显示 `not_configured`，不是请求失败或零持仓。 | 用户暂时无需操作；只有需要验证 EU 账号实际持仓时，才在应用内配置 EU 只读凭证，不在聊天中发送。 |
+| Bybit USDGO（FlexibleSaving、FixedTerm、OnChain、Hold To Earn、Dual Assets） | 2026-10-04 已直接查询公开目录：FlexibleSaving / OnChain 两区均以 `180002 Invalid coin` 拒绝 USDGO；显式按币种查 FixedTerm 两区都以 `180001 Invalid parameter: invalid coin` 拒绝；Global Hold To Earn 访客列表无 USDGO；Dual Assets 两区都以 `180002` 拒绝。EU Hold To Earn 返回 `180018 Internal error`，不能判断该类别。BYUSDT API 文档只支持 BYUSDT。 | **目前无需用户操作。**可以把已核的这些 Bybit 产品线判为“未提供/不接受 USDGO”；不能把结论外推到未逐个测试的其他 Advanced Earn 子类或未来新产品。 |
 
 ## 本轮 API 实测与探针范围
 
@@ -171,9 +197,9 @@
 | Bybit Global：活期 USDT/USDC、定期四种资产 | 活期公开产品 + 账户持仓；定期公开产品 + 账户持仓 | 活期产品 `bybit_flexible_rows`、活期持仓 `bybit_flexible_position_rows`；本次统一只读探针取得了定期产品/持仓摘要，见上表 | 不另建探针；若后续要验证同一 ID 的不同期限是否对应独立持仓，再补充官方字段定义或真实定期持仓样本。 |
 | Bybit EU：活期/定期产品，四种资产 | USDT 活期已用于常规 APR；检查按钮用公开 API 查询四币活期和四币定期产品；新增 EU 凭证可检查四币活期持仓 | `bybit_flexible_rows`、`bybit_flexible_position_rows`；公开定期检查不写运行日志 | 统一只读检查已在线运行；14:34 UTC 本次公开请求均报错，具体原因待新版安全摘要。产品查询无需 Key；持仓检查需要 Bybit EU Key 和对应权限，Key 不参与日常同步。 |
 | Bitget Global：活期 USDT/USDC | 已接入账户产品与持仓接口；常规刷新调用 | `bitget_product_rows`、`bitget_assets_rows` | 通常不需要另建探针。 |
-| Bitget Global：USDGO、BTC 及定期产品列表 | 常规同步尚未覆盖全部范围；汇总探针会只读检查四种资产的产品列表及一次共享的活期持仓分页 | 结果按币种和期限拆分，列出产品 ID、状态、VIP 层级、档位数量、分页完整性和是否存在正数持仓；不返回 APR、额度值或持仓金额 | 已由“检查平台 API”统一探针覆盖；Bitget 定期持仓路径仍未调用，须先确认接口用法再纳入探测。 |
-| OKX：产品/APR | 当前未接入产品/APR 适配器 | 无 | 先确认官方产品/利率接口及返回结构；若是公开接口可独立只读验证。目前尚未取得实时返回。 |
-| MEXC PH/UK：产品/APR、持仓 | 当前均未接入，也没有凭证输入项 | 无 | 先核对官方 Earn API 是否存在及区域/鉴权要求；在确认可调用端点前不收集密钥，避免保存后无接口可测。 |
+| Bitget Global：USDGO、BTC 及定期产品列表/持仓 | 常规同步尚未覆盖全部范围；汇总探针只读检查四种资产产品，并分别请求 flexible、fixed 两类持仓分页（fixed 部分待新版部署） | 结果按币种和期限拆分，列出产品 ID、状态、VIP 层级、APY 档数量、`period`、分页完整性和是否有正数持仓；不返回 APR 档值或持仓金额 | 已加入本地“检查平台 API”；部署新版本后即可取得定期持仓线上摘要。 |
+| OKX：产品/APR | 当前未接入产品/APR 适配器；文档找到 On-chain Earn offers 端点，但属于单独类别 | 尚无此账号四币 offers 真实返回；稳定币 Stable Rewards 文档仅有 USDG 且无 APY 字段 | 需要另行实现只读探针/确认类别边界后再用已保存只读凭证请求；不将 UI Savings 的非文档端点当正式来源。 |
+| MEXC PH/UK：产品/APR、持仓 | 当前未接入，也无 API 凭证入口；官方 API 目录未列 Earn/Savings | 无可确认的产品行或持仓返回 | 继续按“官方 API 尚未证实”记录；找到 MEXC 官方财富 API 文档后再设计安全探针，不先收集密钥。 |
 | Bitget 尚未接入的 BTC、定期，以及 Bybit EU 尚未接入的格子 | 常规同步不会请求 | 无 | 先查官方接口和代码支持范围；只有找到明确候选接口后才探测，不因矩阵有空格就盲目请求。 |
 
 **用户需要提供的线上信息仅限必要的鉴权实测结果。**API 密钥不应发送；如需账号侧探针，服务器使用已保存凭证，向用户返回脱敏摘要。公开端点若能由维护环境直接访问，则无需用户代查。单次探针只证明这次返回情况，不自动启用接口或修改矩阵。
@@ -194,7 +220,7 @@
 
 - Bitget 已修正 VIP 持仓过滤：无持仓的 VIP 产品不作为普通机会；正数 VIP 持仓会按外部产品 ID 单独保留并标记资格待确认。若该持仓响应没有 APR，也会保留产品行并标记 APR 不可用。
 - Bitget 会从普通产品候选中过滤明确 `off_line` 产品；若持仓接口仍返回该产品，持仓行可作为 held-only 产品恢复，但仍需检查是否保留了明确下线状态。
-- 2026-10-03 的线上样本中，Bitget 产品列表对 USDT 返回了 3 条 `fixed` 行、对 USDC 没有返回 `fixed` 行；当前适配器只把 `flexible` 行转成目录产品，因此 USDT 定期仍未接入。固定产品的期限字段和对应持仓接口还没有验证，不能只凭 APR 行就启用定期产品。
+- 2026-10-03 的线上样本中，Bitget 产品列表对 USDT 返回了 3 条 `fixed` 行、对 USDC 没有返回 `fixed` 行；当前常规适配器只把 `flexible` 行转成目录产品，因此 USDT 定期仍未接入。官方文档已确认定期 `period` 字段和 `periodType=fixed` 持仓端点；本次线上旧报告未查定期持仓，新版只读诊断尚待部署后验证，不能只凭 APR 行就启用定期产品。
 - Bybit 定期适配器仍会提供 VIP/特殊资格产品候选；目录现在会排除资格未知且无持仓的产品，已确认有资格的或正数持仓产品会保留。已有行在持仓未知时暂留，避免部分同步时误归档。
 - Binance 活期和 Bybit 活期现按上游产品 ID 生成独立产品记录；Binance 的持仓与 APR/产品通过产品 ID 对应，Bybit 持仓也按产品 ID 保存。若交易所响应缺少产品 ID 且同时有多个候选产品，适配器不猜测归属；Binance 会将相应清单标记为不完整。
 - 本地回归测试已模拟同一币种返回两个产品及两笔不同金额的持仓，分别验证 ID、APR 和持仓不会合并。线上日志仅用于确认真实交易所响应是否提供所需 ID，不再是验证这项映射逻辑的前置条件。
@@ -204,6 +230,52 @@
 - 已接入的产品接口可在正常同步时比较外部产品 ID、资产、类型和可申购状态，记录新行、消失和状态变化。
 - 未接入、未请求的接口不能靠例行同步自动发现。需定期检查交易所官方 API 文档/更新说明，并对“尚未核实”的矩阵格执行一次性、只读探测。
 - 单次探测不自动启用接口、不改 D1；确认接口和返回结构后，由维护者更新 `platform-capabilities.ts` 和对应适配器及测试。
+
+## 2026-10-04 官方 API 文档复核
+
+本次复核回答“交易所是否有可用于产品/收益评估的官方接口”，不等同于每个账号、币种都已在线返回产品。必须分开记录：官方文档有端点、端点可请求、该区域返回产品行、产品能用于当前目录，是四个不同结论。
+
+| 平台 | 官方文档证据 | 对四币 × 活期/定期目标的结论 | 尚缺什么 |
+|---|---|---|---|
+| Bybit Global / EU | [Easy & On-chain Earn 产品资料](https://bybit-exchange.github.io/docs/v5/finance/earn/easy-onchain/product-info) 的 `GET /v5/earn/product` 明确无需鉴权，`category` 可选 `FlexibleSaving` / `OnChain`；[Fixed Saving 产品资料](https://bybit-exchange.github.io/docs/v5/finance/earn/fixed-saving/product) 的 `GET /v5/earn/fixed-term/product` 也明确无需鉴权，返回币种、期限、APY 档、状态和 VIP 标记。 | 2026-10-04 直接查询 Global/EU 两个公开 API 主机、四币、三类目录（FlexibleSaving、OnChain、FixedTerm），结果见下表。标准活期 USDGO 在两区都被 `180002 Invalid coin` 拒绝；定期若显式传 `coin=USDGO`，返回 `180001 Invalid parameter: invalid coin`。 | OnChain、Hold To Earn、Advanced Earn 等属于不同产品类别，不是当前 64 格简单 Savings 的等价项；它们已另行逐类检查，结果见下文。EU 的实际持仓仍需区域凭证；本次没有 EU 持仓凭证。 |
+| Bitget Global | 官方 [Classic Earn Savings 文档](https://www.bitget.com/docs/catalog/earn-classic-savings/classic-earn-savings) 列出 `GET /api/v2/earn/savings/product`；响应有 `periodType=flexible|fixed`、`period`、APY 档和产品状态。`GET /api/v2/earn/savings/assets` 可用 `periodType=flexible|fixed` 分别查询持仓；响应可按 `productId` 与 `period` 识别产品。 | 产品 API 与两类持仓 API 都存在。10/03 线上产品探针曾见 USDT 定期 3 行、USDC/USDGO/BTC 定期成功但空；活期 USDT/USDC 有行，USDGO/BTC 成功但空。 | 上述旧探针只请求了 flexible 持仓。当前本地检查代码已添加 fixed 持仓查询及脱敏的 `period` 输出，但要部署后才能看到该用户真实的定期持仓 ID/期限并核对匹配。未因此启用 Bitget 定期常规同步。 |
+| OKX Global | 官方[金融产品 API 文档](https://www.okx.com/docs-v5/en/#financial-product) 列出 `GET /api/v5/finance/staking-defi/offers`，用于查询 On-chain Earn offers。 | 2026-10-04 对 USDT、USDC、USDGO、BTC 逐一匿名请求均返回 HTTP 401 / OKX `50103`（缺少 `OK-ACCESS-KEY`）；这只能确认该接口需要账户鉴权，不能当作产品空列表。线上应用当前诊断仍只查 OKX 余额，没有查 offers。Stable Rewards 示例为 `USDG`（非 `USDGO`），且没有 APR。 | 需要在本地探针增加独立的 On-chain offers 只读查询，再部署后用已保存的 OKX 只读凭证运行；不能把该 On-chain API当普通 Savings，也不能把网页端非文档化的 `savings-rate-summary` 当正式产品 API。 |
+| MEXC PH / UK | 当前官方 API 文档目录列出 Spot、Futures、Broker、P2P、CLI；[Spot API 介绍](https://www.mexc.com/api-docs/spot-v3/introduction) 描述市场、账户、交易等接口，未列 Earn/Savings 产品线。 | 暂无可核实的官方 Earn/Savings 产品/APR 或持仓 API 端点。PH/UK 的手动产品记录继续保留。 | “目录没列”不能证明绝无未公开或区域专属接口。只有 MEXC 官方新增文档/明确答复，或找到可重复、可授权的官方 API 端点后，才能把状态改为“确认不支持”或“已返回”。 |
+
+**Bybit 的“其他 Earn”已逐类查过可对应的官方产品 API；结论不能互相代替。**
+
+| 产品线 | 官方接口与当前只读实测 | USDGO 结论 / 是否属于 64 格 |
+|---|---|---|
+| 标准活期 FlexibleSaving | `GET /v5/earn/product?category=FlexibleSaving&coin=...`；Global、EU 的 USDT/USDC/BTC 均各返回 1 个产品；USDGO 两区均 `180002 Invalid coin` | 当前矩阵中的活期；可确认两区该接口不接受 USDGO |
+| On-Chain Earn | `GET /v5/earn/product?category=OnChain&coin=...`；Global 返回 USDT 2、USDC 2、BTC 1；EU 四币均成功但无行；两区 USDGO 都 `180002 Invalid coin` | 不是普通储蓄；可确认该 On-Chain 产品接口不接受 USDGO |
+| Fixed Saving | `GET /v5/earn/fixed-term/product?coin=...`；Global：USDT 6、USDC 1、BTC 2；EU：USDT 0、USDC 2、BTC 3；显式查 USDGO 两区均返回 `180001 Invalid parameter: invalid coin`。原始行包含 VIP、特殊用户组、售罄等状态，数量不等于符合目录准入规则的数量 | 当前矩阵中的定期；可确认该接口显式查询 USDGO 会拒绝 |
+| Hold To Earn 空投 | 官方 `GET /v5/earn/hold-to-earn/product` 支持访客查询，且会按地区/资格过滤。Global 访客列表有 4 项：RLUSD、USD1、USDTB、USDE，没有四种监控资产；EU 返回 `180018 Internal error` | 属于空投收益，不是普通储蓄；Global 本次没有目标资产，EU 请求失败，不能据此判定 EU 无产品 |
+| Advanced Earn Dual Assets | 官方 `GET /v5/earn/advance/product?category=DualAssets&coin=...`。Global：USDT 162、USDC 0、BTC 28；EU：前三种可用币均 0；USDGO 两区均 `180002 Invalid coin` | 双币结构化产品，收益和本金结算方式不同，不纳入简单储蓄矩阵；该子类不接受 USDGO |
+| BYUSDT | 官方 `GET /v5/earn/token/product` 文档明确当前仅支持 token `BYUSDT` | 不是 USDT/USDC/USDGO/BTC 这四种资产的储蓄 API |
+
+以上直接请求均为公开产品目录读取，不带账户密钥、不下单、不写用户数据。这里可以把结论限定为“已核的这些 Bybit 官方 Earn 产品接口”；不把未逐个纳入检查的其他 Advanced Earn 子类或未来新增产品类别一概断言为不支持 USDGO。On-chain、Hold To Earn 和 Dual Assets 的业务性质也不同，不能直接作为普通活期/定期产品加入当前机会表。
+
+## 2026-10-04 线上 64 格只读检查
+
+由线上应用“API 设置 → 检查平台 API”触发，生成时间为上海时间 2026-10-04 00:46；共 64 个范围，报告明确 `dataChangesCommitted=false`、`includesHoldingAmounts=false`。摘要如下：
+
+| 平台 | 本次线上结果 | 仍缺什么 |
+|---|---|---|
+| Binance Global / Bahrain | 活期 USDT、USDC 各 1 个产品，产品与持仓 ID 均匹配且有正持仓；BTC 活期各有 1 个产品行、无持仓；USDGO 活期为空。四种资产的定期产品/持仓请求均完整但为空。 | 本次已回答线上账号的 API 行返回情况；不能由“定期空”推断 Binance 公开文档没有对应端点，产品/持仓端点需要账号鉴权。 |
+| Bybit Global | 活期 USDT、USDC、BTC 各 1 行；USDGO 活期产品与持仓请求被 `180002` 拒绝。定期 USDT 6 行、USDC 1 行、BTC 2 行，USDGO 的未筛选目录为空；产品行均保留期限，存在 VIP/特殊用户组/售罄状态。 | EU 持仓凭证未配置；固定期限 ID 必须连同期限使用，不能仅凭重复的 `productId` 合并。 |
+| Bybit EU | 活期 USDT、USDC、BTC 各 1 行；USDGO 活期报 `180002`。定期 USDC 2 行、BTC 3 行，USDT 与 USDGO 未筛选目录无行。 | EU 持仓未配置；本次线上报表里固定 USDGO 的“空”是全量列表筛选结果，单独按 USDGO 查询的真实错误码以上述直接 API 请求为准。 |
+| Bitget Global | 活期 USDT、USDC 各 3 行（各含普通与 VIP），各有 1 个持仓 ID 与产品匹配；USDGO、BTC 活期成功但为空。定期 USDT 产品 3 行（1 普通、2 VIP），USDC/USDGO/BTC 为空。 | **本次部署版本尚未检查 fixed 持仓**，报告标成 `not_integrated`。工作区中的新版已补 fixed 持仓请求和期限摘要，部署后才会有真实账号结果。 |
+| OKX Global | 余额接口仅发现 USDC；产品/APR 仍标 `not_integrated`，定期也未接入。 | Offers 端点已确认要求 OKX 鉴权，但线上检查尚未调用；需要把它作为独立 On-chain 只读探针接入，再部署后复查。 |
+| MEXC PH / UK | 64 格报告中全部为 `not_integrated`，没有发送 API 请求。 | 官方当前公开文档目录未找到 Earn/Savings 产品接口，保持“尚无可核实端点”，不把它误写成“交易所确定不支持”。 |
+
+线上 Bybit 报告的 `apiFailureSummary` 将 USDGO 活期产品和 Global 持仓拒绝明确归为 HTTP 200 / API 码 `180002`；这是交易所应用层错误，不是网络超时。Bybit EU 专用 API 凭证未配置，报告将持仓标为 `not_configured`，不是“零持仓”。
+
+### 本次本地探针改动
+
+- API 设置里的“检查平台 API”现在会对 Bitget Savings 持仓接口分别传 `periodType=flexible` 和 `periodType=fixed`；固定产品行与定期持仓行都记录 `period`。
+- 摘要仍只返回产品 ID、期限、状态、档位数量和“是否存在正数持仓”，不会返回持仓金额，不会写产品目录、缓存或变更历史。
+- `Bitget Global` 的定期能力矩阵标记仍保持 `manual`，即常规同步不启用这条产品/持仓路径；此次只是扩充一次性只读诊断。
+- 2026-10-04 代理开启后 Bybit 官方文档和公开目录 API 均可读；Binance 官方 Simple Earn 文档索引也可读，并确认柔性/锁定产品清单与持仓端点属于 `USER_DATA`，故需账号 Key。线上 64 格检查覆盖 Binance、Bybit、Bitget、OKX 的现有配置；MEXC 当前没有 API 接入。Bitget fixed 持仓新增代码仍只在工作区，尚未部署。
 
 ## 代码来源
 

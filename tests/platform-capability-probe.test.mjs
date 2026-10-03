@@ -35,7 +35,7 @@ function loadProbe() {
             eligibleFlexibleCount: 1,
             rows: [
               { productId: `bg-flex-${asset}`, periodType: "flexible", eligibleForMonitoring: true, tiers: [] },
-              { productId: `bg-fixed-${asset}`, periodType: "fixed", eligibleForMonitoring: false, tiers: [] },
+              { productId: `bg-fixed-${asset}`, periodType: "fixed", period: "7d", eligibleForMonitoring: false, tiers: [] },
             ],
           },
           holdingsApi: {
@@ -44,6 +44,13 @@ function loadProbe() {
             pageCount: 1,
             rowCount: 1,
             rows: [{ productId: `bg-flex-${asset}`, periodType: "flexible", hasPositiveHolding: true, tiers: [] }],
+          },
+          fixedHoldingsApi: {
+            status: "complete",
+            complete: true,
+            pageCount: 1,
+            rowCount: 1,
+            rows: [{ productId: `bg-fixed-${asset}`, periodType: "fixed", period: "7d", hasPositiveHolding: true, tiers: [] }],
           },
         })),
     },
@@ -120,7 +127,8 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   assert.equal(scope("bitget-global", "BTC", "flexible").productApi.status, "returned");
   assert.equal(scope("bitget-global", "BTC", "flexible").holdingApi.status, "returned");
   assert.equal(scope("bitget-global", "USDT", "fixed").productApi.status, "returned");
-  assert.equal(scope("bitget-global", "USDT", "fixed").holdingApi.status, "not_integrated");
+  assert.equal(scope("bitget-global", "USDT", "fixed").holdingApi.status, "returned");
+  assert.equal(scope("bitget-global", "USDT", "fixed").holdingApi.rows[0].period, "7d");
   assert.equal(scope("okx-global", "USDGO", "flexible").holdingApi.status, "returned");
   assert.equal(scope("mexc-ph", "USDT", "flexible").productApi.status, "not_integrated");
 

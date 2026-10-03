@@ -12,6 +12,7 @@ type SafeApiRow = {
   status?: string;
   productLevel?: string;
   periodType?: string;
+  period?: string;
   duration?: string;
   tierCount?: number;
   eligibleForMonitoring?: boolean;
@@ -316,14 +317,16 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
               complete: result.productApi.status !== "error",
               ...(productMode === "manual" ? { note: "本次为只读探测；常规同步尚未接入此范围。" } : {}),
             });
+            const holdingApi = productType === "flexible" ? result.holdingsApi : result.fixedHoldingsApi;
+            setResult("bitget-global", asset, productType, "holdingApi", {
+              status: holdingApi.status === "error" ? "error" : holdingApi.complete ? holdingApi.rowCount ? "returned" : "empty" : "partial",
+              ids: holdingApi.rows.map((row) => row.productId).filter((id): id is string => Boolean(id)),
+              rows: sanitizeApiRows(holdingApi.rows, "productId", true),
+              rowCount: holdingApi.rowCount,
+              complete: holdingApi.complete,
+              note: "本次只读探测；不会读取或返回持仓金额。",
+            });
           }
-          setResult("bitget-global", asset, "flexible", "holdingApi", {
-            status: result.holdingsApi.status === "error" ? "error" : result.holdingsApi.complete ? result.holdingsApi.rowCount ? "returned" : "empty" : "partial",
-            ids: result.holdingsApi.rows.map((row) => row.productId).filter((id): id is string => Boolean(id)),
-            rows: sanitizeApiRows(result.holdingsApi.rows, "productId", true),
-            rowCount: result.holdingsApi.rowCount,
-            complete: result.holdingsApi.complete,
-          });
         }
       }));
     }
@@ -581,6 +584,7 @@ function sanitizeApiRows(rows: Array<Record<string, unknown>>, idKey: string, ho
     if (typeof row.status === "string") safe.status = row.status;
     if (typeof row.productLevel === "string") safe.productLevel = row.productLevel;
     if (typeof row.periodType === "string") safe.periodType = row.periodType;
+    if (typeof row.period === "string" || typeof row.period === "number") safe.period = String(row.period);
     if (typeof row.duration === "string" || typeof row.duration === "number") safe.duration = String(row.duration);
     if (tiers !== undefined) safe.tierCount = tiers;
     if (typeof row.eligibleForMonitoring === "boolean") safe.eligibleForMonitoring = row.eligibleForMonitoring;

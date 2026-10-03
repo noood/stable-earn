@@ -21,6 +21,7 @@ type BitgetProductRow = {
   productId?: string;
   coin?: string;
   periodType?: string;
+  period?: string;
   apyType?: string;
   apyList?: BitgetApyRow[];
   status?: string;
@@ -31,6 +32,7 @@ type BitgetAssetRow = {
   productId?: string;
   productCoin?: string;
   periodType?: string;
+  period?: string;
   holdAmount?: string;
   productLevel?: string;
   apy?: Array<{
@@ -91,6 +93,7 @@ export type BitgetCapabilityProbe = {
     rows: Array<{
       productId: string | null;
       periodType: string | null;
+      period: string | null;
       status: string | null;
       productLevel: string | null;
       eligibleForMonitoring: boolean;
@@ -98,20 +101,24 @@ export type BitgetCapabilityProbe = {
     }>;
     diagnostic?: string;
   };
-  holdingsApi: {
-    status: "complete" | "incomplete" | "error";
-    complete: boolean;
-    pageCount: number;
-    rowCount: number;
-    rows: Array<{
-      productId: string | null;
-      periodType: string | null;
-      productLevel: string | null;
-      hasPositiveHolding: boolean;
-      tiers: Array<{ min: number; max: number | null; apr: number }>;
-    }>;
-    diagnostic?: string;
-  };
+  holdingsApi: BitgetCapabilityHoldingProbe;
+  fixedHoldingsApi: BitgetCapabilityHoldingProbe;
+};
+
+type BitgetCapabilityHoldingProbe = {
+  status: "complete" | "incomplete" | "error";
+  complete: boolean;
+  pageCount: number;
+  rowCount: number;
+  rows: Array<{
+    productId: string | null;
+    periodType: string | null;
+    period: string | null;
+    productLevel: string | null;
+    hasPositiveHolding: boolean;
+    tiers: Array<{ min: number; max: number | null; apr: number }>;
+  }>;
+  diagnostic?: string;
 };
 
 /**
@@ -122,24 +129,31 @@ export async function probeBitgetAsset(
   credentials: BitgetCredentials,
   asset: SupportedAsset,
 ): Promise<BitgetCapabilityProbe> {
-  const [productResult, assetsResult] = await Promise.allSettled([
+  const [productResult, flexibleAssetsResult, fixedAssetsResult] = await Promise.allSettled([
     fetchBitgetCapabilityProducts(credentials, asset),
-    fetchBitgetAssetPages(credentials),
+    fetchBitgetAssetPages(credentials, "flexible"),
+    fetchBitgetAssetPages(credentials, "fixed"),
   ]);
 
-  return buildBitgetCapabilityProbe(asset, productResult, assetsResult);
+  return buildBitgetCapabilityProbe(asset, productResult, flexibleAssetsResult, fixedAssetsResult);
 }
 
-/** Query several product lists while fetching the shared holdings pages once. */
+/** Query each coin's products while fetching shared flexible and fixed holdings once. */
 export async function probeBitgetAssets(
   credentials: BitgetCredentials,
   assets: readonly SupportedAsset[],
 ): Promise<BitgetCapabilityProbe[]> {
-  const [productResults, assetsResult] = await Promise.all([
+  const [productResults, flexibleAssetsResult, fixedAssetsResult] = await Promise.all([
     Promise.allSettled(assets.map((asset) => fetchBitgetCapabilityProducts(credentials, asset))),
-    Promise.allSettled([fetchBitgetAssetPages(credentials)]).then(([result]) => result),
+    Promise.allSettled([fetchBitgetAssetPages(credentials, "flexible")]).then(([result]) => result),
+    Promise.allSettled([fetchBitgetAssetPages(credentials, "fixed")]).then(([result]) => result),
   ]);
-  return assets.map((asset, index) => buildBitgetCapabilityProbe(asset, productResults[index], assetsResult));
+  return assets.map((asset, index) => buildBitgetCapabilityProbe(
+    asset,
+    productResults[index],
+    flexibleAssetsResult,
+    fixedAssetsResult,
+  ));
 }
 
 function fetchBitgetCapabilityProducts(credentials: BitgetCredentials, asset: SupportedAsset) {
@@ -153,7 +167,8 @@ function fetchBitgetCapabilityProducts(credentials: BitgetCredentials, asset: Su
 function buildBitgetCapabilityProbe(
   asset: SupportedAsset,
   productResult: PromiseSettledResult<BitgetResponse<BitgetProductRow[]>>,
-  assetsResult: PromiseSettledResult<BitgetAssetCollection>,
+  flexibleAssetsResult: PromiseSettledResult<BitgetAssetCollection>,
+  fixedAssetsResult: PromiseSettledResult<BitgetAssetCollection>,
 ): BitgetCapabilityProbe {
   const productApi: BitgetCapabilityProbe["productApi"] = productResult.status === "rejected"
     ? { status: "error", rowCount: 0, eligibleFlexibleCount: 0, rows: [], diagnostic: endpointDiagnostic(productResult.reason) }
@@ -166,6 +181,7 @@ function buildBitgetCapabilityProbe(
         return {
           productId: normalizeExternalProductId(row.productId) ?? null,
           periodType: row.periodType ?? null,
+          period: row.period ?? null,
           status: row.status ?? null,
           productLevel: row.productLevel ?? null,
           eligibleForMonitoring,
@@ -181,15 +197,19 @@ function buildBitgetCapabilityProbe(
       };
     })();
 
-  const holdingsApi: BitgetCapabilityProbe["holdingsApi"] = assetsResult.status === "rejected"
-    ? { status: "error", complete: false, pageCount: 0, rowCount: 0, rows: [], diagnostic: endpointDiagnostic(assetsResult.reason) }
+  const buildHoldings = (
+    result: PromiseSettledResult<BitgetAssetCollection>,
+    periodType: "flexible" | "fixed",
+  ): BitgetCapabilityHoldingProbe => result.status === "rejected"
+    ? { status: "error", complete: false, pageCount: 0, rowCount: 0, rows: [], diagnostic: endpointDiagnostic(result.reason) }
     : (() => {
-      const collection = assetsResult.value;
+      const collection = result.value;
       const rows = collection.rows
-        .filter((row) => row.productCoin === asset)
+        .filter((row) => row.productCoin === asset && row.periodType === periodType)
         .map((row) => ({
           productId: normalizeExternalProductId(row.productId) ?? null,
           periodType: row.periodType ?? null,
+          period: row.period ?? null,
           productLevel: row.productLevel ?? null,
           hasPositiveHolding: finiteNumber(row.holdAmount) > 0,
           tiers: normalizeAssetTiers(row.apy),
@@ -204,7 +224,12 @@ function buildBitgetCapabilityProbe(
       };
     })();
 
-  return { asset, productApi, holdingsApi };
+  return {
+    asset,
+    productApi,
+    holdingsApi: buildHoldings(flexibleAssetsResult, "flexible"),
+    fixedHoldingsApi: buildHoldings(fixedAssetsResult, "fixed"),
+  };
 }
 
 export async function fetchBitgetSavingsSnapshot(
@@ -376,7 +401,10 @@ export async function fetchBitgetSavingsSnapshot(
   };
 }
 
-async function fetchBitgetAssetPages(credentials: BitgetCredentials): Promise<BitgetAssetCollection> {
+async function fetchBitgetAssetPages(
+  credentials: BitgetCredentials,
+  periodType: "flexible" | "fixed" = "flexible",
+): Promise<BitgetAssetCollection> {
   const rows: BitgetAssetRow[] = [];
   const pages: BitgetAssetPageDiagnostic[] = [];
   const seenEndIds = new Set<string>();
@@ -384,7 +412,7 @@ async function fetchBitgetAssetPages(credentials: BitgetCredentials): Promise<Bi
   let complete = false;
 
   for (let page = 1; page <= maxBitgetAssetPages; page += 1) {
-    const query = new URLSearchParams({ periodType: "flexible", limit: String(bitgetAssetPageSize) });
+    const query = new URLSearchParams({ periodType, limit: String(bitgetAssetPageSize) });
     if (endId) query.set("idLessThan", endId);
     const response = await signedGet<BitgetAssetPage>(
       "/api/v2/earn/savings/assets",

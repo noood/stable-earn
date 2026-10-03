@@ -16,13 +16,16 @@ test("Bitget USDGO capability probe checks products and holdings without returni
           return JSON.stringify({ code: "00000", data: [
             { productId: "usdgo-flex", coin: "USDGO", periodType: "flexible", status: "in_progress", productLevel: "normal", apyList: [{ minStepVal: "0", maxStepVal: "300", currentApy: "6.5" }] },
             { productId: "usdgo-vip", coin: "USDGO", periodType: "flexible", status: "in_progress", productLevel: "VIP", apyList: [{ minStepVal: "0", maxStepVal: "300000", currentApy: "8" }] },
-            { productId: "usdgo-fixed", coin: "USDGO", periodType: "fixed", status: "in_progress", productLevel: "normal", apyList: [{ minStepVal: "0", maxStepVal: "300", currentApy: "7" }] },
+            { productId: "usdgo-fixed", coin: "USDGO", periodType: "fixed", period: "7d", status: "in_progress", productLevel: "normal", apyList: [{ minStepVal: "0", maxStepVal: "300", currentApy: "7" }] },
             { productId: "other-coin", coin: "USDT", periodType: "flexible", status: "in_progress", productLevel: "normal", apyList: [{ minStepVal: "0", maxStepVal: "300", currentApy: "7" }] },
           ] });
         }
-        return JSON.stringify({ code: "00000", data: { resultList: [
+        const periodType = new URL(response.url).searchParams.get("periodType");
+        return JSON.stringify({ code: "00000", data: { resultList: periodType === "flexible" ? [
           { productId: "usdgo-flex", productCoin: "USDGO", periodType: "flexible", holdAmount: "42.5", productLevel: "normal", apy: [{ minApy: "0", maxApy: "300", currentApy: "6.5" }] },
           { productId: "usdc-position", productCoin: "USDC", periodType: "flexible", holdAmount: "1000", productLevel: "normal", apy: [{ minApy: "0", maxApy: "300", currentApy: "6" }] },
+        ] : [
+          { productId: "usdgo-fixed", productCoin: "USDGO", periodType: "fixed", period: "7d", holdAmount: "12", productLevel: "normal", apy: [{ minApy: "0", maxApy: "300", currentApy: "7" }] },
         ] } });
       },
       readExchangeJson: async () => ({ code: "00000", data: { serverTime: "1" } }),
@@ -41,16 +44,19 @@ test("Bitget USDGO capability probe checks products and holdings without returni
   assert.equal(result.holdingsApi.rowCount, 1);
   assert.equal(result.holdingsApi.rows[0].hasPositiveHolding, true);
   assert.equal("holdAmount" in result.holdingsApi.rows[0], false);
-  assert.deepEqual(requests.map((url) => url.pathname).sort(), [
-    "/api/v2/earn/savings/assets",
-    "/api/v2/earn/savings/product",
-  ]);
+  assert.equal(result.fixedHoldingsApi.status, "complete");
+  assert.equal(result.fixedHoldingsApi.rowCount, 1);
+  assert.equal(result.fixedHoldingsApi.rows[0].period, "7d");
+  assert.equal(result.fixedHoldingsApi.rows[0].hasPositiveHolding, true);
+  assert.equal("holdAmount" in result.fixedHoldingsApi.rows[0], false);
+  assert.equal(requests.filter((url) => url.pathname.endsWith("/savings/assets")).length, 2);
   const productRequest = requests.find((url) => url.pathname.endsWith("/savings/product"));
   assert.equal(productRequest.searchParams.get("coin"), "USDGO");
   assert.equal(productRequest.searchParams.get("filter"), "available_and_held");
+  assert.deepEqual(requests.filter((url) => url.pathname.endsWith("/savings/assets")).map((url) => url.searchParams.get("periodType")).sort(), ["fixed", "flexible"]);
 });
 
-test("Bitget capability matrix probe fetches shared holdings pages only once for all four assets", async () => {
+test("Bitget capability matrix probe fetches one holdings pagination sequence per period for all four assets", async () => {
   const requests = [];
   const load = moduleLoader({
     "@/lib/exchange-fetch": {
@@ -77,6 +83,8 @@ test("Bitget capability matrix probe fetches shared holdings pages only once for
 
   assert.deepEqual(result.map((entry) => entry.asset), assets);
   assert.equal(requests.filter((url) => url.pathname.endsWith("/savings/product")).length, 4);
-  assert.equal(requests.filter((url) => url.pathname.endsWith("/savings/assets")).length, 1);
+  assert.equal(requests.filter((url) => url.pathname.endsWith("/savings/assets")).length, 2);
   assert.ok(result.every((entry) => entry.holdingsApi.complete));
+  assert.ok(result.every((entry) => entry.fixedHoldingsApi.complete));
+  assert.deepEqual(requests.filter((url) => url.pathname.endsWith("/savings/assets")).map((url) => url.searchParams.get("periodType")).sort(), ["fixed", "flexible"]);
 });
