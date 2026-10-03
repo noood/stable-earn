@@ -108,6 +108,15 @@ test("scheduled metadata keeps an unresolved slot instead of rolling to tomorrow
   });
 });
 
+test("before Shanghai 07:00, metadata still checks yesterday's scheduled slot", () => {
+  const now = Date.parse("2026-10-02T22:00:00Z"); // 2026-10-03 06:00 in Shanghai
+  const record = { updatedAt: "2026-10-01T06:00:00Z", lastAttemptAt: "2026-10-01T06:00:00Z", lastError: null };
+  assert.deepEqual(scheduledRefreshMetadata(record, now), {
+    scheduledAt: "2026-10-01T23:00:00.000Z",
+    scheduledState: "overdue",
+  });
+});
+
 test("repeated local preview requests keep the failed holding timestamp fixed", () => {
   const first = localSyncScenarioPreview("partial", new Date("2026-09-06T01:00:00Z"));
   const second = localSyncScenarioPreview("partial", new Date("2026-09-06T01:05:00Z"));

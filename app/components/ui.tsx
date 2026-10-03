@@ -1,6 +1,6 @@
 "use client";
 
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import type { Account } from "@/lib/domain";
 
 type ActionButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -52,5 +52,59 @@ export function SectionIntro({ title, description }: { title: string; descriptio
 }
 
 export function ModalFrame({ ariaLabel, title, description, onClose, busy = false, bodyClassName = "", children }: { ariaLabel: string; title: string; description?: string; onClose: () => void; busy?: boolean; bodyClassName?: string; children: ReactNode }) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (!busy && event.currentTarget === event.target) onClose(); }}><section role="dialog" aria-modal="true" aria-label={ariaLabel} className="modal-panel"><div className="modal-header"><div><h2 className="type-label font-semibold tracking-[-.015em]">{title}</h2>{description && <p className="text-muted type-caption mt-1">{description}</p>}</div><button type="button" className="icon-button modal-close" onClick={onClose} disabled={busy} aria-label="关闭"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg></button></div><div className={`modal-body ${bodyClassName}`}>{children}</div></section></div>;
+  const panelRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!panel) return;
+    const getFocusable = () => [...panel.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true");
+    (getFocusable()[0] ?? panel).focus();
+
+    return () => {
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    const dialog = panelRef.current;
+    if (!dialog) return;
+    const getFocusable = () => [...dialog.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true");
+    function handleKeyDown(event: KeyboardEvent) {
+      if (!dialog) return;
+      if (event.key === "Escape") {
+        if (!busy) {
+          event.preventDefault();
+          onClose();
+        }
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [busy, onClose]);
+
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (!busy && event.currentTarget === event.target) onClose(); }}><section ref={panelRef} role="dialog" aria-modal="true" aria-label={ariaLabel} className="modal-panel" tabIndex={-1}><div className="modal-header"><div><h2 className="type-label font-semibold tracking-[-.015em]">{title}</h2>{description && <p className="text-muted type-caption mt-1">{description}</p>}</div><button type="button" className="icon-button modal-close" onClick={onClose} disabled={busy} aria-label="关闭"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg></button></div><div className={`modal-body ${bodyClassName}`}>{children}</div></section></div>;
 }

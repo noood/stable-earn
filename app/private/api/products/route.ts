@@ -11,11 +11,13 @@ import { privateResponseHeaders } from "@/lib/request-security";
 import { mergeRates } from "@/lib/rate-cache";
 import { loadManualRefreshCooldown, manualRefreshCooldownMs } from "@/lib/user-settings";
 import { isLocalPreviewRequest, localPrivateProductsPreview, localSyncScenarioPreview } from "@/lib/local-preview";
-import { cachedHoldingTimes } from "@/lib/holding-cache";
+import { cachedHoldingTimes, mergeHoldingPositions } from "@/lib/holding-cache";
 import { compareProductIdentity, type ProductIdentityChange } from "@/lib/product-identity";
-import { buildSyncChangeEvents, loadProductChangeEvents, prepareProductChangeEventStatements, type ProductChangeSource, type ProductSnapshotForChanges } from "@/lib/product-change-events";
-import { prepareProductCatalogSync, resolveCatalogProductIds, type ProductCatalogSync } from "@/lib/product-catalog";
-import type { HoldingPosition, HoldingSyncState, Product } from "@/lib/domain";
+import { buildManualMaturityEvents, buildSyncChangeEvents, loadProductChangeEvents, prepareProductChangeEventStatements, type ProductChangeSource, type ProductSnapshotForChanges } from "@/lib/product-change-events";
+import { loadCatalogProducts, prepareProductCatalogSync, resolveCatalogProductAccounts, resolveCatalogProductIds, type ProductCatalogSync } from "@/lib/product-catalog";
+import type { HoldingMap, HoldingPosition, HoldingSyncState, Product } from "@/lib/domain";
+import type { ProductOverrideMap } from "@/lib/product-overrides";
+import { loadUserProducts } from "@/lib/user-products";
 import { diagnosticErrorKind, syncDiagnostic, withSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
 import { acquireRefresh, claimDailyRefresh, refreshIsLocked, releaseRefresh, renewRefresh } from "@/lib/refresh-control";
 import { sanitizeSyncFailure, scheduledRefreshPending } from "@/lib/sync-notice";
@@ -103,6 +105,7 @@ export async function GET(request: Request) {
   let pending = false;
   async function reply(response: Response) {
     const body = await response.json() as Record<string, unknown>;
+    await recordDueManualMaturities(db, ownerId);
     const changeEvents = await loadProductChangeEvents(db, ownerId);
     return NextResponse.json({ ...body, changeEvents, dailyRefreshPending: daily && pending }, {
       status: response.status, headers: privateResponseHeaders,
@@ -150,6 +153,35 @@ export async function GET(request: Request) {
   } finally {
     await releaseRefresh(db, identity.userId, token);
   }
+}
+
+async function recordDueManualMaturities(db: D1Database, userId: string) {
+  const [catalogProducts, userProducts, holdingRows, overrideRows, limitRows, termRows] = await Promise.all([
+    loadCatalogProducts(db, userId),
+    loadUserProducts(db, userId),
+    db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ?").bind(userId).all<{ product_id: string; amount: number }>(),
+    db.prepare("SELECT product_id, confirmed_apr, purchase_date, updated_at FROM product_overrides WHERE user_id = ?").bind(userId).all<{ product_id: string; confirmed_apr: number | null; purchase_date: string | null; updated_at: string }>(),
+    db.prepare("SELECT product_id, first_tier_limit FROM product_override_limits WHERE user_id = ?").bind(userId).all<{ product_id: string; first_tier_limit: number | null }>(),
+    db.prepare("SELECT product_id, term_days FROM product_override_terms WHERE user_id = ?").bind(userId).all<{ product_id: string; term_days: number | null }>(),
+  ]);
+  const products = [...catalogProducts, ...userProducts].filter((product) => product.productDataMode === "manual");
+  if (products.length === 0) return;
+  const limits = new Map(limitRows.results.map((row) => [row.product_id, row.first_tier_limit]));
+  const terms = new Map(termRows.results.map((row) => [row.product_id, row.term_days]));
+  const overrides = Object.fromEntries(overrideRows.results.map((row) => [row.product_id, {
+    apr: row.confirmed_apr,
+    firstTierLimit: limits.get(row.product_id) ?? null,
+    termDays: terms.get(row.product_id) ?? null,
+    purchaseDate: row.purchase_date,
+    updatedAt: row.updated_at,
+  }])) as ProductOverrideMap;
+  const resolvedProducts = products.map((product) => {
+    const overrideTerm = terms.get(product.id);
+    return overrideTerm && overrideTerm > 0 ? { ...product, termDays: overrideTerm } : product;
+  });
+  const holdings = Object.fromEntries(holdingRows.results.map((row) => [row.product_id, Number(row.amount)])) as HoldingMap;
+  const events = buildManualMaturityEvents(resolvedProducts, holdings, overrides);
+  if (events.length > 0) await db.batch(prepareProductChangeEventStatements(db, userId, events));
 }
 
 export async function refreshPrivateProductsCache(db: D1Database, userId: string, options: RefreshOptions = {}) {
@@ -421,7 +453,15 @@ async function buildPrivatePayload(
       const fallbackAt = fallbackRateTimes.get(product.id) ?? product.source.fetchedAt ?? cached?.updatedAt;
       return fallbackAt ? [[product.id, fallbackAt] as const] : [];
     }));
-  const catalogProductIds = { ...await resolveCatalogProductIds(db, userId), ...catalog.productIds };
+  const [storedProductIds, storedProductAccounts] = await Promise.all([
+    resolveCatalogProductIds(db, userId),
+    resolveCatalogProductAccounts(db, userId),
+  ]);
+  const catalogProductIds = { ...storedProductIds, ...catalog.productIds };
+  const catalogProductAccounts = {
+    ...storedProductAccounts,
+    ...Object.fromEntries(catalog.products.map((product) => [product.id, product.accountId])),
+  };
   const normalizedFreshHoldings: Record<string, number> = Object.fromEntries(Object.entries(freshHoldingUpdates)
     .map(([productId, amount]) => [normalizeCatalogHoldingId(productId, activeProductIds, catalogProductIds), amount]));
   for (const product of catalog.products) {
@@ -454,6 +494,7 @@ async function buildPrivatePayload(
     if (!productId || !activeProductIds.has(productId)) return [];
     return [{
       productId,
+      accountId: position.accountId,
       positionId: position.positionId,
       amount: position.amount,
       purchaseAt: position.purchaseAt,
@@ -462,11 +503,12 @@ async function buildPrivatePayload(
       updatedAt: positionUpdatedAt,
     }];
   });
-  const positionByKey = new Map<string, HoldingPosition>(
-    (cached?.payload?.holdingPositions ?? []).map((position) => [holdingPositionKey(position), position]),
-  );
-  for (const position of normalizedHoldingPositions) positionByKey.set(holdingPositionKey(position), position);
-  const holdingPositions = [...positionByKey.values()].filter((position) => activeProductIds.has(position.productId));
+  const holdingPositions = mergeHoldingPositions(
+    cached?.payload?.holdingPositions ?? [],
+    normalizedHoldingPositions,
+    new Set(completeAccountIds),
+    catalogProductAccounts,
+  ).filter((position) => activeProductIds.has(position.productId));
   const freshHoldingProductIds = new Set(Object.keys(normalizedFreshHoldings));
   const privateStatus: PrivateStatuses = {
     binanceGlobal: binanceGlobalStatus,
@@ -570,6 +612,10 @@ export function normalizeCatalogHoldingId(
   return activeProductIds.has(productId) ? productId : catalogProductIds[productId] ?? productId;
 }
 
+function holdingPositionKey(position: Pick<HoldingPosition, "productId" | "positionId" | "purchaseAt" | "redeemAt">) {
+  return [position.productId, position.positionId ?? "", position.purchaseAt ?? "", position.redeemAt ?? ""].join("\u0000");
+}
+
 function cachedResponse(
   record: SyncCacheRecord<PrivateProductsPayload>,
   state: SyncCacheState,
@@ -639,10 +685,6 @@ function initialErrorResponse(
 
 function updatedFallbackTime(value: string | undefined) {
   return value ?? new Date(0).toISOString();
-}
-
-function holdingPositionKey(position: Pick<HoldingPosition, "productId" | "positionId" | "purchaseAt" | "redeemAt">) {
-  return [position.productId, position.positionId ?? "", position.purchaseAt ?? "", position.redeemAt ?? ""].join("\u0000");
 }
 
 function runPrivate<T>(platform: string, configured: boolean, task: () => Promise<T>): Promise<PrivateResult<T>> {

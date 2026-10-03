@@ -16,7 +16,7 @@
   --brand-muted: #315c50;
   --brand-line: #79a16f;
   --text-primary: #18201d;
-  --text-secondary: #758079;
+  --text-secondary: #68736d;
   /* Keep the legacy name as an alias while secondary/muted text share one tone. */
   --text-muted: var(--text-secondary);
   --text-subtle: #929b96;
@@ -616,6 +616,10 @@ input:focus-visible,
 .product-history-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); border-bottom: var(--hairline) solid var(--border); padding-bottom: var(--space-3); }
 .product-history-title { margin: 0; color: var(--text-muted); font-size: var(--type-micro); font-weight: 400; line-height: var(--leading-micro); letter-spacing: .08em; text-transform: uppercase; }
 .product-history-empty { margin: var(--space-4) 0 var(--space-1); color: var(--text-secondary); font-size: var(--type-caption); }
+.product-history-loading { display: grid; gap: var(--space-2); margin: var(--space-4) 0 var(--space-1); padding-block: var(--space-1); }
+.product-history-loading-line { height: var(--leading-caption); }
+.product-history-loading-line-primary { width: 68%; }
+.product-history-loading-line-secondary { width: 46%; }
 .product-history-list { --history-node-size: 6px; position: relative; display: grid; gap: 0; margin: var(--space-3) 0 0; padding: 0; list-style: none; }
 .product-history-list::before { position: absolute; top: .5rem; bottom: .5rem; left: calc(var(--history-node-size) / 2); width: 1px; transform: translateX(-50%); background: var(--border); content: ""; }
 .product-history-event { position: relative; display: flex; gap: var(--space-3); padding: var(--space-1) 0 var(--space-3); }
@@ -631,6 +635,9 @@ input:focus-visible,
 .product-history-event-change { display: inline-flex; align-items: baseline; gap: .35rem; color: var(--text-secondary); font-weight: 400; }
 .product-history-event-change strong { color: var(--text-primary); font-weight: 600; }
 .product-history-arrow { color: var(--text-subtle); }
+.product-history-more { display: block; margin: var(--space-2) 0 0 calc(var(--history-node-size, 6px) + var(--space-3)); border: 0; background: transparent; padding: var(--space-1) 0; color: var(--brand); font: inherit; text-align: left; }
+.product-history-more:hover:not(:disabled) { text-decoration: underline; }
+.product-history-more:disabled { cursor: progress; color: var(--text-secondary); }
 
 .holding-column { min-width: 13.875rem; }
 .holding-editor {

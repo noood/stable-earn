@@ -85,11 +85,14 @@ export type ProductChangeEvent = {
   observedAt: string;
   source: "定时刷新" | "手动刷新" | "每日首次打开" | "手动编辑";
   attention?: boolean;
+  readAt?: string;
 };
 
 /** A user position normalized from an authenticated exchange response. */
 export type HoldingPosition = {
   productId: string;
+  /** Retained in cached snapshots so complete account syncs replace only that account's positions. */
+  accountId?: string;
   positionId?: string;
   amount: number;
   purchaseAt?: string;

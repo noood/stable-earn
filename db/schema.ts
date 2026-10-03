@@ -122,12 +122,16 @@ export const schemaStatements = [
     observed_at TEXT NOT NULL,
     source TEXT NOT NULL CHECK (source IN ('定时刷新', '手动刷新', '每日首次打开', '手动编辑')),
     attention INTEGER NOT NULL DEFAULT 0 CHECK (attention IN (0, 1)),
+    read_at TEXT,
     PRIMARY KEY (owner_id, event_id)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_product_change_events_owner_product_time
     ON product_change_events (owner_id, product_id, observed_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_product_change_events_owner_time
     ON product_change_events (owner_id, observed_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_product_change_events_unread_attention
+    ON product_change_events (owner_id, product_id, observed_at DESC)
+    WHERE attention = 1 AND read_at IS NULL`,
   `CREATE TABLE IF NOT EXISTS product_catalog (
     owner_id TEXT NOT NULL,
     product_id TEXT NOT NULL,

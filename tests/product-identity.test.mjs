@@ -10,6 +10,14 @@ test("manual identity uses account, asset, type and a stable slug", () => {
   assert.equal(buildManualProductIdentity({ accountId: "bybit-eu", asset: "USDC", productType: "fixed", slug: "7 days" }), "bybit-eu:USDC:fixed:manual:7-days");
 });
 
+test("scoped upstream aliases cannot collide across exchange accounts", () => {
+  const { scopedExternalProductAlias } = moduleLoader()("@/lib/product-identity");
+  const global = scopedExternalProductAlias("binance-global", "USDT", "same-project-id");
+  const bahrain = scopedExternalProductAlias("binance-bahrain", "USDT", "same-project-id");
+  assert.notEqual(global, bahrain);
+  assert.equal(global, "api:binance-global:USDT:same-project-id");
+});
+
 test("manual catalog migration preserves old aliases and rewrites the embedded identity", () => {
   const migrationSql = readFileSync(new URL("../drizzle/0011_manual_identity_aliases.sql", import.meta.url), "utf8");
   const db = sqliteDb();

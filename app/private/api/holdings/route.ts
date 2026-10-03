@@ -158,7 +158,7 @@ export async function PUT(request: Request) {
         ? amount <= 0
         : Number.isFinite(Number(snapshotAmount)) && Number(snapshotAmount) <= 0);
       if (!knownZero || positions > 0) {
-        return NextResponse.json({ error: "有持仓或暂时无法确认持仓的 API 产品不能删除。" }, { status: 409, headers: privateResponseHeaders });
+        return NextResponse.json({ error: "有持仓或暂时无法确认持仓的 API 产品不能移除。" }, { status: 409, headers: privateResponseHeaders });
       }
     }
   }

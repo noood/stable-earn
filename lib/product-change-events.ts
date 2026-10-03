@@ -2,7 +2,8 @@ import type { D1Database } from "@cloudflare/workers-types";
 import type { HoldingMap, HoldingPosition, Product, ProductChangeEvent } from "./domain";
 import { formatAmount } from "./domain";
 import type { LiveRate } from "./live-rates";
-import { formatShortDate, type ProductOverrideMap } from "./product-overrides";
+import { minimumOpportunityApr } from "./opportunity-policy";
+import { formatShortDate, productTermStatus, type ProductOverride, type ProductOverrideMap } from "./product-overrides";
 
 export type ProductChangeSource = ProductChangeEvent["source"];
 
@@ -47,16 +48,35 @@ export function buildSyncChangeEvents(
   const currentRates = (current.rates ?? []).filter((rate) => !current.rateFallbacks?.[rate.productId]);
   for (const rate of currentRates) {
     const before = previousRates.get(rate.productId);
-    if (!before) continue;
-    const beforeApr = primaryApr(before);
+    const beforeApr = before ? primaryApr(before) : null;
     const afterApr = primaryApr(rate);
+
+    const previousHolding = knownSnapshotHolding(previous, rate.productId);
+    const currentHolding = knownSnapshotHolding(current, rate.productId);
+    const beforeCapacity = before ? firstTierCapacity(before) : undefined;
+    const afterCapacity = rate.capacitySource === "cache" ? undefined : firstTierCapacity(rate);
+    const enteredOverCapacity = overCapacityState(currentHolding, afterCapacity) === true
+      && overCapacityState(previousHolding, beforeCapacity) !== true;
+    if (enteredOverCapacity) {
+      add(rate.productId, {
+        type: "capacity",
+        title: "持仓超过首档额度",
+        before: beforeCapacity === undefined || previousHolding === undefined
+          ? "额度或持仓待确认"
+          : `${formatAmount(previousHolding)} / ${formatCapacity(beforeCapacity, rate.catalog?.asset)}`,
+        after: `${formatAmount(currentHolding!)} / ${formatCapacity(afterCapacity, rate.catalog?.asset)}`,
+        attention: true,
+      });
+    }
+    if (!before) continue;
+
     if (beforeApr !== null && afterApr !== null && beforeApr !== afterApr) {
       add(rate.productId, {
         type: "rate",
         title: afterApr < beforeApr ? "首档 APR 下调" : "首档 APR 上调",
         before: formatApr(beforeApr),
         after: formatApr(afterApr),
-        attention: afterApr < beforeApr,
+        attention: beforeApr >= minimumOpportunityApr && afterApr < minimumOpportunityApr,
       });
     } else if (tierSummary(before) !== tierSummary(rate)) {
       add(rate.productId, {
@@ -67,8 +87,6 @@ export function buildSyncChangeEvents(
       });
     }
 
-    const beforeCapacity = firstTierCapacity(before);
-    const afterCapacity = firstTierCapacity(rate);
     // Some APIs omit quota fields entirely. Keep that unknown state separate
     // from an explicit `null` upper bound, which means “unlimited”. Only
     // compare when both snapshots provide a meaningful capacity value.
@@ -84,8 +102,7 @@ export function buildSyncChangeEvents(
         ) ? "首档额度减少" : "首档额度增加",
         before: formatCapacity(beforeCapacity, rate.catalog?.asset),
         after: formatCapacity(afterCapacity, rate.catalog?.asset),
-        attention: (beforeCapacity !== null && afterCapacity !== null && afterCapacity < beforeCapacity)
-          || (beforeCapacity === null && afterCapacity !== null),
+        attention: false,
       });
     }
 
@@ -114,7 +131,6 @@ export function buildSyncChangeEvents(
         title: "申购状态变化",
         before: beforeAvailability,
         after: afterAvailability,
-        attention: afterAvailability.includes("不可") || afterAvailability.includes("不符合"),
       });
     }
   }
@@ -134,26 +150,33 @@ export function buildSyncChangeEvents(
   }
 
   const previousPositions = new Map((previous.holdingPositions ?? []).map((position) => [positionKey(position), position]));
+  const currentPositions = new Map((current.holdingPositions ?? []).map((position) => [positionKey(position), position]));
   const previousObservedAt = previous.fetchedAt ? Date.parse(previous.fetchedAt) : Number.NaN;
   const observedTimestamp = Date.parse(observedAt);
-  for (const position of current.holdingPositions ?? []) {
+  for (const key of new Set([...previousPositions.keys(), ...currentPositions.keys()])) {
+    const position = currentPositions.get(key) ?? previousPositions.get(key)!;
     if (!position.redeemAt) continue;
-    const before = previousPositions.get(positionKey(position));
+    const before = previousPositions.get(key);
     const redeemTimestamp = Date.parse(position.redeemAt);
-    const maturityChanged = before?.redeemAt !== position.redeemAt;
+    const maturityChanged = Boolean(before) && before!.redeemAt !== position.redeemAt;
     const becameDue = before?.redeemAt === position.redeemAt
       && Number.isFinite(previousObservedAt)
       && Number.isFinite(observedTimestamp)
       && Number.isFinite(redeemTimestamp)
       && previousObservedAt < redeemTimestamp
       && redeemTimestamp <= observedTimestamp;
-    if (!maturityChanged && !becameDue) continue;
+    const discoveredDue = !before && Number.isFinite(redeemTimestamp) && redeemTimestamp <= observedTimestamp;
+    if (!maturityChanged && !becameDue && !discoveredDue) continue;
     const maturity = formatShortDate(position.redeemAt);
     if (!maturity) continue;
+    const wasAlreadyDue = Boolean(before?.redeemAt)
+      && Number.isFinite(previousObservedAt)
+      && Date.parse(before!.redeemAt!) <= previousObservedAt;
     add(position.productId, {
       type: "maturity",
-      title: `定期于 ${maturity} 到期`,
-      attention: Date.parse(position.redeemAt) <= Date.parse(observedAt),
+      title: Date.parse(position.redeemAt) <= observedTimestamp ? "定期已到期" : "定期到期日调整",
+      after: maturity,
+      attention: !wasAlreadyDue && Date.parse(position.redeemAt) <= observedTimestamp,
     });
   }
 
@@ -201,19 +224,22 @@ export function buildManualChangeEvents(
     const product = productById.get(productId);
     const before = previousOverrides[productId];
     const after = nextOverrides[productId];
-    if ((before?.apr ?? null) !== (after?.apr ?? null)) add(productId, {
+    const beforeApr = manualApr(product, before);
+    const afterApr = manualApr(product, after);
+    if (beforeApr !== afterApr) add(productId, {
       type: "rate",
       title: "APR 修改",
-      before: formatManualApr(before?.apr),
-      after: formatManualApr(after?.apr),
-      attention: before?.apr !== null && before?.apr !== undefined && after?.apr !== null && after?.apr !== undefined && after.apr < before.apr,
+      before: formatManualApr(beforeApr),
+      after: formatManualApr(afterApr),
+      attention: beforeApr !== null && afterApr !== null
+        && beforeApr >= minimumOpportunityApr && afterApr < minimumOpportunityApr,
     });
     if ((before?.firstTierLimit ?? null) !== (after?.firstTierLimit ?? null)) add(productId, {
       type: "capacity",
       title: "首档额度修改",
       before: formatManualLimit(before?.firstTierLimit, product?.asset ?? "USDT"),
       after: formatManualLimit(after?.firstTierLimit, product?.asset ?? "USDT"),
-      attention: before?.firstTierLimit !== null && before?.firstTierLimit !== undefined && after?.firstTierLimit !== null && after?.firstTierLimit !== undefined && after.firstTierLimit < before.firstTierLimit,
+      attention: false,
     });
     if ((before?.termDays ?? null) !== (after?.termDays ?? null)) add(productId, {
       type: "maturity",
@@ -226,6 +252,26 @@ export function buildManualChangeEvents(
       title: "买入日期修改",
       before: formatShortDate(before?.purchaseDate) || "待填写",
       after: formatShortDate(after?.purchaseDate) || "待填写",
+    });
+  }
+
+  const capacityCandidates = new Set([...changes.holdingProductIds, ...changes.overrideProductIds]);
+  for (const productId of capacityCandidates) {
+    const product = productById.get(productId);
+    if (!product) continue;
+    const beforeHolding = previousHoldings[productId];
+    const afterHolding = nextHoldings[productId];
+    if (!Number.isFinite(beforeHolding) || !Number.isFinite(afterHolding)) continue;
+    const beforeCapacity = manualCapacity(product, previousOverrides[productId]);
+    const afterCapacity = manualCapacity(product, nextOverrides[productId]);
+    if (overCapacityState(afterHolding, afterCapacity) !== true
+      || overCapacityState(beforeHolding, beforeCapacity) === true) continue;
+    add(productId, {
+      type: "capacity",
+      title: "持仓超过首档额度",
+      before: `${formatAmount(beforeHolding)} / ${formatCapacity(beforeCapacity, product.asset)}`,
+      after: `${formatAmount(afterHolding)} / ${formatCapacity(afterCapacity, product.asset)}`,
+      attention: true,
     });
   }
 
@@ -244,8 +290,35 @@ export function buildManualChangeEvents(
   return events;
 }
 
+/** Build an idempotent alert when a manually tracked fixed-term position matures. */
+export function buildManualMaturityEvents(
+  products: Product[],
+  holdings: HoldingMap,
+  overrides: ProductOverrideMap,
+  today = new Date(),
+) {
+  const events: ProductChangeEvent[] = [];
+  for (const product of products) {
+    if (!(holdings[product.id] > 0)) continue;
+    const maturity = productTermStatus(product, overrides[product.id]?.purchaseDate, today);
+    if (!maturity || maturity.remainingDays > 0) continue;
+    const observedAt = new Date(`${maturity.maturityDate}T00:00:00+08:00`).toISOString();
+    events.push({
+      id: `manual-maturity-${encodeURIComponent(`${product.id}:${maturity.maturityDate}`)}`,
+      productId: product.id,
+      type: "maturity",
+      title: "定期已到期",
+      after: formatShortDate(maturity.maturityDate),
+      observedAt,
+      source: "每日首次打开",
+      attention: true,
+    });
+  }
+  return events;
+}
+
 export function prepareProductChangeEventStatements(db: D1Database, ownerId: string, events: ProductChangeEvent[]) {
-  return events.map((event) => db.prepare(`INSERT INTO product_change_events
+  return events.map((event) => db.prepare(`INSERT OR IGNORE INTO product_change_events
       (owner_id, event_id, product_id, change_type, title, before_value, after_value, observed_at, source, attention)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(ownerId, event.id, event.productId, event.type, event.title, event.before ?? null, event.after ?? null,
@@ -253,12 +326,37 @@ export function prepareProductChangeEventStatements(db: D1Database, ownerId: str
 }
 
 export async function loadProductChangeEvents(db: D1Database, ownerId: string, limit = 2000) {
-  const result = await db.prepare(`SELECT event_id, product_id, change_type, title, before_value, after_value,
-      observed_at, source, attention
+  const [recent, unread] = await Promise.all([
+    db.prepare(`SELECT event_id, product_id, change_type, title, before_value, after_value,
+      observed_at, source, attention, read_at
       FROM product_change_events
       WHERE owner_id = ?
       ORDER BY observed_at DESC, event_id DESC
-      LIMIT ?`).bind(ownerId, limit).all<{
+      LIMIT ?`).bind(ownerId, limit).all<ProductChangeEventRow>(),
+    db.prepare(`SELECT event_id, product_id, change_type, title, before_value, after_value,
+      observed_at, source, attention, read_at
+      FROM product_change_events
+      WHERE owner_id = ? AND attention = 1 AND read_at IS NULL
+      ORDER BY observed_at DESC, event_id DESC`).bind(ownerId).all<ProductChangeEventRow>(),
+  ]);
+  const rows = new Map<string, ProductChangeEventRow>();
+  for (const row of recent.results) rows.set(row.event_id, row);
+  for (const row of unread.results) rows.set(row.event_id, row);
+  return [...rows.values()]
+    .sort((left, right) => right.observed_at.localeCompare(left.observed_at) || right.event_id.localeCompare(left.event_id))
+    .map(mapProductChangeEvent);
+}
+
+export async function markProductChangeEventsRead(db: D1Database, ownerId: string, productId: string, readAt = new Date().toISOString()) {
+  await db.prepare(`UPDATE product_change_events
+      SET read_at = ?
+      WHERE owner_id = ? AND product_id = ? AND attention = 1 AND read_at IS NULL`)
+    .bind(readAt, ownerId, productId)
+    .run();
+  return readAt;
+}
+
+type ProductChangeEventRow = {
     event_id: string;
     product_id: string;
     change_type: ProductChangeEvent["type"];
@@ -268,8 +366,44 @@ export async function loadProductChangeEvents(db: D1Database, ownerId: string, l
     observed_at: string;
     source: ProductChangeSource;
     attention: number;
-  }>();
-  return result.results.map((row) => ({
+    read_at: string | null;
+};
+
+const PRODUCT_HISTORY_PAGE_SIZE = 50;
+
+export async function loadProductChangeEventPage(
+  db: D1Database,
+  ownerId: string,
+  productId: string,
+  cursor?: string | null,
+  pageSize = PRODUCT_HISTORY_PAGE_SIZE,
+) {
+  const decoded = cursor ? decodeProductChangeCursor(cursor) : null;
+  if (cursor && !decoded) throw new Error("Invalid product history cursor");
+  const size = Math.max(1, Math.min(100, Math.floor(pageSize)));
+  const cursorClause = decoded
+    ? " AND (observed_at < ? OR (observed_at = ? AND event_id < ?))"
+    : "";
+  const params: unknown[] = [ownerId, productId];
+  if (decoded) params.push(decoded.observedAt, decoded.observedAt, decoded.eventId);
+  params.push(size + 1);
+  const result = await db.prepare(`SELECT event_id, product_id, change_type, title, before_value, after_value,
+      observed_at, source, attention, read_at
+      FROM product_change_events
+      WHERE owner_id = ? AND product_id = ?${cursorClause}
+      ORDER BY observed_at DESC, event_id DESC
+      LIMIT ?`).bind(...params).all<ProductChangeEventRow>();
+  const hasMore = result.results.length > size;
+  const rows = result.results.slice(0, size);
+  const last = rows.at(-1);
+  return {
+    events: rows.map(mapProductChangeEvent),
+    nextCursor: hasMore && last ? encodeProductChangeCursor(last.observed_at, last.event_id) : null,
+  };
+}
+
+function mapProductChangeEvent(row: ProductChangeEventRow) {
+  return {
     id: row.event_id,
     productId: row.product_id,
     type: row.change_type,
@@ -279,7 +413,34 @@ export async function loadProductChangeEvents(db: D1Database, ownerId: string, l
     observedAt: row.observed_at,
     source: row.source,
     ...(row.attention ? { attention: true } : {}),
-  } satisfies ProductChangeEvent));
+    ...(row.read_at ? { readAt: row.read_at } : {}),
+  } satisfies ProductChangeEvent;
+}
+
+function encodeProductChangeCursor(observedAt: string, eventId: string) {
+  const bytes = new TextEncoder().encode(JSON.stringify({ observedAt, eventId }));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function decodeProductChangeCursor(cursor: string) {
+  if (cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(cursor)) return null;
+  try {
+    const base64 = cursor.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(base64 + "=".repeat((4 - base64.length % 4) % 4));
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const value = JSON.parse(new TextDecoder().decode(bytes)) as { observedAt?: unknown; eventId?: unknown };
+    return typeof value.observedAt === "string"
+      && Number.isFinite(Date.parse(value.observedAt))
+      && typeof value.eventId === "string"
+      && value.eventId.length > 0
+      && value.eventId.length <= 512
+      ? { observedAt: value.observedAt, eventId: value.eventId }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function eventId(observedAt: string, productId: string, sequence: number) {
@@ -301,9 +462,37 @@ function tierSummary(rate: LiveRate) {
 }
 
 function firstTierCapacity(rate: LiveRate): number | null | undefined {
-  if (!rate.tiers?.[0]) return undefined;
-  const max = rate.tiers?.[0]?.max;
-  return typeof max === "number" && Number.isFinite(max) ? max : null;
+  const firstTier = rate.tiers?.[0];
+  if (!firstTier || !Object.prototype.hasOwnProperty.call(firstTier, "max")) return undefined;
+  const max = firstTier.max;
+  if (max === null) return null;
+  return typeof max === "number" && Number.isFinite(max) ? max : undefined;
+}
+
+function knownSnapshotHolding(snapshot: ProductSnapshotForChanges, productId: string) {
+  if (snapshot.holdingFallbacks?.[productId] !== undefined) return undefined;
+  const value = snapshot.holdingUpdates?.[productId];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function overCapacityState(holding: number | undefined, capacity: number | null | undefined) {
+  if (holding === undefined || capacity === undefined || capacity === null) return undefined;
+  return holding > capacity;
+}
+
+function manualCapacity(product: Product, override?: ProductOverride) {
+  const limit = override?.firstTierLimit;
+  if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) return limit;
+  const firstTier = product.tiers[0];
+  if (!firstTier || !Object.prototype.hasOwnProperty.call(firstTier, "max")) return undefined;
+  const max = firstTier.max;
+  if (max === null) return null;
+  return typeof max === "number" && Number.isFinite(max) ? max : undefined;
+}
+
+function manualApr(product: Product | undefined, override?: ProductOverride) {
+  const value = override?.apr ?? product?.tiers[0]?.apr;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function formatApr(value: number | null | undefined) {

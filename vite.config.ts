@@ -27,6 +27,7 @@ export default defineConfig(async () => {
       vinext(),
       cloudflare({
         configPath: wranglerConfigPath,
+        inspectorPort: isCodexSeatbeltSandbox ? false : undefined,
         viteEnvironment: { name: 'rsc', childEnvironments: ['ssr'] },
       }),
     ],

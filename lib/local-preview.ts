@@ -157,7 +157,7 @@ export function localPrivateProductsPreview(now = new Date()) {
       after: "300 USDT",
       observedAt: new Date(now.getTime() - 7 * 60 * 60 * 1000).toISOString(),
       source: "每日首次打开",
-      attention: true,
+      attention: false,
     },
     {
       id: "preview-change-bg-usdt-holding",

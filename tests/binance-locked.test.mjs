@@ -35,8 +35,11 @@ test("Binance locked snapshot maps available products and held positions", async
   assert.equal(result.rates[0].tiers[0].min, 0);
   assert.equal(result.rates[0].tiers[0].max, 1000);
   assert.ok(Math.abs(result.rates[0].tiers[0].apr - 6.73) < 1e-9);
-  assert.equal(result.holdings["USDT001"], 123.45);
+  assert.equal(result.holdings["USDT001"], undefined);
+  assert.equal(result.holdings["api:binance-global:USDT:USDT001"], 123.45);
   assert.equal(result.holdings[result.rates[0].productId], 123.45);
+  assert.equal(result.positions[0].sourceProductId, "api:binance-global:USDT:USDT001");
+  assert.equal(result.positions[0].accountId, "binance-global");
   assert.equal(result.productListComplete, true);
   assert.equal(result.positionListComplete, true);
 });

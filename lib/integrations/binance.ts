@@ -1,5 +1,5 @@
 import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
-import { buildPlatformProductIdentity } from "@/lib/product-identity";
+import { buildPlatformProductIdentity, scopedExternalProductAlias } from "@/lib/product-identity";
 import type { LiveRate } from "@/lib/live-rates";
 import type { HoldingPosition, Product } from "@/lib/domain";
 import { syncDiagnostic } from "@/lib/sync-diagnostics";
@@ -82,6 +82,7 @@ export type BinanceLockedSnapshot = {
   holdings: Record<string, number>;
   positions: Array<Omit<HoldingPosition, "productId" | "updatedAt" | "source"> & {
     sourceProductId: string;
+    accountId: string;
     asset: Product["asset"];
   }>;
   productListComplete: boolean;
@@ -301,7 +302,8 @@ export async function fetchBinanceLockedSnapshot(
       .filter((row) => String(row.projectId ?? "") === projectId && String(row.asset ?? "").toUpperCase() === asset)
       .reduce((sum, row) => sum + finiteNumber(row.amount ?? row.principal), 0);
     holdings[rate.productId] = amount;
-    holdings[projectId] = amount;
+    const accountId = account === "global" ? "binance-global" : "binance-bahrain";
+    holdings[scopedExternalProductAlias(accountId, asset, projectId)] = amount;
   }
 
   // Preserve a position key even if its APR is currently unavailable. The
@@ -313,7 +315,9 @@ export async function fetchBinanceLockedSnapshot(
     if (!projectId || !supported.has(asset)) continue;
     const key = `${asset}:${projectId}`;
     if (rateByProject.has(key)) continue;
-    holdings[projectId] = (holdings[projectId] ?? 0) + finiteNumber(row.amount ?? row.principal);
+    const accountId = account === "global" ? "binance-global" : "binance-bahrain";
+    const alias = scopedExternalProductAlias(accountId, asset, projectId);
+    holdings[alias] = (holdings[alias] ?? 0) + finiteNumber(row.amount ?? row.principal);
   }
 
   const positions = positionRows.flatMap((row) => {
@@ -321,8 +325,10 @@ export async function fetchBinanceLockedSnapshot(
     const asset = String(row.asset ?? "").toUpperCase() as Product["asset"];
     const amount = finiteNumber(row.amount ?? row.principal);
     if (!projectId || !supported.has(asset) || amount <= 0) return [];
+    const accountId = account === "global" ? "binance-global" : "binance-bahrain";
     return [{
-      sourceProductId: projectId,
+      sourceProductId: scopedExternalProductAlias(accountId, asset, projectId),
+      accountId,
       asset,
       positionId: row.positionId === undefined ? undefined : String(row.positionId),
       amount,

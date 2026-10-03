@@ -56,8 +56,10 @@ function fixture() {
     } },
     "@/lib/integrations/bybit": {}, "@/lib/integrations/okx": {},
     "@/lib/product-catalog": {
+      loadCatalogProducts: async () => [],
       prepareProductCatalogSync: async (_db, _id, rates) => ({ products, rates, productIds: {}, statements: [] }),
       resolveCatalogProductIds: async () => ({}),
+      resolveCatalogProductAccounts: async () => ({}),
     },
   }, { Date: Clock, console: { info: (record) => logs.push(record), warn: (record) => logs.push(record) } });
   const route = load("@/app/private/api/products/route");

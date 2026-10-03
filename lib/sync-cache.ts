@@ -101,9 +101,8 @@ export function syncCacheMetadata(
  */
 export function scheduledRefreshMetadata(record: SyncCacheRecord<unknown> | null, now = Date.now()) {
   const nextSlot = Date.parse(nextScheduledRefreshAt(now));
-  const localHour = new Date(now + 8 * 60 * 60 * 1000).getUTCHours();
   const day = 24 * 60 * 60 * 1000;
-  const currentSlot = nextSlot - (localHour >= 7 ? day : 2 * day);
+  const currentSlot = nextSlot - day;
   const updatedAt = timestamp(record?.updatedAt);
   const attemptedAt = timestamp(record?.lastAttemptAt);
   const lastError = Boolean(record?.lastError);

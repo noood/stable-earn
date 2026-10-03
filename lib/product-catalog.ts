@@ -5,6 +5,7 @@ import { highestProductApr, productHasComparableApr, productQualifiesAsOpportuni
 import { resolveProductWithoutApiData } from "./product-status";
 import { catalogProductTemplates } from "./catalog-templates";
 import { syncDiagnostic } from "./sync-diagnostics";
+import { scopedExternalProductAlias } from "./product-identity";
 
 /**
  * The catalogue is user-scoped because authenticated APIs may expose a
@@ -292,18 +293,29 @@ export async function resolveCatalogProductIds(db: D1Database, ownerId: string) 
     }
     map[preferred.identity_key] = preferred.product_id;
     const product = parseProduct(preferred.payload)[0];
-    if (product?.externalProductId) map[product.externalProductId] = preferred.product_id;
+    if (product?.externalProductId) {
+      map[product.externalProductId] = preferred.product_id;
+      map[scopedExternalProductAlias(product.accountId, product.asset, product.externalProductId)] = preferred.product_id;
+    }
   }
   for (const row of aliasResult.results) map[row.alias] = row.product_id;
   return map;
 }
 
+export async function resolveCatalogProductAccounts(db: D1Database, ownerId: string) {
+  const rows = await loadCatalogRows(db, ownerId);
+  return Object.fromEntries(rows.flatMap((row) => {
+    const product = parseProduct(row.payload)[0];
+    return product ? [[row.product_id, product.accountId] as const] : [];
+  }));
+}
+
 /**
- * Removing an account key should stop showing API-only products that have no
- * recorded holding. The catalog row remains archived for history and can be
- * reactivated if the account is configured again and the product is found.
+ * Removing an account key removes all API products for that account from the
+ * active dashboard. Catalog, holding, and history records
+ * remain stored so reconnecting the account can restore the products.
  */
-export async function archiveUnheldAuthenticatedCatalogProducts(
+export async function archiveApiCatalogProducts(
   db: D1Database,
   ownerId: string,
   accountId: string,
@@ -315,13 +327,7 @@ export async function archiveUnheldAuthenticatedCatalogProducts(
         AND status = 'active'
         AND json_valid(payload)
         AND json_extract(payload, '$.accountId') = ?
-        AND json_extract(payload, '$.productDataMode') = 'api'
-        AND json_extract(payload, '$.apiAccess') = 'authenticated'
-        AND COALESCE((
-          SELECT amount FROM holdings
-          WHERE holdings.user_id = product_catalog.owner_id
-            AND holdings.product_id = product_catalog.product_id
-        ), 0) <= 0`)
+        AND json_extract(payload, '$.productDataMode') = 'api'`)
     .bind(archivedAt, archivedAt, ownerId, accountId)
     .run();
 }
@@ -334,7 +340,10 @@ function holdingEvidence(
   persisted: Map<string, number>,
   completeAccounts: Set<string>,
 ): HoldingEvidence {
-  const freshValue = firstHolding(fresh, [id, rate.productId, rate.externalProductId, rate.identityKey]);
+  const scopedAlias = rate.catalog?.accountId && rate.catalog.asset && rate.externalProductId
+    ? scopedExternalProductAlias(rate.catalog.accountId, rate.catalog.asset, rate.externalProductId)
+    : undefined;
+  const freshValue = firstHolding(fresh, [id, rate.productId, scopedAlias, rate.externalProductId, rate.identityKey]);
   if (freshValue !== undefined) return { known: true, amount: freshValue };
   if (completeAccounts.has(product.accountId)) return { known: true, amount: 0 };
   if (product.holdingDataMode === "manual") {
@@ -431,6 +440,9 @@ function resolveExistingRow(rows: CatalogRow[], sourceId: string) {
 function mapProductIds(map: Record<string, string>, rate: LiveRate, canonical: string, identity: string, id: string) {
   for (const key of [id, rate.productId, canonical, identity, rate.externalProductId]) {
     if (key) map[key] = id;
+  }
+  if (rate.externalProductId && rate.catalog?.accountId && rate.catalog.asset) {
+    map[scopedExternalProductAlias(rate.catalog.accountId, rate.catalog.asset, rate.externalProductId)] = id;
   }
 }
 

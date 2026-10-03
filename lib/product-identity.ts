@@ -89,6 +89,11 @@ export function buildPlatformProductIdentity(input: PlatformProductIdentityInput
   };
 }
 
+/** Alias for mapping an upstream holding row without dropping its account scope. */
+export function scopedExternalProductAlias(accountId: string, asset: string, externalProductId: string) {
+  return `api:${accountId.trim()}:${asset.trim().toUpperCase()}:${externalProductId.trim()}`;
+}
+
 export function compareProductIdentity(previous: ProductIdentityRecord | undefined, current: ProductIdentityRecord): ProductIdentityChange {
   if (!previous) return { state: "new", currentKey: current.identityKey };
   const changed = previous.identityKey !== current.identityKey

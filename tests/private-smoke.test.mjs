@@ -33,8 +33,12 @@ test("private preview still contains the long-history and manual-field scenarios
 test("private route remains account-scoped and does not fall back to global seeds", () => {
   const privatePage = readFileSync(new URL("../app/private/page.tsx", import.meta.url), "utf8");
   const dashboard = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const history = readFileSync(new URL("../app/components/product-history.tsx", import.meta.url), "utf8");
   assert.match(privatePage, /<Dashboard mode="private"/);
   assert.match(privatePage, /localPreview=\{process\.env\.NODE_ENV === "development"\}/);
   assert.match(dashboard, /useState\(\(\) => isDemo \? publicDemoProducts : \[\]\)/);
+  assert.match(dashboard, /loadHistoryPage=\{isDemo \|\| localPreview \? undefined/);
+  assert.match(history, /product-history-loading/);
+  assert.match(history, /暂无变更记录/);
   assert.match(dashboard, /const emptyHoldings: HoldingMap = \{\};/);
 });

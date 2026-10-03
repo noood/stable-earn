@@ -35,10 +35,11 @@ function rememberCooldown(minutes: ManualRefreshCooldownMinutes) {
   return minutes;
 }
 
-export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void; onCooldownChange: () => void }) {
+export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }: { onClose: () => void; onCooldownChange: () => void; onCredentialsRemoved: () => Promise<void> }) {
   const [status, setStatus] = useState<ApiConfigResult | null>(() => apiConfigSessionCache);
   const [cooldownMinutes, setCooldownMinutes] = useState<ManualRefreshCooldownMinutes | null>(() => cooldownSessionCache);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<ApiCredentialSource | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -116,7 +117,9 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
       clearForm();
       setSelectedId(null);
       setMessage(`${label} 的 API 配置已移除。`);
+      await onCredentialsRemoved();
       await loadStatus();
+      setPendingRemoval(null);
     } catch {
       setMessage("移除失败，请稍后重试。");
     } finally {
@@ -146,6 +149,17 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
   }
 
   const modalBusy = busy || savingCooldown;
+
+  if (pendingRemoval) return (
+    <ModalFrame ariaLabel="移除 API 配置及产品" title="移除 API 配置及产品" onClose={() => setPendingRemoval(null)} busy={busy}>
+      <p className="text-secondary type-body">移除后，该账户关联的所有 API 产品都会从列表中移除。已保存的持仓、产品资料和变更记录会保留；同步缓存会清除，之后重新配置并成功同步即可恢复产品。</p>
+      {message && <div className="error-panel type-caption mt-4 px-3 py-2.5" role="alert">{message}</div>}
+      <div className="mt-5 flex justify-end gap-2">
+        <ActionButton variant="secondary" disabled={busy} onClick={() => setPendingRemoval(null)}>取消</ActionButton>
+        <ActionButton variant="danger" disabled={busy} onClick={() => void remove(pendingRemoval.id, pendingRemoval.label)}>{busy ? "正在移除…" : "移除配置及产品"}</ActionButton>
+      </div>
+    </ModalFrame>
+  );
 
   return (
     <ModalFrame ariaLabel="API 设置" title="API 设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-5">
@@ -182,7 +196,7 @@ export function ApiSettings({ onClose, onCooldownChange }: { onClose: () => void
                   <SourceSummary account={account} label={source.label} statusLabel={statusLabel} statusClass={statusClass} description={`配置后${source.syncDescription}`} />
                   <div className="flex shrink-0 items-center gap-1.5">
                     {!source.configured && <ActionButton variant="secondary" disabled={modalBusy} onClick={openEditor}>添加</ActionButton>}
-                    {source.configured && <ApiRowMenu label={source.label} disabled={modalBusy || isSelected} onUpdate={openEditor} onRemove={() => void remove(source.id, source.label)} />}
+                    {source.configured && <ApiRowMenu label={source.label} disabled={modalBusy || isSelected} onUpdate={openEditor} onRemove={() => { setMessage(null); setPendingRemoval(source); }} />}
                   </div>
                 </div>
                 {isSelected && <form className="api-credential-form mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void save(); }} autoComplete="off"><div><h4 className="type-body font-semibold">配置 {source.label}</h4><p className="text-muted type-caption mt-1">只填写只读密钥；交易、转账、申购、赎回和提现权限必须关闭。</p></div><SecretField label="API Key" value={apiKey} onChange={setApiKey} /><SecretField label="API Secret" value={apiSecret} onChange={setApiSecret} />{source.requiresPassphrase && <SecretField label="Passphrase" value={passphrase} onChange={setPassphrase} />}<div className="flex justify-end gap-2"><ActionButton type="button" variant="secondary" disabled={modalBusy} onClick={() => { setSelectedId(null); clearForm(); }}>取消</ActionButton><ActionButton type="submit" disabled={modalBusy || !apiKey.trim() || !apiSecret.trim() || (source.requiresPassphrase && !passphrase.trim())}>{busy ? "加密保存中…" : "加密保存"}</ActionButton></div></form>}

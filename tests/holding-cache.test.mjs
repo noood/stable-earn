@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cachedHoldingTimes, freshHoldingIdsForSave } from "../lib/holding-cache.ts";
+import { cachedHoldingTimes, freshHoldingIdsForSave, mergeHoldingPositions } from "../lib/holding-cache.ts";
 
 const sourceTime = "2026-09-05T00:56:15.064Z";
 const firstFailureTime = "2026-09-05T01:00:18.013Z";
@@ -50,4 +50,23 @@ test("recovery permits saving even when the holding amount did not change", () =
   assert.deepEqual(cachedHoldingTimes(holdings, {}, secondFailureTime), {
     bitget: secondFailureTime,
   });
+});
+
+test("a complete empty position snapshot clears only that account's cached positions", () => {
+  const oldPositions = [
+    { productId: "bn-global-fixed", accountId: "binance-global", positionId: "g-1", amount: 100, source: "api", updatedAt: sourceTime },
+    { productId: "bn-bahrain-fixed", accountId: "binance-bahrain", positionId: "b-1", amount: 250, source: "api", updatedAt: sourceTime },
+  ];
+  const afterGlobalSync = mergeHoldingPositions(oldPositions, [], new Set(["binance-global"]), {});
+  assert.deepEqual(afterGlobalSync.map((position) => position.productId), ["bn-bahrain-fixed"]);
+  assert.deepEqual(mergeHoldingPositions(oldPositions, [], new Set(), {}).map((position) => position.productId), [
+    "bn-global-fixed", "bn-bahrain-fixed",
+  ]);
+});
+
+test("complete sync clears legacy cached positions using the catalog account mapping", () => {
+  const oldPosition = { productId: "legacy-fixed", positionId: "p-1", amount: 100, source: "api", updatedAt: sourceTime };
+  assert.deepEqual(mergeHoldingPositions([oldPosition], [], new Set(["binance-global"]), {
+    "legacy-fixed": "binance-global",
+  }), []);
 });
