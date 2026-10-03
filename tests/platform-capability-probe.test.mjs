@@ -80,6 +80,7 @@ function loadProbe() {
     },
     "@/lib/integrations/okx": {
       fetchOkxSavingsHoldings: async () => ({ holdings: { "okx-usdt": 0 }, observedAssets: ["USDT", "USDGO"] }),
+      fetchOkxOnchainOffers: async (_credential, asset) => ({ rows: asset === "USDT" ? [{ id: "offer-1", asset, protocol: "Example Staking", protocolType: "staking", status: "available", term: "0", apy: "4.2" }] : [] }),
     },
     "@/lib/live-rates": {
       fetchPublicRateSnapshot: async () => ({
@@ -112,6 +113,7 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   assert.equal(json.includes("123.456"), false);
   assert.equal(json.includes("99.99"), false);
   assert.equal(json.includes("45.67"), false);
+  assert.equal(json.includes("On-chain Earn offers"), true);
 
   const scope = (accountId, asset, productType) => result.scopes.find((entry) => (
     entry.accountId === accountId && entry.asset === asset && entry.productType === productType
@@ -130,6 +132,12 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   assert.equal(scope("bitget-global", "USDT", "fixed").holdingApi.status, "returned");
   assert.equal(scope("bitget-global", "USDT", "fixed").holdingApi.rows[0].period, "7d");
   assert.equal(scope("okx-global", "USDGO", "flexible").holdingApi.status, "returned");
+  assert.equal(scope("okx-global", "USDT", "flexible").productApi.status, "not_integrated");
+  const okxOffers = result.additionalProbes.find((entry) => entry.id === "okx-onchain-earn-offers");
+  assert.equal(okxOffers.assets.find((entry) => entry.asset === "USDT").status, "returned");
+  assert.equal(okxOffers.assets.find((entry) => entry.asset === "USDT").rows[0].apy, "4.2");
+  assert.equal(okxOffers.assets.find((entry) => entry.asset === "USDC").status, "empty");
+  assert.match(okxOffers.note, /不代表普通活期\/定期/);
   assert.equal(scope("mexc-ph", "USDT", "flexible").productApi.status, "not_integrated");
 
   const withoutCredentials = await probe({});
@@ -138,6 +146,8 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   ));
   assert.equal(euHoldingScope.holdingApi.status, "not_configured");
   assert.match(euHoldingScope.holdingApi.note, /只读 API 凭证/);
+  const okxOffersWithoutCredential = withoutCredentials.additionalProbes.find((entry) => entry.id === "okx-onchain-earn-offers");
+  assert.equal(okxOffersWithoutCredential.assets.every((entry) => entry.status === "not_configured"), true);
 });
 
 test("capability report groups safe upstream failure details without exposing response text", () => {

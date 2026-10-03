@@ -96,7 +96,7 @@ export type BitgetCapabilityProbe = {
       period: string | null;
       status: string | null;
       productLevel: string | null;
-      eligibleForMonitoring: boolean;
+      eligibleForMonitoring?: boolean;
       tiers: Array<{ min: number; max: number | null; apr: number }>;
     }>;
     diagnostic?: string;
@@ -176,19 +176,19 @@ function buildBitgetCapabilityProbe(
       const rows = (productResult.value.data ?? []).filter((row) => row.coin === asset);
       const normalizedRows = rows.map((row) => {
         const eligibleForMonitoring = row.periodType === "flexible"
-          && row.status !== "off_line"
-          && !isBitgetVipLevel(row.productLevel);
+          ? row.status !== "off_line" && !isBitgetVipLevel(row.productLevel)
+          : undefined;
         return {
           productId: normalizeExternalProductId(row.productId) ?? null,
           periodType: row.periodType ?? null,
           period: row.period ?? null,
           status: row.status ?? null,
           productLevel: row.productLevel ?? null,
-          eligibleForMonitoring,
+          ...(eligibleForMonitoring !== undefined ? { eligibleForMonitoring } : {}),
           tiers: normalizeTiers(row.apyList),
         };
       });
-      const eligibleFlexibleCount = normalizedRows.filter((row) => row.eligibleForMonitoring && row.tiers.length > 0).length;
+      const eligibleFlexibleCount = normalizedRows.filter((row) => row.eligibleForMonitoring === true && row.tiers.length > 0).length;
       return {
         status: rows.length > 0 ? "returned" : "empty",
         rowCount: rows.length,

@@ -21,7 +21,7 @@ type ManualDataSource = {
 type ApiConfigResult = { sources: ApiCredentialSource[]; manualSources: ManualDataSource[] };
 type ManualRefreshCooldownMinutes = 0 | 30;
 type PreferencesResult = { manualRefreshCooldownMinutes: ManualRefreshCooldownMinutes };
-type CapabilityReport = { generatedAt: string; dataChangesCommitted: false; includesHoldingAmounts: false; checkedScopeCount: number; scopes: unknown[] };
+type CapabilityReport = { generatedAt: string; dataChangesCommitted: false; includesHoldingAmounts: false; checkedScopeCount: number; scopes: unknown[]; additionalProbes?: unknown[] };
 
 let apiConfigSessionCache: ApiConfigResult | null = null;
 let cooldownSessionCache: ManualRefreshCooldownMinutes | null = null;
@@ -201,11 +201,11 @@ export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }:
       <section>
         <SectionIntro title="平台连接" />
         <div className="mb-4 rounded-xl border border-[var(--border)] p-3">
-          <p className="text-muted type-caption mb-2">只读检查已接入或可探测的平台接口；不会保存产品、持仓或历史。结果不含持仓金额和 API 密钥。未接入不代表交易所不支持。</p>
+          <p className="text-muted type-caption mb-2">只读检查已接入或可探测的平台接口；另外单独检查 OKX On-chain Earn（不算普通活期/定期）。不会保存产品、持仓或历史，结果不含持仓金额和 API 密钥。未接入不代表交易所不支持。</p>
           <ActionButton variant="secondary" size="small" disabled={modalBusy} onClick={() => void probeCapabilities()}>{probingCapabilities ? "正在检查多个接口…" : capabilityReport ? "重新检查平台 API" : "检查平台 API"}</ActionButton>
           {capabilityProbeError && <p className="error-panel type-caption mt-2 px-3 py-2" role="alert">{capabilityProbeError}</p>}
           {capabilityReport && <div className="mt-3">
-            <p className="text-muted type-micro mb-1">检查结果 · {new Date(capabilityReport.generatedAt).toLocaleString("zh-CN")} · {capabilityReport.checkedScopeCount} 个范围</p>
+            <p className="text-muted type-micro mb-1">检查结果 · {new Date(capabilityReport.generatedAt).toLocaleString("zh-CN")} · {capabilityReport.checkedScopeCount} 个矩阵范围{capabilityReport.additionalProbes?.length ? ` + ${capabilityReport.additionalProbes.length} 个附加探针` : ""}</p>
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-[11px] leading-relaxed">{JSON.stringify(capabilityReport, null, 2)}</pre>
           </div>}
         </div>

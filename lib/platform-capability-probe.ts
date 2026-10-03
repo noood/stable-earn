@@ -1,7 +1,7 @@
 import { fetchBinanceFlexibleSnapshot, fetchBinanceLockedSnapshot } from "@/lib/integrations/binance";
 import { probeBitgetAssets } from "@/lib/integrations/bitget";
 import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, fetchBybitShortFixedSnapshots, probeBybitFixedProducts, probeBybitFlexibleProducts } from "@/lib/integrations/bybit";
-import { fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
+import { fetchOkxOnchainOffers, fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
 import { apiAssetsFor, monitoredAssets, platformCapabilities, type CapabilityProductType, type PlatformApiMode } from "@/lib/platform-capabilities";
 import { collectSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
 
@@ -19,6 +19,11 @@ type SafeApiRow = {
   hasPositiveHolding?: boolean;
   isVip?: boolean;
   specialUserGroupRequired?: boolean;
+  asset?: string;
+  protocol?: string;
+  protocolType?: string;
+  term?: string;
+  apy?: string;
 };
 type ApiProbe = {
   mode: PlatformApiMode;
@@ -36,6 +41,22 @@ type CapabilityScope = {
   productApi: ApiProbe;
   holdingApi: ApiProbe;
   idMatch: null | { matchedIds: string[]; productOnlyIds: string[]; holdingOnlyIds: string[] };
+};
+type SupplementalAssetProbe = {
+  asset: string;
+  status: ProbeStatus;
+  rowCount: number | null;
+  rows: SafeApiRow[];
+  note?: string;
+};
+type SupplementalProbe = {
+  accountId: string;
+  id: "okx-onchain-earn-offers";
+  category: "onchain_earn";
+  endpoint: "/api/v5/finance/staking-defi/offers";
+  mode: "authenticated";
+  note: string;
+  assets: SupplementalAssetProbe[];
 };
 
 const reportIdLimit = 40;
@@ -59,6 +80,22 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
     holdingApi: initialApi(capability.holdingApi, credentialReady(capability.accountId)),
     idMatch: null,
   }));
+  const okxCredentialReady = credentialReady("okx-global");
+  const supplementalProbes: SupplementalProbe[] = [{
+    accountId: "okx-global",
+    id: "okx-onchain-earn-offers",
+    category: "onchain_earn",
+    endpoint: "/api/v5/finance/staking-defi/offers",
+    mode: "authenticated",
+    note: "独立检查 OKX On-chain Earn，不代表普通活期/定期 Savings 产品能力，也不会启用常规同步。",
+    assets: monitoredAssets.map((asset) => ({
+      asset,
+      status: okxCredentialReady ? "not_checked" : "not_configured",
+      rowCount: null,
+      rows: [],
+      ...(!okxCredentialReady ? { note: "未配置 OKX API 凭证，本次未请求。" } : {}),
+    })),
+  }];
 
   const findScope = (accountId: string, asset: string, productType: CapabilityProductType) => scopes.find((scope) => (
     scope.accountId === accountId && scope.asset === asset && scope.productType === productType
@@ -353,6 +390,33 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
           for (const asset of monitoredAssets) setResult("okx-global", asset, "flexible", "holdingApi", { status: "error", complete: false });
         }
       }));
+
+      jobs.push(withSyncPlatform("okx-global", async () => {
+        await Promise.all(monitoredAssets.map(async (asset, index) => {
+          try {
+            const result = await fetchOkxOnchainOffers({
+              apiKey: okxCredential!.apiKey,
+              apiSecret: okxCredential!.apiSecret,
+              passphrase: okxCredential!.passphrase!,
+            }, asset);
+            supplementalProbes[0].assets[index] = {
+              asset,
+              status: result.rows.length ? "returned" : "empty",
+              rowCount: result.rows.length,
+              rows: result.rows,
+              note: "On-chain Earn offers；不是普通 Savings 产品目录。",
+            };
+          } catch {
+            supplementalProbes[0].assets[index] = {
+              asset,
+              status: "error",
+              rowCount: null,
+              rows: [],
+              note: "请求失败；安全错误摘要见 apiFailureSummary。",
+            };
+          }
+        }));
+      }));
     }
 
     await Promise.all(jobs);
@@ -377,6 +441,7 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
     includesHoldingAmounts: false,
     checkedScopeCount: scopes.length,
     scopes,
+    additionalProbes: supplementalProbes,
     apiFailureSummary: summarizePlatformApiFailures(captured),
   };
 }

@@ -40,6 +40,9 @@ test("Bitget USDGO capability probe checks products and holdings without returni
   assert.equal(result.productApi.rowCount, 3);
   assert.equal(result.productApi.eligibleFlexibleCount, 1);
   assert.deepEqual(result.productApi.rows.map((row) => row.productId), ["usdgo-flex", "usdgo-vip", "usdgo-fixed"]);
+  assert.equal(result.productApi.rows[0].eligibleForMonitoring, true);
+  assert.equal(result.productApi.rows[1].eligibleForMonitoring, false);
+  assert.equal("eligibleForMonitoring" in result.productApi.rows[2], false);
   assert.equal(result.holdingsApi.status, "complete");
   assert.equal(result.holdingsApi.rowCount, 1);
   assert.equal(result.holdingsApi.rows[0].hasPositiveHolding, true);

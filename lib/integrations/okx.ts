@@ -16,10 +16,22 @@ type OkxSavingsRow = {
   rate?: string;
 };
 
+type OkxOnchainOfferRow = {
+  ccy?: string;
+  productId?: string | number;
+  algoId?: string | number;
+  protocol?: string;
+  protocolType?: string;
+  state?: string;
+  status?: string;
+  term?: string | number;
+  apy?: string | number;
+};
+
 type OkxResponse = {
   code?: string;
   msg?: string;
-  data?: OkxSavingsRow[];
+  data?: Array<OkxSavingsRow & OkxOnchainOfferRow>;
 };
 
 const productIds = {
@@ -43,6 +55,28 @@ export async function fetchOkxSavingsHoldings(credentials: OkxCredentials) {
     if (productId) holdings[productId] = finiteNumber(row.amt);
   }
   return { holdings, observedAssets: [...observedAssets] };
+}
+
+/**
+ * Read one currency's documented On-chain Earn offers. This is deliberately
+ * separate from ordinary Savings product discovery and returns no investment,
+ * earnings, or account-balance amounts from the upstream response.
+ */
+export async function fetchOkxOnchainOffers(credentials: OkxCredentials, asset: string) {
+  const query = new URLSearchParams({ ccy: asset });
+  const body = await signedGet(`/api/v5/finance/staking-defi/offers?${query.toString()}`, credentials);
+  const rows = (body.data ?? []).filter((row) => row.ccy?.toUpperCase() === asset.toUpperCase());
+  return {
+    rows: rows.map((row) => ({
+      id: safeIdentifier(row.productId ?? row.algoId),
+      ...(safeLabel(row.ccy) ? { asset: safeLabel(row.ccy) } : {}),
+      ...(safeLabel(row.protocol) ? { protocol: safeLabel(row.protocol) } : {}),
+      ...(safeLabel(row.protocolType) ? { protocolType: safeLabel(row.protocolType) } : {}),
+      ...(safeLabel(row.state ?? row.status) ? { status: safeLabel(row.state ?? row.status) } : {}),
+      ...(safeLabel(row.term) ? { term: safeLabel(row.term) } : {}),
+      ...(safeRate(row.apy) ? { apy: safeRate(row.apy) } : {}),
+    })),
+  };
 }
 
 async function signedGet(path: string, credentials: OkxCredentials) {
@@ -100,4 +134,21 @@ function bytesToBase64(bytes: Uint8Array) {
 function finiteNumber(value: string | number | undefined) {
   const parsed = typeof value === "number" ? value : Number.parseFloat(value ?? "0");
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function safeIdentifier(value: string | number | undefined) {
+  const text = value === undefined ? "" : String(value);
+  return /^[A-Za-z0-9_.:-]{1,128}$/.test(text) ? text : null;
+}
+
+function safeLabel(value: string | number | undefined) {
+  if (value === undefined) return undefined;
+  const text = String(value).replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80);
+  return text || undefined;
+}
+
+function safeRate(value: string | number | undefined) {
+  if (value === undefined) return undefined;
+  const text = String(value).trim();
+  return /^-?\d+(?:\.\d+)?%?$/.test(text) ? text : undefined;
 }
