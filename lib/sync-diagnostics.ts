@@ -1,7 +1,28 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-type Context = { runId: string; userRef: string; trigger: "scheduled" | "manual" | "daily"; attempt: number; platform?: string };
+type DiagnosticRecord = { event: string; [key: string]: unknown };
+type Context = {
+  runId: string;
+  userRef: string;
+  trigger: "scheduled" | "manual" | "daily";
+  attempt: number;
+  platform?: string;
+  captured?: DiagnosticRecord[];
+  suppressOutput?: boolean;
+};
 const context = new AsyncLocalStorage<Context>();
+
+/** Capture existing adapter diagnostics without emitting them to runtime logs. */
+export async function collectSyncDiagnostics<T>(task: () => Promise<T>) {
+  const captured: DiagnosticRecord[] = [];
+  const parent = context.getStore();
+  const result = await context.run({
+    ...(parent ?? { runId: crypto.randomUUID(), userRef: "capability-check", trigger: "manual" as const, attempt: 1 }),
+    captured,
+    suppressOutput: true,
+  }, task);
+  return { result, captured };
+}
 
 export async function withSyncDiagnostics<T>(
   userId: string,
@@ -10,7 +31,13 @@ export async function withSyncDiagnostics<T>(
 ) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`stable-earn-log:${userId}`));
   const userRef = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);
-  return context.run({ ...options, runId: options.runId ?? crypto.randomUUID(), userRef }, task);
+  return context.run({
+    ...options,
+    runId: options.runId ?? crypto.randomUUID(),
+    userRef,
+    ...(context.getStore()?.captured ? { captured: context.getStore()?.captured } : {}),
+    ...(context.getStore()?.suppressOutput ? { suppressOutput: true } : {}),
+  }, task);
 }
 
 export function withSyncPlatform<T>(platform: string, task: () => Promise<T>) {
@@ -23,6 +50,8 @@ export function syncDiagnostic(event: string, fields: Record<string, unknown> = 
   const current = context.getStore();
   if (!current) return;
   const record = { event, ...current, ...fields };
+  current.captured?.push(record);
+  if (current.suppressOutput) return;
   if (warning) console.warn(record);
   else console.info(record);
 }

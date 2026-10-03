@@ -49,3 +49,34 @@ test("Bitget USDGO capability probe checks products and holdings without returni
   assert.equal(productRequest.searchParams.get("coin"), "USDGO");
   assert.equal(productRequest.searchParams.get("filter"), "available_and_held");
 });
+
+test("Bitget capability matrix probe fetches shared holdings pages only once for all four assets", async () => {
+  const requests = [];
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => {
+        requests.push(new URL(url));
+        return { ok: true, status: 200, headers: new Headers(), url, text: async () => "" };
+      },
+      readExchangeText: async (response) => {
+        const url = new URL(response.url);
+        if (url.pathname.endsWith("/savings/product")) {
+          const coin = url.searchParams.get("coin");
+          return JSON.stringify({ code: "00000", data: [{ productId: `${coin}-flex`, coin, periodType: "flexible", status: "in_progress", productLevel: "normal", apyList: [] }] });
+        }
+        return JSON.stringify({ code: "00000", data: { resultList: [], endId: "" } });
+      },
+      readExchangeJson: async () => ({ code: "00000", data: {} }),
+      logExchangePayload: () => {},
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { probeBitgetAssets } = load("@/lib/integrations/bitget");
+  const assets = ["USDT", "USDC", "USDGO", "BTC"];
+  const result = await probeBitgetAssets({ apiKey: "key", apiSecret: "secret", passphrase: "pass" }, assets);
+
+  assert.deepEqual(result.map((entry) => entry.asset), assets);
+  assert.equal(requests.filter((url) => url.pathname.endsWith("/savings/product")).length, 4);
+  assert.equal(requests.filter((url) => url.pathname.endsWith("/savings/assets")).length, 1);
+  assert.ok(result.every((entry) => entry.holdingsApi.complete));
+});

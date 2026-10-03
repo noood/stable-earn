@@ -70,9 +70,8 @@ okx-global:BTC:flexible:manual:btc-campaign
 |---|---|---|
 | API/手动 `identityKey` | `lib/product-identity.ts` | 本文 |
 | 数据库目录匹配与归档 | `lib/product-catalog.ts` | `docs/DATA-STATES.md` |
-| 平台 × 区域 × 资产 × 产品类型 API 能力 | `lib/platform-capabilities.ts` | `docs/DATA-STATES.md` |
+| 平台 × 区域 × 资产 × 产品类型 API 能力 | `lib/platform-capabilities.ts` | `docs/PLATFORM-CAPABILITIES.md`、`docs/DATA-STATES.md` |
 | API 字段是否支持 | `lib/api-capabilities.ts` | `docs/DATA-STATES.md` |
 | 产品是否进入展示目录 | `lib/opportunity-policy.ts` | `docs/DATA-STATES.md` |
 | 缓存、失败和持仓状态 | `lib/product-status.ts`、`lib/sync-cache.ts` | `docs/DATA-STATES.md` |
 | 颜色、间距和组件 | `app/globals.css` | `docs/DESIGN-SYSTEM.md` |
-

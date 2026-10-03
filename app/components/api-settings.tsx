@@ -21,6 +21,7 @@ type ManualDataSource = {
 type ApiConfigResult = { sources: ApiCredentialSource[]; manualSources: ManualDataSource[] };
 type ManualRefreshCooldownMinutes = 0 | 30;
 type PreferencesResult = { manualRefreshCooldownMinutes: ManualRefreshCooldownMinutes };
+type CapabilityReport = { generatedAt: string; dataChangesCommitted: false; includesHoldingAmounts: false; checkedScopeCount: number; scopes: unknown[] };
 
 let apiConfigSessionCache: ApiConfigResult | null = null;
 let cooldownSessionCache: ManualRefreshCooldownMinutes | null = null;
@@ -45,6 +46,9 @@ export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }:
   const [passphrase, setPassphrase] = useState("");
   const [busy, setBusy] = useState(false);
   const [savingCooldown, setSavingCooldown] = useState(false);
+  const [probingCapabilities, setProbingCapabilities] = useState(false);
+  const [capabilityReport, setCapabilityReport] = useState<CapabilityReport | null>(null);
+  const [capabilityProbeError, setCapabilityProbeError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [statusError, setStatusError] = useState(false);
 
@@ -148,7 +152,26 @@ export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }:
     }
   }
 
-  const modalBusy = busy || savingCooldown;
+  async function probeCapabilities() {
+    setProbingCapabilities(true);
+    setCapabilityProbeError(null);
+    setCapabilityReport(null);
+    try {
+      const response = await fetch("/private/api/diagnostics/platform-capabilities", {
+        method: "POST",
+        cache: "no-store",
+      });
+      const result = await response.json() as CapabilityReport & { error?: string };
+      if (!response.ok) throw new Error(result.error || "检查失败，请稍后重试。");
+      setCapabilityReport(result);
+    } catch (error) {
+      setCapabilityProbeError(error instanceof Error ? error.message : "检查失败，请稍后重试。");
+    } finally {
+      setProbingCapabilities(false);
+    }
+  }
+
+  const modalBusy = busy || savingCooldown || probingCapabilities;
 
   if (pendingRemoval) return (
     <ModalFrame ariaLabel="移除 API 配置及产品" title="移除 API 配置及产品" onClose={() => setPendingRemoval(null)} busy={busy}>
@@ -177,6 +200,15 @@ export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }:
       {message && <div className="muted-panel type-caption px-3 py-2.5 font-normal">{message}</div>}
       <section>
         <SectionIntro title="平台连接" />
+        <div className="mb-4 rounded-xl border border-[var(--border)] p-3">
+          <p className="text-muted type-caption mb-2">只读检查已接入或可探测的平台接口；不会保存产品、持仓或历史。结果不含持仓金额和 API 密钥。未接入不代表交易所不支持。</p>
+          <ActionButton variant="secondary" size="small" disabled={modalBusy} onClick={() => void probeCapabilities()}>{probingCapabilities ? "正在检查多个接口…" : capabilityReport ? "重新检查平台 API" : "检查平台 API"}</ActionButton>
+          {capabilityProbeError && <p className="error-panel type-caption mt-2 px-3 py-2" role="alert">{capabilityProbeError}</p>}
+          {capabilityReport && <div className="mt-3">
+            <p className="text-muted type-micro mb-1">检查结果 · {new Date(capabilityReport.generatedAt).toLocaleString("zh-CN")} · {capabilityReport.checkedScopeCount} 个范围</p>
+            <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-[11px] leading-relaxed">{JSON.stringify(capabilityReport, null, 2)}</pre>
+          </div>}
+        </div>
         {statusError && <div className="error-panel type-caption mb-3 px-3 py-2.5" role="alert">配置状态读取失败，请重试。<ActionButton variant="text" size="small" onClick={() => { setStatusError(false); void loadStatus(); }}>重试</ActionButton></div>}
         <div className="space-y-2">
           {status?.sources.map((source) => {

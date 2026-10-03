@@ -6,6 +6,8 @@
 - `holdingDataMode`：默认持仓来源；`holdingSourceIds` 标记实际采用的 API 持仓。API 返回值及其缓存只读，不能因产品信息需要人工填写就开放持仓编辑。
 - `rateCoverage`：`complete`（完整）、`base_only`（仅基础 APR）、`max_only`（仅最高 APR）、`unavailable`（不可用）。
 
+平台 × 资产 × 活期/定期的 API 覆盖盘点与目标产品筛选规则见[平台能力矩阵与筛选规则](PLATFORM-CAPABILITIES.md)。矩阵中的 `manual` 表示当前例行同步不调用该接口，不代表已证明交易所不支持。
+
 产品与持仓分别判断。持仓的正数、明确零、未知不能混用；只有完整持仓快照才能把未出现的产品判为零。产品字段缺失不抹掉已知持仓，持仓失败不抹掉有效产品数据。
 
 ## 目录与身份

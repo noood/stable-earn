@@ -93,3 +93,32 @@ test("partial holding sync does not archive an active product after an APR drop"
   await db.batch(result.statements);
   assert.equal(db.sqlite.prepare("SELECT status FROM product_catalog WHERE product_id = ?").get(product.id).status, "active");
 });
+
+test("a positive Bitget holding creates a visible product row when APR is unavailable", async () => {
+  const load = moduleLoader();
+  const { prepareProductCatalogSync } = load("@/lib/product-catalog");
+  const db = sqliteDb();
+  const identityKey = "bitget-global:USDT:flexible:bg-usdt-vip-no-rate";
+  const result = await prepareProductCatalogSync(db, "user", [{
+    productId: identityKey,
+    canonicalProductId: identityKey,
+    identityKey,
+    externalProductId: "bg-usdt-vip-no-rate",
+    apr: 0,
+    tiers: [],
+    rateCoverage: "unavailable",
+    eligibilityRequired: true,
+    eligibilityLabel: "Bitget VIP 专属产品，账号资格需确认",
+    eligibilityStatus: "unknown",
+    fetchedAt: "2026-10-02T00:00:00.000Z",
+    sourceLabel: "Bitget 官方账户持仓 API",
+    catalog: { accountId: "bitget-global", exchange: "bitget", region: "global", asset: "USDT", holdingDataMode: "api", apiAccess: "authenticated" },
+  }], { [identityKey]: 7 }, ["bitget-global"]);
+
+  assert.equal(result.products.length, 1);
+  assert.equal(result.products[0].externalProductId, "bg-usdt-vip-no-rate");
+  assert.equal(result.products[0].rateCoverage, "unavailable");
+  assert.equal(result.products[0].eligibilityRequired, true);
+  assert.equal(result.products[0].eligibilityStatus, "unknown");
+  assert.equal(result.products[0].tiers.length, 0);
+});

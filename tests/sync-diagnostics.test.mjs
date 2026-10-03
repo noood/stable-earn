@@ -11,6 +11,20 @@ function fixture(fetch) {
   return { logs, ...load("@/lib/sync-diagnostics"), ...load("@/lib/exchange-fetch") };
 }
 
+test("one-off capability checks capture adapter diagnostics without writing them to runtime logs", async () => {
+  const f = fixture(async () => Response.json({}));
+  const { result, captured } = await f.collectSyncDiagnostics(() => f.withSyncPlatform("bitget-global", async () => {
+    f.syncDiagnostic("probe_rows", { productId: "product-a", amount: 123.45 });
+    return "done";
+  }));
+
+  assert.equal(result, "done");
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].platform, "bitget-global");
+  assert.equal(captured[0].amount, 123.45);
+  assert.deepEqual(f.logs, []);
+});
+
 test("HTTP and API codes remain distinct, without logging signed queries or response data", async () => {
   const f = fixture(async () => Response.json({ code: -1021, msg: "SECRET-BODY", balance: 987654321 }));
   await f.withSyncDiagnostics("cloudflare:secret@example.test", { trigger: "scheduled", attempt: 3, runId: "run-a" }, () =>

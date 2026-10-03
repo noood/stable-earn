@@ -33,7 +33,15 @@ test("Binance flexible diagnostic pairs sanitized product IDs with position IDs"
   });
   const { fetchBinanceFlexibleSnapshot } = load("@/lib/integrations/binance");
 
-  await fetchBinanceFlexibleSnapshot({ apiKey: "secret-key", apiSecret: "secret-value" }, "global", ["USDT"]);
+  const snapshot = await fetchBinanceFlexibleSnapshot({ apiKey: "secret-key", apiSecret: "secret-value" }, "global", ["USDT"]);
+
+  assert.deepEqual(snapshot.rates.map((rate) => rate.externalProductId), ["offer-300", "offer-large"]);
+  assert.ok(Math.abs(snapshot.rates[0].apr - 7.79) < 1e-9);
+  assert.ok(Math.abs(snapshot.rates[1].apr - 3.13) < 1e-9);
+  assert.deepEqual(snapshot.holdings, {
+    "binance-global:USDT:flexible:offer-300": 12.5,
+    "binance-global:USDT:flexible:offer-large": 34,
+  });
 
   const record = diagnostics.find((entry) => entry.event === "binance_flexible_rows");
   assert.ok(record);
@@ -69,11 +77,16 @@ test("Bybit flexible diagnostic records position product IDs and amounts", async
   });
   const { fetchBybitFlexibleHoldings } = load("@/lib/integrations/bybit");
 
-  await fetchBybitFlexibleHoldings({
+  const snapshot = await fetchBybitFlexibleHoldings({
     apiKey: "secret-key",
     apiSecret: "secret-value",
     baseUrls: ["https://api.bybit.com"],
   }, "global", ["USDT"]);
+
+  assert.deepEqual(snapshot.holdings, {
+    "bybit-global:USDT:flexible:offer-a": 8,
+    "bybit-global:USDT:flexible:offer-b": 21,
+  });
 
   const record = diagnostics.find((entry) => entry.event === "bybit_flexible_position_rows");
   assert.ok(record);

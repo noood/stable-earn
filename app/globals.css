@@ -431,7 +431,6 @@ input:focus-visible,
   line-height: var(--leading-caption);
 }
 .manual-product-delete { margin-top: var(--space-3); border: 0; padding: 0; background: transparent; }
-.manual-product-delete:hover:not(:disabled) { text-decoration: underline; }
 .manual-product-delete:disabled { cursor: not-allowed; opacity: .55; }
 .inline-select-menu {
   position: fixed;

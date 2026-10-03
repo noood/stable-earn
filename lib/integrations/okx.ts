@@ -35,12 +35,14 @@ export async function fetchOkxSavingsHoldings(credentials: OkxCredentials) {
   const holdings: Record<string, number> = Object.fromEntries(
     Object.values(productIds).map((productId) => [productId, 0]),
   );
+  const observedAssets = new Set<string>();
 
   for (const row of body.data ?? []) {
+    if (row.ccy) observedAssets.add(row.ccy.toUpperCase());
     const productId = row.ccy ? productIds[row.ccy as keyof typeof productIds] : undefined;
     if (productId) holdings[productId] = finiteNumber(row.amt);
   }
-  return { holdings };
+  return { holdings, observedAssets: [...observedAssets] };
 }
 
 async function signedGet(path: string, credentials: OkxCredentials) {

@@ -64,6 +64,20 @@ test("opportunity boundary is inclusive at 6%, long terms need a holding", () =>
   assert.equal(holdingSyncNote("synced"), "接口未返回该产品持仓");
 });
 
+test("qualification-restricted products need eligibility or a positive holding", () => {
+  const restricted = {
+    ...base,
+    eligibilityRequired: true,
+    eligibilityStatus: "unknown",
+    tiers: [{ min: 0, max: 300, apr: 10 }],
+  };
+  assert.equal(productShouldBeActive(restricted, { known: true, amount: 0 }), false);
+  assert.equal(productShouldBeActive({ ...restricted, eligibilityStatus: "eligible" }, { known: true, amount: 0 }), true);
+  assert.equal(productShouldBeActive(restricted, { known: true, amount: 20 }), true);
+  assert.equal(productShouldBeActive(restricted, { known: false, amount: 0 }, true), true);
+  assert.equal(productShouldBeActive(restricted, { known: false, amount: 0 }, false), false);
+});
+
 test("banner distinguishes whole failure, interface scope and page network failure", () => {
   assert.match(syncFailureSummary(["Bitget（持仓接口未完整返回）"]), /Bitget 持仓 API/);
   assert.equal(sanitizeSyncFailure("Bitget（USDT:1382948397058678784、USDT:1488775596992425984 持仓未返回）"), "Bitget（部分数据未返回）");

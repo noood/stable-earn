@@ -126,10 +126,36 @@ export async function fetchBybitShortFixedSnapshots(credentials: BybitCredential
     ),
   ]);
   const productRows = productResult.status === "fulfilled" ? productResult.value.result?.list ?? [] : [];
-  const positions = (positionResult.status === "fulfilled" ? positionResult.value.result?.list ?? [] : []).filter((row) => (
+  const rawPositionRows = positionResult.status === "fulfilled" ? positionResult.value.result?.list ?? [] : [];
+  const positions = rawPositionRows.filter((row) => (
     Boolean(row.productId)
     && supportedFixedAssets.has(row.coin as Product["asset"])
   ));
+  syncDiagnostic("bybit_fixed_rows", {
+    productApiStatus: productResult.status === "fulfilled" ? "success" : "error",
+    productRowCount: productRows.length,
+    productRows: productRows.flatMap((row) => {
+      const coin = String(row.coin ?? "").toUpperCase();
+      if (!supportedFixedAssets.has(coin as Product["asset"])) return [];
+      return [{
+        productId: row.productId?.trim() || null,
+        coin,
+        duration: row.duration ?? null,
+        status: row.status ?? null,
+        isVip: Boolean(row.isVip),
+        specialUserGroupRequired: Boolean(row.specialUserGroupRequired),
+        tiers: fixedProductTiers(row),
+      }];
+    }),
+    holdingsApiStatus: positionResult.status === "fulfilled" ? "success" : "error",
+    positionRowCount: rawPositionRows.length,
+    positionRows: positions.map((row) => ({
+      productId: row.productId?.trim() || null,
+      coin: row.coin ?? null,
+      status: row.status ?? null,
+      hasPositiveHolding: finiteNumber(row.amount) > 0,
+    })),
+  });
   const rates = productRows.flatMap((row) => {
     const rate = fixedProductRate(row);
     return rate ? [rate] : [];

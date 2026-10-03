@@ -13,7 +13,7 @@ type Credentials = {
 
 type FlexibleProductRow = {
   asset?: string;
-  latestAnnualPercentageRate?: string;
+  latestAnnualPercentageRate?: string | number;
   tierAnnualPercentageRate?: Record<string, number | string>;
   productId?: string;
 };
@@ -131,7 +131,6 @@ export async function fetchBinanceFlexibleSnapshot(
       collectBinancePages("/sapi/v1/simple-earn/flexible/position", positionPage, credentials, { asset }),
     ]);
     const productRows = products.rows?.filter((row) => row.asset === asset) ?? [];
-    const product = products.rows?.find((row) => row.asset === asset) ?? products.rows?.[0];
     const positionRows = positions.rows?.filter((row) => row.asset === asset) ?? [];
     // Sanitized trace for verifying whether one flexible asset maps to
     // multiple upstream products. Keep product/position IDs and amounts only;
@@ -157,36 +156,76 @@ export async function fetchBinanceFlexibleSnapshot(
         totalAmount: finiteNumber(row.totalAmount),
       })),
     });
-    const position = positionRows[0];
-    const rateSource = product ?? position;
-    if (!rateSource) throw new Error(`Binance returned no ${asset} flexible product`);
-    if (!Number.isFinite(Number.parseFloat(rateSource.latestAnnualPercentageRate ?? ""))) {
-      throw new Error(`Binance returned no ${asset} APR`);
-    }
 
-    const tiers = parseBinanceTiers(
-      asset,
-      rateSource.latestAnnualPercentageRate,
-      rateSource.tierAnnualPercentageRate,
-    );
-    const holding = positionRows.reduce((sum, row) => sum + finiteNumber(row.totalAmount), 0);
-    const accountId = account === "global" ? "binance-global" : "binance-bahrain";
-    const externalProductId = rateSource.productId?.trim() || `flexible-${asset.toLowerCase()}`;
-    const identity = buildPlatformProductIdentity({
-      accountId,
-      asset,
-      productType: "flexible",
-      externalProductId,
+    // Product and position endpoints are both product-scoped. Join on the
+    // upstream productId instead of selecting one product row and summing
+    // every position for the coin into it.
+    const productRowsById = new Map<string, FlexibleProductRow>();
+    let unmappedProductRowCount = 0;
+    productRows.forEach((row) => {
+      const productId = normalizeBinanceProductId(row.productId)
+        ?? (productRows.length === 1 ? `flexible-${asset.toLowerCase()}` : undefined);
+      if (!productId) {
+        unmappedProductRowCount += 1;
+        return;
+      }
+      const existing = productRowsById.get(productId);
+      if (!existing || (!hasBinanceApr(existing) && hasBinanceApr(row))) productRowsById.set(productId, row);
     });
 
-    return {
-      rate: {
+    const positionsById = new Map<string, { amount: number; rateRow?: FlexiblePositionRow }>();
+    let unmappedPositivePositionCount = 0;
+    positionRows.forEach((row) => {
+      const productId = normalizeBinanceProductId(row.productId)
+        ?? (productRowsById.size === 1
+          ? productRowsById.keys().next().value
+          : productRowsById.size === 0 && positionRows.length === 1
+            ? `flexible-${asset.toLowerCase()}`
+            : undefined);
+      if (!productId) {
+        if (finiteNumber(row.totalAmount) > 0) unmappedPositivePositionCount += 1;
+        return;
+      }
+      const existing = positionsById.get(productId);
+      positionsById.set(productId, {
+        amount: (existing?.amount ?? 0) + finiteNumber(row.totalAmount),
+        rateRow: existing?.rateRow ?? (hasBinanceApr(row) ? row : undefined),
+      });
+    });
+
+    const productIds = new Set(productRowsById.keys());
+    for (const [productId, position] of positionsById) {
+      if (position.amount > 0) productIds.add(productId);
+    }
+
+    const accountId = account === "global" ? "binance-global" : "binance-bahrain";
+    const rates: LiveRate[] = [];
+    const holdings: Record<string, number> = {};
+    for (const externalProductId of productIds) {
+      const product = productRowsById.get(externalProductId);
+      const position = positionsById.get(externalProductId);
+      const rateSource = hasBinanceApr(product) ? product : position?.rateRow ?? product;
+      const hasApr = hasBinanceApr(rateSource);
+      const tiers = hasApr
+        ? parseBinanceTiers(asset, rateSource?.latestAnnualPercentageRate, rateSource?.tierAnnualPercentageRate)
+        : [];
+      const identity = buildPlatformProductIdentity({
+        accountId,
+        asset,
+        productType: "flexible",
+        externalProductId,
+      });
+
+      rates.push({
         productId: identity.identityKey,
         ...identity,
         apr: tiers[0]?.apr ?? 0,
         tiers,
         fetchedAt,
-        sourceLabel: accountConfig.sourceLabel,
+        sourceLabel: product
+          ? accountConfig.sourceLabel
+          : accountConfig.sourceLabel.replace("账户 API", "账户持仓 API"),
+        rateCoverage: hasApr ? "complete" : "unavailable",
         catalog: {
           accountId,
           exchange: "binance" as const,
@@ -195,17 +234,22 @@ export async function fetchBinanceFlexibleSnapshot(
           holdingDataMode: "api" as const,
           apiAccess: "authenticated" as const,
         },
-      },
-      productId: identity.identityKey,
-      holding,
-      productListComplete: products.complete,
-      positionListComplete: positions.complete,
+      });
+      holdings[identity.identityKey] = position?.amount ?? 0;
+    };
+
+    if (rates.length === 0) throw new Error(`Binance returned no ${asset} flexible product`);
+    return {
+      rates,
+      holdings,
+      productListComplete: products.complete && unmappedProductRowCount === 0,
+      positionListComplete: positions.complete && unmappedPositivePositionCount === 0,
     };
   }));
 
   return {
-    rates: results.map((result) => result.rate),
-    holdings: Object.fromEntries(results.map((result) => [result.productId, result.holding])),
+    rates: results.flatMap((result) => result.rates),
+    holdings: Object.assign({}, ...results.map((result) => result.holdings)),
     productListsComplete: results.every((result) => result.productListComplete),
     positionListsComplete: results.every((result) => result.positionListComplete),
   };
@@ -419,7 +463,7 @@ function lockedRate(
 
 function parseBinanceTiers(
   asset: string,
-  rawBaseApr: string | undefined,
+  rawBaseApr: string | number | undefined,
   rawBonusTiers: Record<string, number | string> | undefined,
 ): BinanceTier[] {
   const baseApr = finiteNumber(rawBaseApr) * 100;
@@ -547,6 +591,21 @@ async function hmacHex(payload: string, secret: string) {
 function finiteNumber(value: string | number | undefined) {
   const parsed = typeof value === "number" ? value : Number.parseFloat(value ?? "0");
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeBinanceProductId(value: string | undefined) {
+  const productId = value?.trim();
+  return productId || undefined;
+}
+
+function hasBinanceApr(row: FlexibleProductRow | undefined): row is FlexibleProductRow & {
+  latestAnnualPercentageRate: string | number;
+} {
+  if (!row || row.latestAnnualPercentageRate === undefined || row.latestAnnualPercentageRate === null) return false;
+  const apr = typeof row.latestAnnualPercentageRate === "number"
+    ? row.latestAnnualPercentageRate
+    : Number.parseFloat(row.latestAnnualPercentageRate);
+  return Number.isFinite(apr) && apr >= 0;
 }
 
 function finiteOptional(value: string | number | undefined) {

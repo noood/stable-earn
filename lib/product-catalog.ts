@@ -93,7 +93,8 @@ export async function prepareProductCatalogSync(
     .map((rate) => rate.identityKey ?? rate.canonicalProductId ?? rate.productId));
   const incomingCanonicalIds = incomingIdentityKeys;
 
-  for (const rate of normalizedIncomingRates.filter(rateHasKnownApr)) {
+  for (const rate of normalizedIncomingRates.filter((candidate) => rateHasKnownApr(candidate)
+    || hasPositiveFreshHolding(candidate, freshHoldings))) {
     const identityKey = rate.identityKey ?? rate.canonicalProductId ?? rate.productId;
     const canonicalProductId = identityKey;
     const fingerprint = normalizeFingerprint(rate.identityFingerprint);
@@ -468,6 +469,17 @@ function liveRateScore(rate: LiveRate) {
 
 function rateHasKnownApr(rate: LiveRate) {
   return rate.rateCoverage !== "unavailable" && Number.isFinite(rate.apr);
+}
+
+function hasPositiveFreshHolding(rate: LiveRate, holdings: Record<string, number>) {
+  const keys = [rate.productId, rate.canonicalProductId, rate.identityKey];
+  if (rate.catalog?.accountId && rate.catalog.asset && rate.externalProductId) {
+    keys.push(scopedExternalProductAlias(rate.catalog.accountId, rate.catalog.asset, rate.externalProductId));
+  } else {
+    keys.push(rate.externalProductId);
+  }
+  return keys
+    .some((key) => key !== undefined && Number.isFinite(Number(holdings[key])) && Number(holdings[key]) > 0);
 }
 
 function updateCatalogStatement(

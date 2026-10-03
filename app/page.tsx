@@ -900,6 +900,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
   const manualKind = baseProduct.manualKind ?? "flexible";
   const manualProductTerm = manualProduct && manualKind !== "flexible";
   const fixedFacts = product.productType === "fixed" || product.manualKind === "limited" ? fixedProductFacts(product) : [];
+  const qualificationFact = product.eligibilityRequired ? qualificationLabel(product) : null;
   const durationDays = productTermDays(product);
   const apiManaged = baseProduct.productDataMode === "api";
   const apiTiming = holdingPosition?.source === "api" && (holdingPosition.purchaseAt || holdingPosition.redeemAt) ? holdingPosition : undefined;
@@ -937,6 +938,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
 
   return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
     {(!editing || !manualProduct) && fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
+    {(!editing || !manualProduct) && qualificationFact && <ProductFact label="申购资格" value={qualificationFact} />}
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
     {!editing && manualTerm && <ProductFact label="活动期限" value={durationDays ? formatTerm(durationDays) : "待填写"} />}
     {sourceText && <ProductMeta text={sourceText} danger={Boolean(rateFallbackAt || product.capacitySource === "cache")} />}
@@ -1170,9 +1172,6 @@ function fixedProductFacts(product: Product): Array<[string, string]> {
     Date.now() < Date.parse(product.subscriptionEndsAt) ? "认购截止" : "认购已截止",
     new Date(product.subscriptionEndsAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }),
   ]);
-  if (product.eligibilityRequired) {
-    facts.push(["申购资格", qualificationLabel(product)]);
-  }
   return facts;
 }
 function formatTerm(termDays: number) {

@@ -80,7 +80,7 @@ export type BitgetSavingsSnapshot = {
 const bitgetAssetPageSize = 100;
 const maxBitgetAssetPages = 50;
 
-type SupportedAsset = "USDT" | "USDC" | "USDGO";
+type SupportedAsset = "USDT" | "USDC" | "USDGO" | "BTC";
 
 export type BitgetCapabilityProbe = {
   asset: SupportedAsset;
@@ -123,14 +123,38 @@ export async function probeBitgetAsset(
   asset: SupportedAsset,
 ): Promise<BitgetCapabilityProbe> {
   const [productResult, assetsResult] = await Promise.allSettled([
-    signedGet<BitgetProductRow[]>(
-      "/api/v2/earn/savings/product",
-      new URLSearchParams({ coin: asset, filter: "available_and_held" }),
-      credentials,
-    ),
+    fetchBitgetCapabilityProducts(credentials, asset),
     fetchBitgetAssetPages(credentials),
   ]);
 
+  return buildBitgetCapabilityProbe(asset, productResult, assetsResult);
+}
+
+/** Query several product lists while fetching the shared holdings pages once. */
+export async function probeBitgetAssets(
+  credentials: BitgetCredentials,
+  assets: readonly SupportedAsset[],
+): Promise<BitgetCapabilityProbe[]> {
+  const [productResults, assetsResult] = await Promise.all([
+    Promise.allSettled(assets.map((asset) => fetchBitgetCapabilityProducts(credentials, asset))),
+    Promise.allSettled([fetchBitgetAssetPages(credentials)]).then(([result]) => result),
+  ]);
+  return assets.map((asset, index) => buildBitgetCapabilityProbe(asset, productResults[index], assetsResult));
+}
+
+function fetchBitgetCapabilityProducts(credentials: BitgetCredentials, asset: SupportedAsset) {
+  return signedGet<BitgetProductRow[]>(
+    "/api/v2/earn/savings/product",
+    new URLSearchParams({ coin: asset, filter: "available_and_held" }),
+    credentials,
+  );
+}
+
+function buildBitgetCapabilityProbe(
+  asset: SupportedAsset,
+  productResult: PromiseSettledResult<BitgetResponse<BitgetProductRow[]>>,
+  assetsResult: PromiseSettledResult<BitgetAssetCollection>,
+): BitgetCapabilityProbe {
   const productApi: BitgetCapabilityProbe["productApi"] = productResult.status === "rejected"
     ? { status: "error", rowCount: 0, eligibleFlexibleCount: 0, rows: [], diagnostic: endpointDiagnostic(productResult.reason) }
     : (() => {
@@ -138,7 +162,7 @@ export async function probeBitgetAsset(
       const normalizedRows = rows.map((row) => {
         const eligibleForMonitoring = row.periodType === "flexible"
           && row.status !== "off_line"
-          && row.productLevel !== "VIP";
+          && !isBitgetVipLevel(row.productLevel);
         return {
           productId: normalizeExternalProductId(row.productId) ?? null,
           periodType: row.periodType ?? null,
@@ -281,6 +305,12 @@ export async function fetchBitgetSavingsSnapshot(
           holdingDataMode: "api" as const,
           apiAccess: "authenticated" as const,
         },
+        ...(isBitgetVipLevel(item.row.productLevel) ? {
+          eligibilityRequired: true,
+          eligibilityLabel: "Bitget VIP 专属产品，账号资格需确认",
+          eligibilityStatus: "unknown" as const,
+        } : {}),
+        rateCoverage: item.tiers.length > 0 ? "complete" : "unavailable",
       });
     });
   }
@@ -290,7 +320,7 @@ export async function fetchBitgetSavingsSnapshot(
   if (assetsResult.status === "fulfilled") {
     for (const asset of assets) {
       const matchingRows = assetRows
-        .filter((row) => row.productCoin === asset && row.periodType === "flexible" && row.productLevel !== "VIP");
+        .filter((row) => row.productCoin === asset && row.periodType === "flexible");
       const assetRates = rates.filter((rate) => rate.catalog?.asset === asset);
       if (matchingRows.length > 0) {
         matchingRows.forEach((row, index) => {
@@ -417,7 +447,7 @@ type BitgetMergedRow = {
 function mergeBitgetRows(asset: SupportedAsset, productRows: BitgetProductRow[], assetRows: BitgetAssetRow[]) {
   const merged = new Map<string, BitgetMergedRow>();
   const productCandidates = productRows
-    .filter((row) => row.coin === asset && row.periodType === "flexible" && row.status !== "off_line" && row.productLevel !== "VIP")
+    .filter((row) => row.coin === asset && row.periodType === "flexible" && row.status !== "off_line" && !isBitgetVipLevel(row.productLevel))
     .map((row, index) => ({
       key: bitgetRowKey(row.productId, normalizeTiers(row.apyList), row.productLevel, index),
       row,
@@ -434,7 +464,9 @@ function mergeBitgetRows(asset: SupportedAsset, productRows: BitgetProductRow[],
   }
 
   assetRows
-    .filter((row) => row.productCoin === asset && row.periodType === "flexible" && row.productLevel !== "VIP")
+    .filter((row) => row.productCoin === asset
+      && row.periodType === "flexible"
+      && (!isBitgetVipLevel(row.productLevel) || finiteNumber(row.holdAmount) > 0))
     .forEach((row, index) => {
       const tiers = normalizeAssetTiers(row.apy);
       const key = bitgetRowKey(row.productId, tiers, row.productLevel, index);
@@ -456,8 +488,15 @@ function mergeBitgetRows(asset: SupportedAsset, productRows: BitgetProductRow[],
     });
 
   return [...merged.values()]
-    .filter((item) => item.tiers.length > 0)
+    // A positive balance is authoritative evidence that the account owns a
+    // real product, even when the product/APR endpoint no longer returns it
+    // or the holding response has no usable rate ladder.
+    .filter((item) => item.tiers.length > 0 || finiteNumber(item.row.holdAmount) > 0)
     .sort((left, right) => (left.externalProductId ?? "").localeCompare(right.externalProductId ?? ""));
+}
+
+function isBitgetVipLevel(value: string | undefined) {
+  return value?.trim().toUpperCase() === "VIP";
 }
 
 function bitgetRowKey(productId: string | undefined, tiers: Array<{ min: number; max: number | null; apr: number }>, productLevel: string | undefined, index: number) {

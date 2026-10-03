@@ -83,8 +83,8 @@ export async function fetchPublicRateSnapshot() {
   ];
   const settled = await Promise.allSettled(jobs.map((job) => job.task));
   return {
-    rates: settled.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []),
-    failures: settled.flatMap((result, index) => result.status === "fulfilled" && result.value ? [] : [jobs[index].label]),
+    rates: settled.flatMap((result) => result.status === "fulfilled" ? result.value : []),
+    failures: settled.flatMap((result, index) => result.status === "fulfilled" ? [] : [jobs[index].label]),
   };
 }
 
@@ -112,7 +112,7 @@ export function summarizePublicFailures(failures: string[]) {
   ));
 }
 
-async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null> {
+async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate[]> {
   let lastError: unknown;
   for (const base of endpoint.bases) {
     const controller = new AbortController();
@@ -126,14 +126,56 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
       }>(response);
       if (!response.ok || body.retCode !== 0) throw new Error(`Bybit returned ${response.status}/${body.retCode ?? "unknown"}`);
       const candidates = body.result?.list ?? [];
-      const item = candidates.find((candidate) => candidate.status === "Available") ?? candidates[0];
-      const baseApr = parsePercent(item?.estimateApr);
-      const tiers = parseBybitTiers(item?.tierAprDetails);
-      const apr = tiers[0]?.apr ?? baseApr;
+      const ratesByProductId = new Map<string, LiveRate>();
+      const fetchedAt = new Date().toISOString();
+      const unmappedRowCount = candidates.filter((candidate) => !candidate.productId?.trim() && candidates.length > 1).length;
+      for (const item of candidates) {
+        const externalProductId = item.productId?.trim()
+          || (candidates.length === 1 ? `flexible-${endpoint.coin.toLowerCase()}` : undefined);
+        if (!externalProductId) continue;
+        const baseApr = parsePercent(item.estimateApr);
+        const tiers = parseBybitTiers(item.tierAprDetails);
+        const apr = tiers[0]?.apr ?? baseApr;
+        if (!Number.isFinite(apr)) continue;
+        const identity = buildPlatformProductIdentity({
+          accountId: endpoint.accountId,
+          asset: endpoint.coin,
+          productType: "flexible",
+          externalProductId,
+        });
+        const hasLiveCapacity = tiers.some((tier) => tier.max !== null);
+        const rate: LiveRate = {
+          productId: identity.identityKey,
+          ...identity,
+          apr,
+          ...(tiers.length > 0 ? { tiers } : {}),
+          fetchedAt,
+          sourceLabel: endpoint.label,
+          availability: item.status === "Available"
+            ? "available"
+            : item.status
+              ? "unavailable"
+              : "unknown",
+          rateCoverage: tiers.length > 0 ? "complete" : "base_only",
+          ...(hasLiveCapacity ? { capacitySource: "live" as const, capacityFetchedAt: fetchedAt } : {}),
+          catalog: {
+            accountId: endpoint.accountId,
+            exchange: "bybit",
+            region: endpoint.platform === "Bybit.com" ? "global" : "eu",
+            asset: endpoint.coin as Product["asset"],
+            holdingDataMode: endpoint.platform === "Bybit.com" ? "api" : "manual",
+            apiAccess: "public",
+          },
+        };
+        const existing = ratesByProductId.get(externalProductId);
+        if (!existing || bybitRateScore(rate) > bybitRateScore(existing)) ratesByProductId.set(externalProductId, rate);
+      }
+      const rates = [...ratesByProductId.values()];
       syncDiagnostic("bybit_flexible_rows", {
         platform: endpoint.platform,
         coin: endpoint.coin,
         rowCount: candidates.length,
+        unmappedRowCount,
         rows: candidates.map((candidate) => ({
           productId: candidate.productId ?? null,
           coin: candidate.coin ?? null,
@@ -147,37 +189,15 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
           responseKeys: Object.keys(candidate).sort(),
           rateFields: safeBybitRateFields(candidate),
         })),
-        selectedProductId: item?.productId ?? null,
-        selectedApr: Number.isFinite(apr) ? `${apr}%` : item?.estimateApr ?? null,
-        selectedTierCount: tiers.length,
+        includedProducts: rates.map((rate) => ({
+          productId: rate.externalProductId ?? null,
+          identityKey: rate.identityKey ?? null,
+          apr: rate.apr,
+          tierCount: rate.tiers?.length ?? 0,
+        })),
       });
-      if (!Number.isFinite(apr)) throw new Error("Bybit returned no APR");
-      const externalProductId = item?.productId ?? `flexible-${endpoint.coin.toLowerCase()}`;
-      const identity = buildPlatformProductIdentity({
-        accountId: endpoint.accountId,
-        asset: endpoint.coin,
-        productType: "flexible",
-        externalProductId,
-      });
-      const fetchedAt = new Date().toISOString();
-      const hasLiveCapacity = tiers.some((tier) => tier.max !== null);
-      return {
-        productId: identity.identityKey,
-        ...identity,
-        apr,
-        ...(tiers.length > 0 ? { tiers } : {}),
-        fetchedAt,
-        sourceLabel: endpoint.label,
-        ...(hasLiveCapacity ? { capacitySource: "live" as const, capacityFetchedAt: fetchedAt } : {}),
-        catalog: {
-          accountId: endpoint.accountId,
-          exchange: "bybit",
-          region: endpoint.platform === "Bybit.com" ? "global" : "eu",
-          asset: endpoint.coin as Product["asset"],
-          holdingDataMode: endpoint.platform === "Bybit.com" ? "api" : "manual",
-          apiAccess: "public",
-        },
-      };
+      if (rates.length === 0) throw new Error("Bybit returned no usable flexible product APR");
+      return rates;
     } catch (error) {
       lastError = error;
     } finally {
@@ -185,6 +205,12 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate | null>
     }
   }
   throw lastError ?? new Error("Bybit public API unavailable");
+}
+
+function bybitRateScore(rate: LiveRate) {
+  return Number(rate.availability === "available") * 1000
+    + (rate.tiers?.length ?? 0)
+    + Number(rate.rateCoverage === "complete");
 }
 
 function parseBybitTiers(details: BybitFlexibleRow["tierAprDetails"]) {

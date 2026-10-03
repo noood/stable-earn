@@ -45,8 +45,13 @@ export function productShouldBeActive(
   // a product whose holding is merely unknown.
   if (!holding.known && alreadyActive) return true;
   if (holding.known && holding.amount > 0) return true;
+  // A required account qualification is not proof that the account can
+  // subscribe. Keep unknown/ineligible products out of the ordinary
+  // opportunity list; a positive holding or an existing row with unknown
+  // holdings was handled above and remains visible.
+  if (product.eligibilityRequired && product.eligibilityStatus !== "eligible") return false;
   if (product.availability === "unavailable" || product.eligibilityStatus === "ineligible") {
-    return alreadyActive && !holding.known;
+    return false;
   }
   if (productQualifiesAsOpportunity(product)) return true;
   return false;
