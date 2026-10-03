@@ -3,8 +3,9 @@ import { accessFailureReason, diagnosticErrorKind, syncDiagnostic } from "./sync
 const DEFAULT_RETRY_DELAY_MS = 800;
 const responses = new WeakMap<Response, { requestId: string; startedAt: number }>();
 
-export async function exchangeFetch(input: string, init?: RequestInit) {
+export async function exchangeFetch(input: string, init?: RequestInit, options: { retry?: boolean } = {}) {
   let response = await fetchWithDiagnostics(input, init, 1);
+  if (options.retry === false) return response;
   if (!isRetryableStatus(response.status)) return response;
 
   const delayMs = retryDelay(response.headers.get("Retry-After"));

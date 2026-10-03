@@ -80,7 +80,10 @@ function loadProbe() {
     },
     "@/lib/integrations/okx": {
       fetchOkxSavingsHoldings: async () => ({ holdings: { "okx-usdt": 0 }, observedAssets: ["USDT", "USDGO"] }),
-      fetchOkxOnchainOffers: async (_credential, asset) => ({ rows: asset === "USDT" ? [{ id: "offer-1", asset, protocol: "Example Staking", protocolType: "staking", status: "available", term: "0", apy: "4.2" }] : [] }),
+      fetchOkxOnchainOffers: async () => ({ byAsset: {
+        USDT: { rowCount: 1, rows: [{ id: "offer-1", asset: "USDT", protocol: "Example Staking", protocolType: "staking", status: "available", term: "0", apy: "4.2" }] },
+        USDC: { rowCount: 0, rows: [] }, USDGO: { rowCount: 0, rows: [] }, BTC: { rowCount: 0, rows: [] },
+      } }),
     },
     "@/lib/live-rates": {
       fetchPublicRateSnapshot: async () => ({

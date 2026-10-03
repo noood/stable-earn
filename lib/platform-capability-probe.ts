@@ -47,6 +47,7 @@ type SupplementalAssetProbe = {
   status: ProbeStatus;
   rowCount: number | null;
   rows: SafeApiRow[];
+  complete?: boolean | null;
   note?: string;
 };
 type SupplementalProbe = {
@@ -87,7 +88,7 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
     category: "onchain_earn",
     endpoint: "/api/v5/finance/staking-defi/offers",
     mode: "authenticated",
-    note: "独立检查 OKX On-chain Earn，不代表普通活期/定期 Savings 产品能力，也不会启用常规同步。",
+    note: "单次独立检查 OKX On-chain Earn 并按四币整理；不代表普通活期/定期 Savings 产品能力，也不会启用常规同步。",
     assets: monitoredAssets.map((asset) => ({
       asset,
       status: okxCredentialReady ? "not_checked" : "not_configured",
@@ -371,12 +372,13 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
     const okxCredential = credentials["okx-global"];
     if (credentialReady("okx-global")) {
       jobs.push(withSyncPlatform("okx-global", async () => {
+        const okxCredentials = {
+          apiKey: okxCredential!.apiKey,
+          apiSecret: okxCredential!.apiSecret,
+          passphrase: okxCredential!.passphrase!,
+        };
         try {
-          const result = await fetchOkxSavingsHoldings({
-            apiKey: okxCredential!.apiKey,
-            apiSecret: okxCredential!.apiSecret,
-            passphrase: okxCredential!.passphrase!,
-          });
+          const result = await fetchOkxSavingsHoldings(okxCredentials);
           for (const asset of monitoredAssets) {
             const present = result.observedAssets.includes(asset);
             setResult("okx-global", asset, "flexible", "holdingApi", {
@@ -389,33 +391,35 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
         } catch {
           for (const asset of monitoredAssets) setResult("okx-global", asset, "flexible", "holdingApi", { status: "error", complete: false });
         }
-      }));
-
-      jobs.push(withSyncPlatform("okx-global", async () => {
-        await Promise.all(monitoredAssets.map(async (asset, index) => {
-          try {
-            const result = await fetchOkxOnchainOffers({
-              apiKey: okxCredential!.apiKey,
-              apiSecret: okxCredential!.apiSecret,
-              passphrase: okxCredential!.passphrase!,
-            }, asset);
+        try {
+          const result = await fetchOkxOnchainOffers(okxCredentials);
+          for (let index = 0; index < monitoredAssets.length; index += 1) {
+            const asset = monitoredAssets[index];
+            const offerResult = result.byAsset[asset];
+            const complete = offerResult.rowCount === offerResult.rows.length;
             supplementalProbes[0].assets[index] = {
               asset,
-              status: result.rows.length ? "returned" : "empty",
-              rowCount: result.rows.length,
-              rows: result.rows,
-              note: "On-chain Earn offers；不是普通 Savings 产品目录。",
+              status: !complete ? "partial" : offerResult.rowCount ? "returned" : "empty",
+              rowCount: offerResult.rowCount,
+              rows: offerResult.rows,
+              complete,
+              note: complete
+                ? "一次请求返回 On-chain Earn offers；不是普通 Savings 产品目录。"
+                : `接口共返回 ${offerResult.rowCount} 行；报告仅展示前 ${offerResult.rows.length} 行，且不是普通 Savings 产品目录。`,
             };
-          } catch {
+          }
+        } catch {
+          for (let index = 0; index < monitoredAssets.length; index += 1) {
             supplementalProbes[0].assets[index] = {
-              asset,
+              asset: monitoredAssets[index],
               status: "error",
               rowCount: null,
               rows: [],
+              complete: false,
               note: "请求失败；安全错误摘要见 apiFailureSummary。",
             };
           }
-        }));
+        }
       }));
     }
 

@@ -256,7 +256,7 @@
 |---|---|---|---|
 | Bybit Global / EU | [Easy & On-chain Earn 产品资料](https://bybit-exchange.github.io/docs/v5/finance/earn/easy-onchain/product-info) 的 `GET /v5/earn/product` 明确无需鉴权，`category` 可选 `FlexibleSaving` / `OnChain`；[Fixed Saving 产品资料](https://bybit-exchange.github.io/docs/v5/finance/earn/fixed-saving/product) 的 `GET /v5/earn/fixed-term/product` 也明确无需鉴权，返回币种、期限、APY 档、状态和 VIP 标记。 | 2026-10-04 直接查询 Global/EU 两个公开 API 主机、四币、三类目录（FlexibleSaving、OnChain、FixedTerm），结果见下表。标准活期 USDGO 在两区都被 `180002 Invalid coin` 拒绝；定期若显式传 `coin=USDGO`，返回 `180001 Invalid parameter: invalid coin`。 | OnChain、Hold To Earn、Advanced Earn 等属于不同产品类别，不是当前 64 格简单 Savings 的等价项；它们已另行逐类检查，结果见下文。EU 的实际持仓仍需区域凭证；本次没有 EU 持仓凭证。 |
 | Bitget Global | 官方 [Classic Earn Savings 文档](https://www.bitget.com/docs/catalog/earn-classic-savings/classic-earn-savings) 列出 `GET /api/v2/earn/savings/product`；响应有 `periodType=flexible|fixed`、`period`、APY 档和产品状态。`GET /api/v2/earn/savings/assets` 可用 `periodType=flexible|fixed` 分别查询持仓；响应可按 `productId` 与 `period` 识别产品。 | 产品 API 与两类持仓 API 都存在。10/03 线上产品探针曾见 USDT 定期 3 行、USDC/USDGO/BTC 定期成功但空；活期 USDT/USDC 有行，USDGO/BTC 成功但空。 | 上述旧探针只请求了 flexible 持仓。当前本地检查代码已添加 fixed 持仓查询及脱敏的 `period` 输出，但要部署后才能看到该用户真实的定期持仓 ID/期限并核对匹配。未因此启用 Bitget 定期常规同步。 |
-| OKX Global | 官方[金融产品 API 文档](https://www.okx.com/docs-v5/en/#financial-product) 列出 `GET /api/v5/finance/staking-defi/offers`，用于查询 On-chain Earn offers。 | 2026-10-04 对 USDT、USDC、USDGO、BTC 逐一匿名请求均返回 HTTP 401 / OKX `50103`（缺少 `OK-ACCESS-KEY`）；这只能确认该接口需要账户鉴权，不能当作产品空列表。Stable Rewards 示例为 `USDG`（非 `USDGO`），且没有 APR。普通 Savings 的正式产品/APR端点仍未找到。 | 本地“检查平台 API”现在会对四币分别请求 On-chain offers，并将其作为 `additionalProbes` 单独报告；部署后用已保存凭证实测。不得将结果混入普通 Savings 矩阵。 |
+| OKX Global | 官方[金融产品 API 文档](https://www.okx.com/docs-v5/en/#financial-product) 列出 `GET /api/v5/finance/staking-defi/offers`，用于查询 On-chain Earn offers。 | 2026-10-04 对 USDT、USDC、USDGO、BTC 逐一匿名请求均返回 HTTP 401 / OKX `50103`（缺少 `OK-ACCESS-KEY`）；这只能确认该接口需要账户鉴权，不能当作产品空列表。Stable Rewards 示例为 `USDG`（非 `USDGO`），且没有 APR。普通 Savings 的正式产品/APR端点仍未找到。 | 本地“检查平台 API”已改为一次不带 `ccy` 的签名查询并在报告里按四币分组；不得把 On-chain API当普通 Savings，也不能把网页端非文档化的 `savings-rate-summary` 当正式产品 API。 |
 | MEXC PH / UK | 当前官方 API 文档目录列出 Spot、Futures、Broker、P2P、CLI；[Spot API 介绍](https://www.mexc.com/api-docs/spot-v3/introduction) 描述市场、账户、交易等接口，未列 Earn/Savings 产品线。 | 暂无可核实的官方 Earn/Savings 产品/APR 或持仓 API 端点。PH/UK 的手动产品记录继续保留。 | “目录没列”不能证明绝无未公开或区域专属接口。只有 MEXC 官方新增文档/明确答复，或找到可重复、可授权的官方 API 端点后，才能把状态改为“确认不支持”或“已返回”。 |
 
 **Bybit 的“其他 Earn”已逐类查过可对应的官方产品 API；结论不能互相代替。**
@@ -307,11 +307,20 @@
 - API 设置里的“检查平台 API”现在会对 Bitget Savings 持仓接口分别传 `periodType=flexible` 和 `periodType=fixed`；固定产品行与定期持仓行都记录 `period`。2026-10-04 01:09 的线上报告确认新版已部署并成功完成 fixed 查询。
 - 摘要只返回产品 ID、期限、状态、档位数量和“是否存在正数持仓”，不返回金额，也不写产品目录、缓存或变更历史；但服务器会在内存中处理接口原始持仓响应中的金额。
 - `Bitget Global` 的定期能力矩阵标记仍保持 `manual`，即常规同步不启用这条产品/持仓路径；此次只是扩充一次性只读诊断。
-- OKX 的官方 `/api/v5/finance/staking-defi/offers` 已加入独立只读探针，按 USDT、USDC、USDGO、BTC 查询。报告仅含产品标识、协议、期限、状态与 APY，不含投资额/收益金额；该 On-chain Earn 类别不会映射进普通活期/定期产品格，也不会改常规同步矩阵。测试已覆盖签名请求、按币种筛选和金额脱敏。
+- OKX 的官方 `/api/v5/finance/staking-defi/offers` 已加入独立只读探针。新版发起一次签名查询，再在报告里按 USDT、USDC、USDGO、BTC 分组；报告仅含产品标识、协议、期限、状态与 APY，不含投资额/收益金额。该 On-chain Earn 类别不会映射进普通活期/定期格，也不会改常规同步矩阵。测试覆盖单次请求、分组、鉴权、金额脱敏和 429 时不重试/不切换备用域名。
 - MEXC PH/UK 官方 API 目录复核已完成：当前公开目录没有列 Earn/Savings 产品/APR 或持仓端点。该结论是“官方资料未发现”，不是“交易所确认不支持”；目前不需要用户提供 MEXC 凭证。
 - 2026-10-04 代理开启后 Bybit 官方文档和公开目录 API 均可读；Binance 官方 Simple Earn 文档索引也可读，并确认柔性/锁定产品清单与持仓端点属于 `USER_DATA`，故需账号 Key。线上 64 格检查覆盖 Binance、Bybit、Bitget、OKX 的现有配置；MEXC 当前没有 API 接入。Bitget fixed 持仓探针已部署，但能力矩阵仍未因此自动改成常规同步 API。
 
-**下一步 / 负责人：**用户部署当前代码后，在“API 设置 → 检查平台 API”运行一次检查，把完整 JSON 发回。Codex 再据 `additionalProbes` 里的四币状态、产品行和安全错误摘要更新 OKX 的实测结论；普通 Savings 与 On-chain Earn 继续分开记录。MEXC 暂无用户操作项，除非之后找到新的官方端点资料。
+### 2026-10-04 02:28 上海时间：新增探针首次线上结果
+
+来源：用户提供的检查报告，`generatedAt=2026-10-03T18:28:24.250Z`（上海时间 2026-10-04 02:28）。报告仍声明 `dataChangesCommitted=false`、`includesHoldingAmounts=false`。
+
+- OKX 余额接口与 On-chain offers 接口本次均遇到 HTTP 429。四种币的 offers 都是 `error`，不是“成功但为空”，所以这次没有得到产品支持与否的结论。
+- `apiFailureSummary` 还记录了重试/备用域名访问触发 `subrequest_limit_exceeded`。原实现并发请求四个币，且 429 后会重试并尝试备用域名，放大了请求数；这些错误不能解读成无凭证权限，也不能解读成 OKX 没有产品。
+- **Codex：**本地已将 On-chain 查询改为一次不带 `ccy` 的签名请求后在服务器按 USDT、USDC、USDGO、BTC 分组；它排在 OKX 余额查询之后，并且只有该附加 offers 请求在诊断中关闭自动重试，遇到 429 不再访问备用域名。余额查询的原行为保留。
+- **用户：**部署此修正版后再运行一次检查并发回 JSON。若仍收到 429，报告会保留明确限流状态，不再额外耗尽 Worker 子请求；可以稍后再单独重跑。
+
+此次限流没有改变 MEXC 或普通 Savings 的评估结论。
 
 ## 代码来源
 
