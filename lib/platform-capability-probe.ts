@@ -1,9 +1,8 @@
 import { fetchBinanceFlexibleSnapshot, fetchBinanceLockedSnapshot } from "@/lib/integrations/binance";
 import { probeBitgetAssets } from "@/lib/integrations/bitget";
-import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, fetchBybitShortFixedSnapshots } from "@/lib/integrations/bybit";
+import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, fetchBybitShortFixedSnapshots, probeBybitFlexibleProducts } from "@/lib/integrations/bybit";
 import { fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
-import { fetchPublicRateSnapshot } from "@/lib/live-rates";
-import { monitoredAssets, platformCapabilities, type CapabilityProductType, type PlatformApiMode } from "@/lib/platform-capabilities";
+import { apiAssetsFor, monitoredAssets, platformCapabilities, type CapabilityProductType, type PlatformApiMode } from "@/lib/platform-capabilities";
 import { collectSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
 
 type ProbeCredential = { apiKey: string; apiSecret: string; passphrase?: string };
@@ -89,42 +88,43 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
   const { captured } = await collectSyncDiagnostics(async () => {
     const jobs: Promise<void>[] = [];
 
-    // Public Bybit product/APR endpoints do not require the user's credentials.
-    jobs.push((async () => {
-      try {
-        const snapshot = await withSyncPlatform("public", fetchPublicRateSnapshot);
-        for (const [accountId, platformLabel, asset] of [
-          ["bybit-global", "Bybit.com", "USDT"],
-          ["bybit-global", "Bybit.com", "USDC"],
-          ["bybit-eu", "Bybit EU", "USDT"],
-        ] as const) {
-          const ids = snapshot.rates
-            .filter((rate) => rate.catalog?.accountId === accountId && rate.catalog.asset === asset && rate.productType !== "fixed")
-            .map((rate) => rate.externalProductId)
-            .filter((id): id is string => Boolean(id));
-          const failed = snapshot.failures.some((failure) => failure.startsWith(`${platformLabel} ${asset} `));
-          setResult(accountId, asset, "flexible", "productApi", {
-            status: failed ? "error" : ids.length ? "returned" : "empty",
-            ids,
-            rowCount: ids.length,
-            complete: !failed,
-          });
-        }
-      } catch {
-        for (const [accountId, asset] of [["bybit-global", "USDT"], ["bybit-global", "USDC"], ["bybit-eu", "USDT"]]) {
-          setResult(accountId, asset, "flexible", "productApi", { status: "error", complete: false });
-        }
+    // Probe every monitored coin through the public Bybit endpoint without
+    // expanding routine daily sync coverage or enabling unknown API scopes.
+    for (const accountId of ["bybit-global", "bybit-eu"] as const) {
+      for (const asset of monitoredAssets) {
+        jobs.push((async () => {
+          try {
+            const rows = await probeBybitFlexibleProducts(accountId, asset);
+            const configuredMode = platformCapabilities.find((entry) => (
+              entry.accountId === accountId && entry.asset === asset && entry.productType === "flexible"
+            ))?.productApi;
+            setResult(accountId, asset, "flexible", "productApi", {
+              status: rows.length ? "returned" : "empty",
+              ids: rows.map((row) => row.productId).filter((id): id is string => Boolean(id)),
+              rows: rows.map((row) => ({
+                id: row.productId,
+                ...(row.status ? { status: row.status } : {}),
+                ...(row.tierCount !== undefined ? { tierCount: row.tierCount } : {}),
+              })),
+              rowCount: rows.length,
+              complete: true,
+              ...(configuredMode === "manual" ? { note: "本次通过公开接口只读检查；常规同步尚未接入此范围。" } : {}),
+            });
+          } catch {
+            setResult(accountId, asset, "flexible", "productApi", { status: "error", complete: false });
+          }
+        })());
       }
-    })());
+    }
 
     for (const [accountId, region] of [["binance-global", "global"], ["binance-bahrain", "bahrain"]] as const) {
       const credential = credentials[accountId];
       if (!credentialReady(accountId)) continue;
       const binanceCredential = { apiKey: credential!.apiKey, apiSecret: credential!.apiSecret };
-      for (const asset of ["USDT", "USDC"] as const) {
+      for (const asset of monitoredAssets) {
         jobs.push(withSyncPlatform(accountId, async () => {
           try {
-            const result = await fetchBinanceFlexibleSnapshot(binanceCredential, region, [asset]);
+            const result = await fetchBinanceFlexibleSnapshot(binanceCredential, region, [asset], true);
             const rates = result.rates.filter((rate) => rate.catalog?.asset === asset);
             const positiveHoldingIds = Object.entries(result.holdings)
               .filter(([, amount]) => amount > 0)
@@ -134,12 +134,18 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
               ids: rates.map((rate) => rate.externalProductId).filter((id): id is string => Boolean(id)),
               rowCount: rates.length,
               complete: result.productListsComplete,
+              ...(!apiAssetsFor(accountId, "flexible", "productApi").includes(asset)
+                ? { note: "本次通过现有账户接口只读检查；常规同步尚未接入此资产。" }
+                : {}),
             });
             setResult(accountId, asset, "flexible", "holdingApi", {
               status: result.positionListsComplete ? positiveHoldingIds.length ? "returned" : "empty" : "partial",
               ids: positiveHoldingIds,
               rowCount: positiveHoldingIds.length,
               complete: result.positionListsComplete,
+              ...(!apiAssetsFor(accountId, "flexible", "holdingApi").includes(asset)
+                ? { note: "本次通过现有账户接口只读检查；常规同步尚未接入此资产。" }
+                : {}),
             });
           } catch {
             setError(accountId, asset, "flexible", ["productApi", "holdingApi"]);
@@ -176,8 +182,8 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
       const bybit = { apiKey: bybitCredential!.apiKey, apiSecret: bybitCredential!.apiSecret, baseUrls: bybitGlobalApiBases };
       jobs.push(withSyncPlatform("bybit-global", async () => {
         try {
-          const result = await fetchBybitFlexibleHoldings(bybit, "global", ["USDT", "USDC"]);
-          for (const asset of ["USDT", "USDC"] as const) {
+          const result = await fetchBybitFlexibleHoldings(bybit, "global", monitoredAssets);
+          for (const asset of monitoredAssets) {
             const failed = result.sync.failedAssets.includes(asset);
             const ids = Object.keys(result.holdings)
               .filter((identity) => identity.includes(`:${asset}:flexible:`))
@@ -187,10 +193,13 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
               ids,
               rowCount: ids.length,
               complete: !failed,
+              ...(!apiAssetsFor("bybit-global", "flexible", "holdingApi").includes(asset)
+                ? { note: "本次通过现有账户接口只读检查；常规同步尚未接入此资产。" }
+                : {}),
             });
           }
         } catch {
-          for (const asset of ["USDT", "USDC"] as const) setResult("bybit-global", asset, "flexible", "holdingApi", { status: "error", complete: false });
+          for (const asset of monitoredAssets) setResult("bybit-global", asset, "flexible", "holdingApi", { status: "error", complete: false });
         }
       }));
       jobs.push(withSyncPlatform("bybit-global", async () => {
@@ -216,6 +225,44 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
           }
         } catch {
           for (const asset of monitoredAssets) setError("bybit-global", asset, "fixed", ["productApi", "holdingApi"]);
+        }
+      }));
+    }
+
+    const bybitEuCredential = credentials["bybit-eu"];
+    if (!credentialReady("bybit-eu")) {
+      for (const asset of monitoredAssets) {
+        setResult("bybit-eu", asset, "flexible", "holdingApi", {
+          status: "not_configured",
+          complete: false,
+          note: "Bybit EU 持仓接口需要该区域的只读 API 凭证；配置后仅用于本次检查。",
+        });
+      }
+    } else {
+      jobs.push(withSyncPlatform("bybit-eu", async () => {
+        try {
+          const result = await fetchBybitFlexibleHoldings({
+            apiKey: bybitEuCredential!.apiKey,
+            apiSecret: bybitEuCredential!.apiSecret,
+            baseUrls: ["https://api.bybit.eu"],
+          }, "eu", monitoredAssets);
+          for (const asset of monitoredAssets) {
+            const failed = result.sync.failedAssets.includes(asset);
+            const ids = Object.keys(result.holdings)
+              .filter((identity) => identity.startsWith(`bybit-eu:${asset}:flexible:`))
+              .map((identity) => externalIdFromScoped(identity));
+            setResult("bybit-eu", asset, "flexible", "holdingApi", {
+              status: failed ? "error" : ids.length ? "returned" : "empty",
+              ids,
+              rowCount: ids.length,
+              complete: !failed,
+              note: "本次只读检查；该凭证不会用于日常同步。",
+            });
+          }
+        } catch {
+          for (const asset of monitoredAssets) {
+            setResult("bybit-eu", asset, "flexible", "holdingApi", { status: "error", complete: false });
+          }
         }
       }));
     }
@@ -392,17 +439,33 @@ function applyCapturedRecord(
       const all = rows(record[key]);
       for (const asset of monitoredAssets) {
         const entries = all.filter((entry) => String(entry.coin ?? "").toUpperCase() === asset);
-        const endpointOk = record[statusKey] === "success";
+        const endpointStatus = record[statusKey];
+        const endpointOk = endpointStatus === "success";
+        const identityRows = entries.map((entry) => ({
+          ...entry,
+          productId: bybitFixedIdentityId(entry.productId, entry.duration),
+        }));
         setResult(accountId, asset, "fixed", field, {
-          status: endpointOk ? entries.length ? "returned" : "empty" : "error",
-          ids: entries.flatMap((entry) => strings(entry[idKey])),
-          rows: sanitizeApiRows(entries, idKey, field === "holdingApi"),
+          status: endpointStatus === "error"
+            ? "error"
+            : endpointStatus === "partial"
+              ? "partial"
+              : entries.length ? "returned" : "empty",
+          ids: identityRows.flatMap((entry) => strings(entry.productId)),
+          rows: sanitizeApiRows(identityRows, idKey, field === "holdingApi"),
           rowCount: entries.length,
           complete: endpointOk,
         });
       }
     }
   }
+}
+
+function bybitFixedIdentityId(value: unknown, durationValue: unknown) {
+  const productId = typeof value === "string" ? value.trim() : "";
+  if (!productId) return null;
+  const duration = typeof durationValue === "string" ? durationValue.trim().toLowerCase() : "";
+  return duration && /^\d+(?:\.\d+)?[dhm]$/.test(duration) ? `${productId}@${duration}` : productId;
 }
 
 function sanitizeApiRows(rows: Array<Record<string, unknown>>, idKey: string, holding: boolean): SafeApiRow[] {

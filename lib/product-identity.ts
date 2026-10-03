@@ -12,7 +12,7 @@ export type PlatformProductIdentityInput = {
   accountId: string;
   asset: string;
   productType: "flexible" | "fixed";
-  /** The immutable product/project id returned by the platform API. */
+  /** Stable upstream identity token; include a documented discriminator if the API reuses its raw product ID. */
   externalProductId: string;
 };
 
@@ -69,8 +69,9 @@ export function productIdentityFingerprint(snapshot: IdentitySnapshot) {
  * Build the platform identity used by every API-backed product.
  *
  * `product_catalog.product_id` remains the durable database row id. This key
- * is the upstream identity used for matching product and holding responses,
- * and deliberately contains no internal product-family alias.
+ * is the upstream identity used for matching product and holding responses.
+ * When an exchange reuses its raw ID, externalProductId may be a stable
+ * composite such as `rawId@duration`; no internal product-family alias is used.
  */
 export function buildPlatformProductIdentity(input: PlatformProductIdentityInput) {
   const accountId = input.accountId.trim();

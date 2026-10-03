@@ -6,7 +6,7 @@
 
 | 名称 | 作用 | 是否用于展示/匹配 | 是否允许随 APR 变化 |
 |---|---|---:|---:|
-| `externalProductId` | 平台 API 返回的真实产品 ID | 用于识别平台产品 | 否 |
+| `externalProductId` | 平台 API 的稳定产品身份值；通常是原始 ID，若平台复用原始 ID，则附加官方两端都有的稳定区分字段 | 用于识别平台产品 | 否 |
 | `identityKey` | 应用层的稳定产品身份 | 是，API 和持仓统一靠它匹配 | 否 |
 | `product_id` | D1 中的持久化行 ID，也是各表外键 | 是，用于数据库关联 | 否 |
 | `identityFingerprint` | 身份快照诊断信息 | 否，只用于审计 | 可以变化 |
@@ -26,10 +26,13 @@
 ```text
 bybit-global:USDT:flexible:1
 bybit-global:USDC:flexible:2
+bybit-global:USDT:fixed:4@7d
 bitget-global:USDT:flexible:bg-usdt-standard
 ```
 
 `accountId` 已经包含平台和区域，例如 `binance-global`、`binance-bahrain`、`bybit-eu`。`ASSET` 使用大写；`productType` 只能是 `flexible` 或 `fixed`。
+
+通常，`externalProductId` 是交易所原始产品 ID。若同一原始 ID 在产品列表中对应多个不同产品，而且产品接口与持仓接口都提供稳定的区分字段，则身份值必须合并这两个字段。例如 Bybit 定期产品的两个接口都有 `productId` 和 `duration`；线上样本中 `productId=4` 同时对应 7 天和 90 天，因此应用层用 `4@7d` 与 `4@90d` 分开识别和配对持仓。
 
 ### 手动产品
 
@@ -60,7 +63,7 @@ okx-global:BTC:flexible:manual:btc-campaign
 
 - 不再引入平台内部“产品族 ID”作为统一身份。
 - 不把 `canonicalProductId` 当作新的业务概念；它只是旧版本兼容名称。
-- 不把 APR、额度、资格、活动期限或买入/赎回时间拼进身份。
+- 不把 APR、额度、资格、订阅窗口或买入/赎回时间拼进身份。只有当平台复用原始产品 ID、且产品和持仓接口都返回同一稳定区分字段时，才把该字段纳入组合身份。
 - 不把未知持仓当成零持仓，也不因单次 API 缺失就新建重复产品。
 - 不用手动填写的展示名称替代平台真实产品 ID。
 

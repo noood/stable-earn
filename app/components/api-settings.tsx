@@ -250,7 +250,7 @@ function SourceSummary({ account, label, statusLabel, statusClass, description }
 }
 
 function ApiSettingsSkeleton() {
-  return <div className="api-settings-skeleton" aria-label="正在读取配置状态" aria-busy="true">{Array.from({ length: 5 }, (_, index) => <div key={index} className="api-settings-skeleton-row"><span className="api-settings-skeleton-badge" /><span className="api-settings-skeleton-copy"><span /><span /></span></div>)}</div>;
+  return <div className="api-settings-skeleton" aria-label="正在读取配置状态" aria-busy="true">{Array.from({ length: 6 }, (_, index) => <div key={index} className="api-settings-skeleton-row"><span className="api-settings-skeleton-badge" /><span className="api-settings-skeleton-copy"><span /><span /></span></div>)}</div>;
 }
 
 function ApiRowMenu({ label, disabled, onUpdate, onRemove }: { label: string; disabled: boolean; onUpdate: () => void; onRemove: () => void }) {

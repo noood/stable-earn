@@ -87,10 +87,13 @@ export async function prepareProductCatalogSync(
   // identity_key; this branch only keeps the deployment compatible while old
   // schemas are being retired.
   const selectedByIdentity = new Map<string, Set<string>>();
+  const selectedLegacyRows = new Set<string>();
   const binanceCatalogDecisions: Array<Record<string, unknown>> = [];
   const normalizedIncomingRates = deduplicateRates(incomingRates);
-  const incomingIdentityKeys = new Set(normalizedIncomingRates
-    .map((rate) => rate.identityKey ?? rate.canonicalProductId ?? rate.productId));
+  const incomingIdentityKeys = new Set(normalizedIncomingRates.flatMap((rate) => {
+    const identityKey = rate.identityKey ?? rate.canonicalProductId ?? rate.productId;
+    return rate.legacyIdentityKey ? [identityKey, rate.legacyIdentityKey] : [identityKey];
+  }));
   const incomingCanonicalIds = incomingIdentityKeys;
 
   for (const rate of normalizedIncomingRates.filter((candidate) => rateHasKnownApr(candidate)
@@ -102,8 +105,16 @@ export async function prepareProductCatalogSync(
     // Fingerprints are retained for diagnostics, but are not product identity.
     // Product-list and position endpoints may omit different mutable fields.
     const selectedForIdentity = selectedByIdentity.get(identityKey) ?? new Set<string>();
-    const identityCandidates = (byIdentity.get(identityKey) ?? [])
+    const currentIdentityCandidates = (byIdentity.get(identityKey) ?? [])
       .filter((row) => !selectedForIdentity.has(row.product_id));
+    const legacyIdentityCandidates = rate.legacyIdentityKey
+      ? rows.filter((row) => row.identity_key === rate.legacyIdentityKey
+        && !selectedLegacyRows.has(row.product_id)
+        && parseProduct(row.payload)[0]?.termDays === rate.termDays)
+      : [];
+    const identityCandidates = [...new Map(
+      [...currentIdentityCandidates, ...legacyIdentityCandidates].map((row) => [row.product_id, row]),
+    ).values()];
     const current = preferredCatalogRow(identityCandidates, persistedHoldings, purchaseDates)
       ?? (seed && !selectedForIdentity.has(seed.id) ? rows.find((row) => row.product_id === seed.id && row.identity_key === seed.identityKey) : undefined);
     const baseline = !current && seed && !selectedForIdentity.has(seed.id)
@@ -111,6 +122,7 @@ export async function prepareProductCatalogSync(
       : undefined;
     const selectedCurrent = current ?? baseline;
     const id = selectedCurrent?.product_id ?? catalogProductId(canonicalProductId, identityKey, fingerprint);
+    if (selectedCurrent && selectedCurrent.identity_key !== identityKey) selectedLegacyRows.add(selectedCurrent.product_id);
     const selectedBase = seed ?? (selectedCurrent ? parseProduct(selectedCurrent.payload)[0] : undefined);
     const base = restoreCachedCapacity(selectedBase, identityCandidates) ?? productTemplateFromRate(rate, id, identityKey);
     if (!base) continue;

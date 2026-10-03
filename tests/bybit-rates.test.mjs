@@ -84,15 +84,15 @@ test("Bybit fixed sync emits a sanitized product-to-position ID summary", async 
         ? {
           retCode: 0,
           result: { list: [
-            { productId: "fixed-a", coin: "USDT", duration: "7d", status: "Available", tieredApyList: [{ min: "0", max: "300", apy: "7%" }] },
-            { productId: "fixed-b", coin: "USDT", duration: "30d", status: "Available", tieredApyList: [{ min: "0", max: "-1", apy: "4%" }] },
+            { productId: "shared-id", coin: "USDT", duration: "7d", status: "Available", tieredApyList: [{ min: "0", max: "300", apy: "7%" }] },
+            { productId: "shared-id", coin: "USDT", duration: "90d", status: "Available", tieredApyList: [{ min: "0", max: "-1", apy: "4%" }] },
           ] },
         }
         : {
           retCode: 0,
           result: { list: [
-            { productId: "fixed-a", coin: "USDT", amount: "12.5", status: "Active" },
-            { productId: "fixed-b", coin: "USDT", amount: "34", status: "Active" },
+            { productId: "shared-id", coin: "USDT", duration: "7d", amount: "12.5", status: "Active" },
+            { productId: "shared-id", coin: "USDT", duration: "90d", amount: "34", status: "Active" },
           ] },
         },
     },
@@ -108,15 +108,78 @@ test("Bybit fixed sync emits a sanitized product-to-position ID summary", async 
     baseUrls: ["https://api.bybit.com"],
   });
 
-  assert.deepEqual(result.rates.map((rate) => rate.externalProductId), ["fixed-a", "fixed-b"]);
-  assert.equal(result.holdings["bybit-global:USDT:fixed:fixed-a"], 12.5);
-  assert.equal(result.holdings["bybit-global:USDT:fixed:fixed-b"], 34);
+  assert.deepEqual(result.rates.map((rate) => rate.externalProductId), ["shared-id@7d", "shared-id@90d"]);
+  assert.equal(result.holdings["bybit-global:USDT:fixed:shared-id@7d"], 12.5);
+  assert.equal(result.holdings["bybit-global:USDT:fixed:shared-id@90d"], 34);
+  assert.equal(result.sync.products, true);
+  assert.equal(result.sync.holdings, true);
   const record = diagnostics.find((entry) => entry.event === "bybit_fixed_rows");
   assert.ok(record);
-  assert.deepEqual(record.fields.productRows.map((row) => row.productId), ["fixed-a", "fixed-b"]);
-  assert.deepEqual(record.fields.positionRows.map((row) => [row.productId, row.hasPositiveHolding]), [
-    ["fixed-a", true],
-    ["fixed-b", true],
+  assert.deepEqual(record.fields.productRows.map((row) => [row.productId, row.duration]), [
+    ["shared-id", "7d"],
+    ["shared-id", "90d"],
+  ]);
+  assert.deepEqual(record.fields.positionRows.map((row) => [row.productId, row.duration, row.hasPositiveHolding]), [
+    ["shared-id", "7d", true],
+    ["shared-id", "90d", true],
   ]);
   assert.doesNotMatch(JSON.stringify(record), /12\.5|34|secret-key|secret-value/);
+});
+
+test("Bybit fixed sync refuses to guess when a repeated product ID has no holding duration", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url }),
+      readExchangeJson: async (response) => new URL(response.url).pathname.endsWith("/fixed-term/product")
+        ? {
+          retCode: 0,
+          result: { list: [
+            { productId: "shared-id", coin: "USDT", duration: "7d", status: "Available", tieredApyList: [{ min: "0", max: "300", apy: "7%" }] },
+            { productId: "shared-id", coin: "USDT", duration: "90d", status: "Available", tieredApyList: [{ min: "0", max: "-1", apy: "4%" }] },
+          ] },
+        }
+        : { retCode: 0, result: { list: [{ productId: "shared-id", coin: "USDT", amount: "12.5", status: "Active" }] } },
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { fetchBybitShortFixedSnapshots } = load("@/lib/integrations/bybit");
+
+  const result = await fetchBybitShortFixedSnapshots({
+    apiKey: "secret-key",
+    apiSecret: "secret-value",
+    baseUrls: ["https://api.bybit.com"],
+  });
+
+  assert.equal(result.sync.products, true);
+  assert.equal(result.sync.holdings, false);
+  assert.equal(result.holdings["bybit-global:USDT:fixed:shared-id@7d"], 0);
+  assert.equal(result.holdings["bybit-global:USDT:fixed:shared-id@90d"], 0);
+});
+
+test("Bybit capability probe can check any monitored flexible coin on global and EU public hosts", async () => {
+  const requests = [];
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => {
+        requests.push(new URL(url));
+        return { ok: true, status: 200, headers: new Headers(), url };
+      },
+      readExchangeJson: async () => ({
+        retCode: 0,
+        result: { list: [{ productId: "offer-1", coin: "USDGO", status: "Available", tierAprDetails: [{ min: "0" }] }] },
+      }),
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { probeBybitFlexibleProducts } = load("@/lib/integrations/bybit");
+
+  const globalRows = await probeBybitFlexibleProducts("bybit-global", "USDGO");
+  const euRows = await probeBybitFlexibleProducts("bybit-eu", "USDGO");
+
+  assert.equal(globalRows[0].productId, "offer-1");
+  assert.equal(euRows[0].coin, "USDGO");
+  assert.deepEqual(requests.map((url) => [url.hostname, url.searchParams.get("coin")]), [
+    ["api.bybit.com", "USDGO"],
+    ["api.bybit.eu", "USDGO"],
+  ]);
 });

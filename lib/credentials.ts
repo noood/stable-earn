@@ -11,12 +11,12 @@ export const credentialAccounts = [
   { id: "binance-global", label: "Binance.com", requiresPassphrase: false, syncDescription: "自动同步活期及定期产品、APR 与持仓" },
   { id: "binance-bahrain", label: "Binance Bahrain", requiresPassphrase: false, syncDescription: "自动同步活期及定期产品、APR 与持仓" },
   { id: "bybit-global", label: "Bybit.com", requiresPassphrase: false, syncDescription: "自动同步活期持仓，以及定期产品、APR 与持仓" },
+  { id: "bybit-eu", label: "Bybit EU", requiresPassphrase: false, syncDescription: "仅用于一次性只读 API 检查，不会进入日常同步" },
   { id: "bitget-global", label: "Bitget", requiresPassphrase: true, syncDescription: "自动同步活期产品、APR 与持仓" },
   { id: "okx-global", label: "OKX", requiresPassphrase: true, syncDescription: "自动同步持仓" },
 ] as const;
 
 export const manualDataAccounts = [
-  { id: "bybit-eu", label: "Bybit EU", syncDescription: "USDT 产品利率自动获取；持仓及其他产品信息需要手动维护" },
   { id: "mexc-ph", label: "MEXC · PH 🇵🇭", syncDescription: "产品信息与持仓需要手动维护" },
   { id: "mexc-uk", label: "MEXC · UK 🇬🇧", syncDescription: "产品信息与持仓需要手动维护" },
 ] as const;

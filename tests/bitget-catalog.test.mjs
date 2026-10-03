@@ -47,6 +47,74 @@ test("Bitget platform identities reuse the migrated row for the matching offer",
   assert.equal(result.products.length, 2);
 });
 
+test("Bybit fixed-term duration identity reuses the matching legacy product row without merging other terms", async () => {
+  const load = moduleLoader();
+  const { previewProducts } = load("@/lib/preview-fixtures");
+  const { prepareProductCatalogSync } = load("@/lib/product-catalog");
+  const db = sqliteDb();
+  const seed = previewProducts.find((product) => product.id === "by-g-usdt-short-fixed");
+  assert.ok(seed);
+  const legacyIdentity = "bybit-global:USDT:fixed:shared-id";
+  const legacy = {
+    ...seed,
+    id: "legacy-bybit-fixed-shared-id",
+    accountId: "bybit-global",
+    exchange: "bybit",
+    region: "global",
+    asset: "USDT",
+    productType: "fixed",
+    termDays: 7,
+    productDataMode: "api",
+    apiAccess: "authenticated",
+    holdingDataMode: "api",
+    externalProductId: "shared-id",
+    identityKey: legacyIdentity,
+    source: { kind: "live", label: "Bybit", fetchedAt: "2026-10-03T00:00:00.000Z" },
+  };
+  const now = "2026-10-03T00:00:00.000Z";
+  db.sqlite.prepare(`INSERT INTO product_catalog
+    (owner_id, product_id, canonical_product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`)
+    .run("user", legacy.id, legacyIdentity, legacyIdentity, legacy.identityFingerprint ?? null, JSON.stringify(legacy), now, now);
+  db.sqlite.prepare("INSERT INTO holdings (user_id, product_id, amount, updated_at) VALUES (?, ?, ?, ?)")
+    .run("user", legacy.id, 94, now);
+
+  const rate = (duration, apr) => {
+    const externalProductId = `shared-id@${duration}`;
+    const identityKey = `bybit-global:USDT:fixed:${externalProductId}`;
+    return {
+      productId: identityKey,
+      canonicalProductId: identityKey,
+      identityKey,
+      externalProductId,
+      sourceProductId: "shared-id",
+      legacyIdentityKey: legacyIdentity,
+      termDays: Number.parseInt(duration, 10),
+      apr,
+      tiers: [{ min: 0, max: null, apr }],
+      fetchedAt: now,
+      sourceLabel: "Bybit 官方固定期限 API",
+      productType: "fixed",
+      catalog: { accountId: "bybit-global", exchange: "bybit", region: "global", asset: "USDT", holdingDataMode: "api", apiAccess: "authenticated" },
+    };
+  };
+  const identity7d = "bybit-global:USDT:fixed:shared-id@7d";
+  const identity90d = "bybit-global:USDT:fixed:shared-id@90d";
+  const result = await prepareProductCatalogSync(db, "user", [rate("7d", 7), rate("90d", 4)], {
+    [identity7d]: 40,
+    [identity90d]: 54,
+  }, ["bybit-global"]);
+
+  assert.equal(result.products.length, 2);
+  assert.equal(result.productIds[identity7d], legacy.id);
+  assert.notEqual(result.productIds[identity90d], legacy.id);
+  await db.batch(result.statements);
+  const updatedLegacy = JSON.parse(db.sqlite.prepare("SELECT payload FROM product_catalog WHERE product_id = ?").get(legacy.id).payload);
+  assert.equal(updatedLegacy.externalProductId, "shared-id@7d");
+  assert.equal(updatedLegacy.termDays, 7);
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM product_catalog WHERE owner_id = ? AND status = 'active'").get("user").count, 2);
+});
+
 test("partial holding sync does not archive an active product after an APR drop", async () => {
   const load = moduleLoader();
   const { prepareProductCatalogSync } = load("@/lib/product-catalog");

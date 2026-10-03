@@ -26,6 +26,10 @@ export type LiveRate = {
   capacitySource?: "live" | "cache";
   capacityFetchedAt?: string;
   externalProductId?: string;
+  /** Original upstream ID when a platform reuses it across product variants. */
+  sourceProductId?: string;
+  /** Prior identity key used only to reuse an existing row during identity repair. */
+  legacyIdentityKey?: string;
   identityKey?: string;
   identityFingerprint?: string;
   /** Required when an adapter can return a product absent from the compatibility templates. */

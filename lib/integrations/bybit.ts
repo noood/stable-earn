@@ -38,6 +38,7 @@ type BybitFixedProductRow = {
 type BybitFixedPositionRow = {
   productId?: string;
   coin?: string;
+  duration?: string;
   amount?: string;
   status?: string;
 };
@@ -48,7 +49,14 @@ type BybitResponse<Row> = {
   result?: { list?: Row[] };
 };
 
-type SupportedAsset = "USDT" | "USDC";
+type SupportedAsset = Product["asset"];
+
+type BybitFlexibleProductRow = {
+  productId?: string;
+  coin?: string;
+  status?: string;
+  tierAprDetails?: unknown[];
+};
 
 const supportedFixedAssets = new Set<Product["asset"]>(apiAssetsFor("bybit-global", "fixed", "productApi"));
 
@@ -59,7 +67,7 @@ export async function fetchBybitFlexibleHoldings(
     account === "global" ? "bybit-global" : "bybit-eu",
     "flexible",
     "holdingApi",
-  ).filter((asset): asset is SupportedAsset => asset === "USDT" || asset === "USDC"),
+  ),
 ) {
   const holdings: Record<string, number> = {};
   const results = await Promise.allSettled(assets.map(async (asset) => {
@@ -112,6 +120,21 @@ export async function fetchBybitFlexibleHoldings(
   };
 }
 
+/** Public, read-only check for one Bybit flexible-earn asset outside routine sync. */
+export async function probeBybitFlexibleProducts(accountId: "bybit-global" | "bybit-eu", asset: Product["asset"]) {
+  const baseUrls = accountId === "bybit-eu" ? ["https://api.bybit.eu"] : bybitGlobalApiBases;
+  const query = new URLSearchParams({ category: "FlexibleSaving", coin: asset });
+  const response = await publicGet<BybitFlexibleProductRow>("/v5/earn/product", query, baseUrls);
+  return (response.result?.list ?? [])
+    .filter((row) => !row.coin || row.coin.toUpperCase() === asset)
+    .map((row) => ({
+      productId: row.productId?.trim() || null,
+      coin: row.coin?.toUpperCase() || asset,
+      status: row.status ?? null,
+      tierCount: row.tierAprDetails?.length,
+    }));
+}
+
 export async function fetchBybitShortFixedSnapshots(credentials: BybitCredentials) {
   const [productResult, positionResult] = await Promise.allSettled([
     publicGet<BybitFixedProductRow>(
@@ -131,8 +154,23 @@ export async function fetchBybitShortFixedSnapshots(credentials: BybitCredential
     Boolean(row.productId)
     && supportedFixedAssets.has(row.coin as Product["asset"])
   ));
+  const productIdentityIncomplete = productRows.some((row) => (
+    supportedFixedAssets.has(row.coin as Product["asset"])
+    && (!row.productId?.trim() || !normalizeBybitDuration(row.duration))
+  ));
+  const rates = productRows.flatMap((row) => {
+    const rate = fixedProductRate(row);
+    return rate ? [rate] : [];
+  });
+  const resolvedPositions = positions.flatMap((row) => {
+    const externalProductId = resolveBybitFixedPositionId(row, rates);
+    return externalProductId ? [{ row, externalProductId }] : [];
+  });
+  const unresolvedPositionCount = rawPositionRows.filter((row) => (
+    supportedFixedAssets.has(row.coin as Product["asset"])
+  )).length - resolvedPositions.length;
   syncDiagnostic("bybit_fixed_rows", {
-    productApiStatus: productResult.status === "fulfilled" ? "success" : "error",
+    productApiStatus: productResult.status === "rejected" ? "error" : productIdentityIncomplete ? "partial" : "success",
     productRowCount: productRows.length,
     productRows: productRows.flatMap((row) => {
       const coin = String(row.coin ?? "").toUpperCase();
@@ -147,33 +185,30 @@ export async function fetchBybitShortFixedSnapshots(credentials: BybitCredential
         tiers: fixedProductTiers(row),
       }];
     }),
-    holdingsApiStatus: positionResult.status === "fulfilled" ? "success" : "error",
+    holdingsApiStatus: positionResult.status === "rejected" ? "error" : unresolvedPositionCount > 0 ? "partial" : "success",
     positionRowCount: rawPositionRows.length,
+    unresolvedPositionCount,
     positionRows: positions.map((row) => ({
       productId: row.productId?.trim() || null,
       coin: row.coin ?? null,
+      duration: row.duration ?? null,
       status: row.status ?? null,
       hasPositiveHolding: finiteNumber(row.amount) > 0,
     })),
-  });
-  const rates = productRows.flatMap((row) => {
-    const rate = fixedProductRate(row);
-    return rate ? [rate] : [];
   });
   const holdings: Record<string, number> = {};
 
   if (positionResult.status === "fulfilled") {
     for (const rate of rates) {
-      const amount = positions
-        .filter((row) => row.productId === rate.externalProductId && row.coin === rate.catalog?.asset)
-        .reduce((sum, row) => sum + finiteNumber(row.amount), 0);
+      const amount = resolvedPositions
+        .filter(({ row, externalProductId }) => externalProductId === rate.externalProductId && row.coin === rate.catalog?.asset)
+        .reduce((sum, { row }) => sum + finiteNumber(row.amount), 0);
       holdings[rate.productId] = amount;
       if (rate.externalProductId) holdings[rate.externalProductId] = amount;
     }
-    for (const position of positions) {
-      if (!position.productId) continue;
-      const matched = rates.some((rate) => rate.externalProductId === position.productId && rate.catalog?.asset === position.coin);
-      if (!matched) holdings[position.productId] = (holdings[position.productId] ?? 0) + finiteNumber(position.amount);
+    for (const { row, externalProductId } of resolvedPositions) {
+      const matched = rates.some((rate) => rate.externalProductId === externalProductId && rate.catalog?.asset === row.coin);
+      if (!matched) holdings[externalProductId] = (holdings[externalProductId] ?? 0) + finiteNumber(row.amount);
     }
   }
 
@@ -181,24 +216,27 @@ export async function fetchBybitShortFixedSnapshots(credentials: BybitCredential
     rates,
     holdings,
     sync: {
-      products: productResult.status === "fulfilled",
-      holdings: positionResult.status === "fulfilled",
+      products: productResult.status === "fulfilled" && !productIdentityIncomplete,
+      holdings: positionResult.status === "fulfilled" && unresolvedPositionCount === 0,
     },
   };
 }
 
 function fixedProductRate(row: BybitFixedProductRow) {
   const asset = row.coin as Product["asset"];
-  if (!row.productId || !supportedFixedAssets.has(asset)) return null;
+  const sourceProductId = row.productId?.trim();
+  const duration = normalizeBybitDuration(row.duration);
+  if (!sourceProductId || !duration || !supportedFixedAssets.has(asset)) return null;
   const tiers = fixedProductTiers(row);
   const subscriptionStart = timestampIso(row.subscribeStartAt);
   const subscriptionEnd = timestampIso(row.subscribeEndAt);
   const termDays = parseDurationDays(row.duration);
+  const externalProductId = `${sourceProductId}@${duration}`;
   const identity = buildPlatformProductIdentity({
     accountId: "bybit-global",
     asset,
     productType: "fixed",
-    externalProductId: row.productId,
+    externalProductId,
   });
   const eligibilityRequired = Boolean(row.specialUserGroupRequired || row.isVip);
   const eligibilityLabel = row.specialUserGroupInfo || (row.isVip ? "VIP 用户" : undefined);
@@ -206,6 +244,8 @@ function fixedProductRate(row: BybitFixedProductRow) {
   return {
     productId: identity.identityKey,
     ...identity,
+    sourceProductId,
+    legacyIdentityKey: `bybit-global:${asset}:fixed:${sourceProductId}`,
     name: `Fixed Saving · ${formatDuration(row.duration)}`,
     apr: tiers[0]?.apr ?? 0,
     tiers,
@@ -230,6 +270,23 @@ function fixedProductRate(row: BybitFixedProductRow) {
       apiAccess: "authenticated" as const,
     },
   };
+}
+
+function resolveBybitFixedPositionId(position: BybitFixedPositionRow, rates: ReturnType<typeof fixedProductRate>[]) {
+  const sourceProductId = position.productId?.trim();
+  if (!sourceProductId) return undefined;
+  const duration = normalizeBybitDuration(position.duration);
+  if (duration) return `${sourceProductId}@${duration}`;
+  const candidates = new Set(rates
+    .filter((rate) => rate?.sourceProductId === sourceProductId && rate.catalog?.asset === position.coin)
+    .map((rate) => rate?.externalProductId)
+    .filter((id): id is string => Boolean(id)));
+  return candidates.size === 1 ? [...candidates][0] : undefined;
+}
+
+function normalizeBybitDuration(value: string | undefined) {
+  const duration = value?.trim().toLowerCase();
+  return duration && /^\d+(?:\.\d+)?[dhm]$/.test(duration) ? duration : undefined;
 }
 
 function parseDurationDays(value: string | undefined) {

@@ -99,7 +99,7 @@ const accounts = {
 } as const;
 
 type BinanceAccount = keyof typeof accounts;
-type SupportedAsset = "USDT" | "USDC";
+type SupportedAsset = Product["asset"];
 
 export async function fetchBinanceFlexibleSnapshot(
   credentials: Credentials,
@@ -109,6 +109,7 @@ export async function fetchBinanceFlexibleSnapshot(
     "flexible",
     "productApi",
   ) as SupportedAsset[],
+  allowEmpty = false,
 ): Promise<BinanceFlexibleSnapshot> {
   const accountConfig = accounts[account];
   const fetchedAt = new Date().toISOString();
@@ -238,7 +239,7 @@ export async function fetchBinanceFlexibleSnapshot(
       holdings[identity.identityKey] = position?.amount ?? 0;
     };
 
-    if (rates.length === 0) throw new Error(`Binance returned no ${asset} flexible product`);
+    if (rates.length === 0 && !allowEmpty) throw new Error(`Binance returned no ${asset} flexible product`);
     return {
       rates,
       holdings,

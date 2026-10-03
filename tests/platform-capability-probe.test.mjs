@@ -49,10 +49,16 @@ function loadProbe() {
     },
     "@/lib/integrations/bybit": {
       bybitGlobalApiBases: ["https://api.bybit.com"],
-      fetchBybitFlexibleHoldings: async (_credential, _account, assets) => ({
-        holdings: Object.fromEntries(assets.map((asset) => [`bybit-global:${asset}:flexible:by-flex-${asset}`, 45.67])),
-        sync: { successfulAssets: assets, failedAssets: [] },
-      }),
+      probeBybitFlexibleProducts: async (accountId, asset) => asset === "USDGO"
+        ? []
+        : [{ productId: `by-flex-${accountId}-${asset}`, status: "Available", tierCount: 1 }],
+      fetchBybitFlexibleHoldings: async (_credential, account, assets) => {
+        const accountId = account === "eu" ? "bybit-eu" : "bybit-global";
+        return {
+          holdings: Object.fromEntries(assets.map((asset) => [`${accountId}:${asset}:flexible:by-flex-${asset}`, 45.67])),
+          sync: { successfulAssets: assets, failedAssets: [] },
+        };
+      },
       fetchBybitShortFixedSnapshots: async () => ({
         rates: ["USDT", "USDC", "USDGO", "BTC"].map((asset) => ({
           externalProductId: `by-fixed-${asset}`,
@@ -82,7 +88,7 @@ function loadProbe() {
 test("capability probe returns all scopes without exposing holding amounts or credentials", async () => {
   const probe = loadProbe();
   const credentials = Object.fromEntries([
-    "binance-global", "binance-bahrain", "bybit-global", "bitget-global", "okx-global",
+    "binance-global", "binance-bahrain", "bybit-global", "bybit-eu", "bitget-global", "okx-global",
   ].map((accountId) => [accountId, { apiKey: "secret-key", apiSecret: "secret-value", passphrase: "secret-pass" }]));
 
   const result = await probe(credentials);
@@ -101,10 +107,22 @@ test("capability probe returns all scopes without exposing holding amounts or cr
     entry.accountId === accountId && entry.asset === asset && entry.productType === productType
   ));
   assert.deepEqual(scope("binance-global", "USDT", "flexible").idMatch.matchedIds, ["bn-flex-global-USDT"]);
+  assert.equal(scope("binance-global", "BTC", "flexible").productApi.status, "returned");
+  assert.equal(scope("bybit-global", "USDGO", "flexible").productApi.status, "empty");
+  assert.equal(scope("bybit-global", "USDGO", "flexible").holdingApi.status, "returned");
+  assert.equal(scope("bybit-eu", "USDC", "flexible").productApi.status, "returned");
+  assert.equal(scope("bybit-eu", "USDC", "flexible").holdingApi.status, "returned");
   assert.equal(scope("bitget-global", "BTC", "flexible").productApi.status, "returned");
   assert.equal(scope("bitget-global", "BTC", "flexible").holdingApi.status, "returned");
   assert.equal(scope("bitget-global", "USDT", "fixed").productApi.status, "returned");
   assert.equal(scope("bitget-global", "USDT", "fixed").holdingApi.status, "not_integrated");
   assert.equal(scope("okx-global", "USDGO", "flexible").holdingApi.status, "returned");
   assert.equal(scope("mexc-ph", "USDT", "flexible").productApi.status, "not_integrated");
+
+  const withoutCredentials = await probe({});
+  const euHoldingScope = withoutCredentials.scopes.find((entry) => (
+    entry.accountId === "bybit-eu" && entry.asset === "USDC" && entry.productType === "flexible"
+  ));
+  assert.equal(euHoldingScope.holdingApi.status, "not_configured");
+  assert.match(euHoldingScope.holdingApi.note, /只读 API 凭证/);
 });
