@@ -2,6 +2,7 @@ import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import { buildPlatformProductIdentity } from "@/lib/product-identity";
 import type { Product } from "@/lib/domain";
 import { apiAssetsFor } from "@/lib/platform-capabilities";
+import { syncDiagnostic } from "@/lib/sync-diagnostics";
 
 type BybitCredentials = {
   apiKey: string;
@@ -77,6 +78,20 @@ export async function fetchBybitFlexibleHoldings(
       });
       amounts.set(identity.identityKey, (amounts.get(identity.identityKey) ?? 0) + finiteNumber(row.amount));
     }
+    // The public product list is traced in live-rates.ts. Pair it with this
+    // sanitized position trace so product IDs can be compared without logging
+    // signed request details or the raw exchange response.
+    syncDiagnostic("bybit_flexible_position_rows", {
+      account: account === "eu" ? "bybit-eu" : "bybit-global",
+      asset,
+      rowCount: rows.length,
+      rows: rows.map((row) => ({
+        productId: row.productId?.trim() || null,
+        coin: row.coin ?? null,
+        amount: finiteNumber(row.amount),
+      })),
+      productTotals: [...amounts.entries()].map(([identityKey, amount]) => ({ identityKey, amount })),
+    });
     // A successful empty position response is intentionally represented by no
     // update. The catalog's complete-account rule records zero for the known
     // product without borrowing an old holding from another product.

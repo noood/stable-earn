@@ -30,7 +30,11 @@ npm run dev
 npm test       # 自动化测试
 npm run verify # lint、类型检查和测试
 npm run check  # verify 加生产构建
+npx playwright install chromium # 首次运行浏览器测试时安装 Chromium
+npm run test:e2e # 启动本地预览并运行 Playwright 浏览器检查
 ```
+
+发布前核对范围见 [发布检查清单](docs/RELEASE-CHECKLIST.md)。浏览器测试只访问本地预览与模拟数据，不连接生产账号或 D1。
 
 ## 自托管部署
 

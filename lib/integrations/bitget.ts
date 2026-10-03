@@ -82,6 +82,107 @@ const maxBitgetAssetPages = 50;
 
 type SupportedAsset = "USDT" | "USDC" | "USDGO";
 
+export type BitgetCapabilityProbe = {
+  asset: SupportedAsset;
+  productApi: {
+    status: "returned" | "empty" | "error";
+    rowCount: number;
+    eligibleFlexibleCount: number;
+    rows: Array<{
+      productId: string | null;
+      periodType: string | null;
+      status: string | null;
+      productLevel: string | null;
+      eligibleForMonitoring: boolean;
+      tiers: Array<{ min: number; max: number | null; apr: number }>;
+    }>;
+    diagnostic?: string;
+  };
+  holdingsApi: {
+    status: "complete" | "incomplete" | "error";
+    complete: boolean;
+    pageCount: number;
+    rowCount: number;
+    rows: Array<{
+      productId: string | null;
+      periodType: string | null;
+      productLevel: string | null;
+      hasPositiveHolding: boolean;
+      tiers: Array<{ min: number; max: number | null; apr: number }>;
+    }>;
+    diagnostic?: string;
+  };
+};
+
+/**
+ * One-off, read-only capability check. It does not write the catalog, holdings,
+ * cache, or history; the caller decides whether this asset belongs in routine sync.
+ */
+export async function probeBitgetAsset(
+  credentials: BitgetCredentials,
+  asset: SupportedAsset,
+): Promise<BitgetCapabilityProbe> {
+  const [productResult, assetsResult] = await Promise.allSettled([
+    signedGet<BitgetProductRow[]>(
+      "/api/v2/earn/savings/product",
+      new URLSearchParams({ coin: asset, filter: "available_and_held" }),
+      credentials,
+    ),
+    fetchBitgetAssetPages(credentials),
+  ]);
+
+  const productApi: BitgetCapabilityProbe["productApi"] = productResult.status === "rejected"
+    ? { status: "error", rowCount: 0, eligibleFlexibleCount: 0, rows: [], diagnostic: endpointDiagnostic(productResult.reason) }
+    : (() => {
+      const rows = (productResult.value.data ?? []).filter((row) => row.coin === asset);
+      const normalizedRows = rows.map((row) => {
+        const eligibleForMonitoring = row.periodType === "flexible"
+          && row.status !== "off_line"
+          && row.productLevel !== "VIP";
+        return {
+          productId: normalizeExternalProductId(row.productId) ?? null,
+          periodType: row.periodType ?? null,
+          status: row.status ?? null,
+          productLevel: row.productLevel ?? null,
+          eligibleForMonitoring,
+          tiers: normalizeTiers(row.apyList),
+        };
+      });
+      const eligibleFlexibleCount = normalizedRows.filter((row) => row.eligibleForMonitoring && row.tiers.length > 0).length;
+      return {
+        status: rows.length > 0 ? "returned" : "empty",
+        rowCount: rows.length,
+        eligibleFlexibleCount,
+        rows: normalizedRows,
+      };
+    })();
+
+  const holdingsApi: BitgetCapabilityProbe["holdingsApi"] = assetsResult.status === "rejected"
+    ? { status: "error", complete: false, pageCount: 0, rowCount: 0, rows: [], diagnostic: endpointDiagnostic(assetsResult.reason) }
+    : (() => {
+      const collection = assetsResult.value;
+      const rows = collection.rows
+        .filter((row) => row.productCoin === asset)
+        .map((row) => ({
+          productId: normalizeExternalProductId(row.productId) ?? null,
+          periodType: row.periodType ?? null,
+          productLevel: row.productLevel ?? null,
+          hasPositiveHolding: finiteNumber(row.holdAmount) > 0,
+          tiers: normalizeAssetTiers(row.apy),
+        }));
+      return {
+        status: collection.complete ? "complete" : "incomplete",
+        complete: collection.complete,
+        pageCount: collection.pageCount,
+        rowCount: rows.length,
+        rows,
+        ...(!collection.complete ? { diagnostic: "pagination_incomplete" } : {}),
+      };
+    })();
+
+  return { asset, productApi, holdingsApi };
+}
+
 export async function fetchBitgetSavingsSnapshot(
   credentials: BitgetCredentials,
   assets: readonly SupportedAsset[] = apiAssetsFor("bitget-global", "flexible", "productApi") as SupportedAsset[],

@@ -50,6 +50,14 @@ export async function loadCredentials(db: D1Database, userId: string) {
   return Object.fromEntries(entries) as Partial<Record<CredentialAccountId, StoredCredential>>;
 }
 
+export async function loadCredential(db: D1Database, userId: string, accountId: CredentialAccountId) {
+  const row = await db
+    .prepare("SELECT account_id, ciphertext, iv FROM exchange_credentials WHERE user_id = ? AND account_id = ?")
+    .bind(userId, accountId)
+    .first<CredentialRow>();
+  return row ? decryptCredential(userId, row.account_id, row.ciphertext, row.iv) : null;
+}
+
 export async function saveCredential(
   db: D1Database,
   userId: string,

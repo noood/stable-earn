@@ -130,8 +130,33 @@ export async function fetchBinanceFlexibleSnapshot(
       collectBinancePages("/sapi/v1/simple-earn/flexible/list", productPage, credentials, { asset }),
       collectBinancePages("/sapi/v1/simple-earn/flexible/position", positionPage, credentials, { asset }),
     ]);
+    const productRows = products.rows?.filter((row) => row.asset === asset) ?? [];
     const product = products.rows?.find((row) => row.asset === asset) ?? products.rows?.[0];
     const positionRows = positions.rows?.filter((row) => row.asset === asset) ?? [];
+    // Sanitized trace for verifying whether one flexible asset maps to
+    // multiple upstream products. Keep product/position IDs and amounts only;
+    // never emit credentials, signatures, or raw exchange responses.
+    syncDiagnostic("binance_flexible_rows", {
+      account: account === "global" ? "binance-global" : "binance-bahrain",
+      asset,
+      productListComplete: products.complete,
+      productTotal: products.total ?? null,
+      productRowCount: productRows.length,
+      productRows: productRows.map((row) => ({
+        productId: String(row.productId ?? "").trim() || null,
+        asset: row.asset ?? null,
+        latestAnnualPercentageRate: row.latestAnnualPercentageRate ?? null,
+        tierAnnualPercentageRate: parseBinanceTiers(asset, row.latestAnnualPercentageRate, row.tierAnnualPercentageRate),
+      })),
+      positionListComplete: positions.complete,
+      positionTotal: positions.total ?? null,
+      positionRowCount: positionRows.length,
+      positionRows: positionRows.map((row) => ({
+        productId: String(row.productId ?? "").trim() || null,
+        asset: row.asset ?? null,
+        totalAmount: finiteNumber(row.totalAmount),
+      })),
+    });
     const position = positionRows[0];
     const rateSource = product ?? position;
     if (!rateSource) throw new Error(`Binance returned no ${asset} flexible product`);
