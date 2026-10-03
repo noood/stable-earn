@@ -85,11 +85,11 @@ function loadProbe() {
       }),
     },
   });
-  return load("@/lib/platform-capability-probe").probePlatformCapabilities;
+  return load("@/lib/platform-capability-probe");
 }
 
 test("capability probe returns all scopes without exposing holding amounts or credentials", async () => {
-  const probe = loadProbe();
+  const { probePlatformCapabilities: probe } = loadProbe();
   const credentials = Object.fromEntries([
     "binance-global", "binance-bahrain", "bybit-global", "bybit-eu", "bitget-global", "okx-global",
   ].map((accountId) => [accountId, { apiKey: "secret-key", apiSecret: "secret-value", passphrase: "secret-pass" }]));
@@ -130,4 +130,71 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   ));
   assert.equal(euHoldingScope.holdingApi.status, "not_configured");
   assert.match(euHoldingScope.holdingApi.note, /只读 API 凭证/);
+});
+
+test("capability report groups safe upstream failure details without exposing response text", () => {
+  const { summarizePlatformApiFailures } = loadProbe();
+  const failures = summarizePlatformApiFailures([
+    {
+      event: "exchange_http",
+      requestId: "request-1",
+      platform: "binance-global",
+      host: "api.binance.com",
+      endpoint: "/sapi/v1/simple-earn/flexible/list",
+      asset: "USDT",
+      requestAttempt: 1,
+      httpStatus: 403,
+      apiKey: "do-not-include-this",
+    },
+    {
+      event: "exchange_payload",
+      requestId: "request-1",
+      httpStatus: 403,
+      apiCode: "-2015",
+      accessReason: "ip_not_allowed",
+      rawResponse: "private upstream response",
+    },
+    {
+      event: "exchange_http",
+      requestId: "request-2",
+      host: "api.bybit.eu",
+      endpoint: "/v5/earn/product",
+      asset: "USDC",
+      outcome: "timeout_or_abort",
+    },
+    {
+      event: "exchange_http",
+      requestId: "successful-request",
+      platform: "bitget-global",
+      host: "api.bitget.com",
+      endpoint: "/api/v2/earn/savings/product",
+      httpStatus: 200,
+    },
+  ]);
+
+  assert.deepEqual(failures, [
+    {
+      accountId: "binance-global",
+      host: "api.binance.com",
+      endpoint: "/sapi/v1/simple-earn/flexible/list",
+      asset: "USDT",
+      reason: "ip_not_allowed",
+      httpStatus: 403,
+      apiCode: "-2015",
+      accessReason: "ip_not_allowed",
+      requestCount: 1,
+    },
+    {
+      accountId: "bybit-eu",
+      host: "api.bybit.eu",
+      endpoint: "/v5/earn/product",
+      asset: "USDC",
+      reason: "timeout_or_abort",
+      requestCount: 1,
+    },
+  ]);
+  const json = JSON.stringify(failures);
+  assert.equal(json.includes("do-not-include-this"), false);
+  assert.equal(json.includes("private upstream response"), false);
+  assert.equal(json.includes("request-1"), false);
 });

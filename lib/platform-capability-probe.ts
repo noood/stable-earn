@@ -374,7 +374,78 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
     includesHoldingAmounts: false,
     checkedScopeCount: scopes.length,
     scopes,
+    apiFailureSummary: summarizePlatformApiFailures(captured),
   };
+}
+
+/** Return safe, compact upstream failure details without response bodies or request identifiers. */
+export function summarizePlatformApiFailures(records: Array<Record<string, unknown>>) {
+  const requests = new Map<string, Record<string, unknown>>();
+  for (const record of records) {
+    const event = record.event;
+    if (!["exchange_http", "exchange_payload", "exchange_body_error"].includes(String(event))) continue;
+    const requestId = typeof record.requestId === "string" ? record.requestId : `unlinked-${requests.size}`;
+    const current = requests.get(requestId) ?? {};
+    requests.set(requestId, { ...current, ...record });
+  }
+
+  const knownHosts = new Set([
+    "api-gcp.binance.com", "api.binance.com", "api.bybit.com", "api.bytick.com", "api.bybit.eu",
+    "api.bitget.com", "openapi.okx.com", "www.okx.com",
+  ]);
+  const allowedAccounts = new Set(platformCapabilities.map((entry) => entry.accountId));
+  const grouped = new Map<string, {
+    accountId: string | null;
+    host?: string;
+    endpoint?: string;
+    asset?: string;
+    reason: string;
+    httpStatus?: number;
+    apiCode?: string;
+    accessReason?: string;
+    requestCount: number;
+  }>();
+
+  for (const record of requests.values()) {
+    const httpStatus = Number.isInteger(record.httpStatus) ? record.httpStatus as number : undefined;
+    const apiCode = typeof record.apiCode === "string" ? record.apiCode : undefined;
+    const accessReason = typeof record.accessReason === "string" ? record.accessReason : undefined;
+    const outcome = typeof record.outcome === "string" ? record.outcome : undefined;
+    const errorKind = typeof record.errorKind === "string" ? record.errorKind : undefined;
+    const bodyInvalid = record.bodyKind === "invalid_json";
+    const apiRejected = apiCode !== undefined && !["0", "00000", "absent"].includes(apiCode);
+    const httpFailed = httpStatus !== undefined && (httpStatus < 200 || httpStatus >= 300);
+    if (!outcome && !errorKind && !accessReason && !bodyInvalid && !apiRejected && !httpFailed) continue;
+
+    const rawPlatform = typeof record.platform === "string" ? record.platform : "";
+    const host = typeof record.host === "string" && knownHosts.has(record.host) ? record.host : undefined;
+    const accountId = allowedAccounts.has(rawPlatform)
+      ? rawPlatform
+      : host === "api.bybit.eu"
+        ? "bybit-eu"
+        : host && ["api.bybit.com", "api.bytick.com"].includes(host)
+          ? "bybit-global"
+          : null;
+    const rawEndpoint = typeof record.endpoint === "string" ? record.endpoint : "";
+    const endpoint = /^\/[a-zA-Z0-9/_-]{1,120}$/.test(rawEndpoint) ? rawEndpoint : undefined;
+    const asset = ["USDT", "USDC", "USDGO", "BTC"].includes(String(record.asset)) ? String(record.asset) : undefined;
+    const reason = outcome ?? accessReason ?? errorKind ?? (bodyInvalid ? "invalid_json" : apiRejected ? "api_rejected" : `http_${httpStatus}`);
+    const key = JSON.stringify([accountId, host, endpoint, asset, reason, httpStatus, apiCode, accessReason]);
+    const existing = grouped.get(key);
+    if (existing) existing.requestCount += 1;
+    else grouped.set(key, {
+      accountId,
+      ...(host ? { host } : {}),
+      ...(endpoint ? { endpoint } : {}),
+      ...(asset ? { asset } : {}),
+      reason,
+      ...(httpStatus !== undefined ? { httpStatus } : {}),
+      ...(apiRejected ? { apiCode } : {}),
+      ...(accessReason ? { accessReason } : {}),
+      requestCount: 1,
+    });
+  }
+  return [...grouped.values()].slice(0, 80);
 }
 
 function initialApi(mode: PlatformApiMode, credentialReady: boolean): ApiProbe {
