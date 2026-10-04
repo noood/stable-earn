@@ -43,6 +43,146 @@ test("private dashboard reaches a settled table state and switches assets", asyn
   expect(pageErrors).toEqual([]);
 });
 
+test("complete empty sync preview shows an ordinary empty directory without an API error", async ({ page }) => {
+  await page.goto("/private?syncScenario=empty");
+  const table = page.getByRole("table");
+  await expect(table).toBeVisible();
+  await expect(table).toHaveAttribute("aria-busy", "false");
+  await expect(table.getByText("吸引人的稳定理财尚未出现！")).toBeVisible();
+  await expect(page.getByText(/本地测试数据截至 .*；不会写入数据库。/)).toBeVisible();
+  await expect(page.locator(".error-panel")).toHaveCount(0);
+});
+
+test("API settings modal keeps its three sections, truthful account copy, and report feedback", async ({ page }) => {
+  await page.route("**/private/api/credentials", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        sources: [
+          { id: "binance-global", label: "Binance.com", configured: false, requiresPassphrase: false, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
+          { id: "binance-bahrain", label: "Binance Bahrain", configured: false, requiresPassphrase: false, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
+          { id: "bybit-global", label: "Bybit.com", configured: false, requiresPassphrase: false, syncDescription: "产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓自动同步" },
+          { id: "bitget-global", label: "Bitget", configured: false, requiresPassphrase: true, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
+          { id: "okx-global", label: "OKX", configured: false, requiresPassphrase: true, syncDescription: "同步活期持仓余额（USDT、USDC、BTC；按币种汇总，不区分产品）；产品 APR 需手动维护" },
+        ],
+        manualSources: [
+          { id: "bybit-eu", label: "Bybit EU", statusLabel: "手动维护", syncDescription: "产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓需手动维护" },
+          { id: "mexc-ph", label: "MEXC · PH 🇵🇭", syncDescription: "产品信息与持仓需要手动维护" },
+          { id: "mexc-uk", label: "MEXC · UK 🇬🇧", syncDescription: "产品信息与持仓需要手动维护" },
+        ],
+      }),
+    });
+  });
+  await page.route("**/private/api/preferences", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ manualRefreshCooldownMinutes: 30 }) });
+  });
+
+  let releaseReport;
+  let checkStarted = false;
+  const reportGate = new Promise((resolve) => { releaseReport = resolve; });
+  await page.route("**/private/api/diagnostics/platform-capabilities", async (route) => {
+    checkStarted = true;
+    await reportGate;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ generatedAt: "2026-10-04T00:00:00.000Z", dataChangesCommitted: false, includesHoldingAmounts: false, checkedItemCount: 112, checks: [] }),
+    });
+  });
+
+  try {
+    await page.goto("/private?settings=api");
+    const dialog = page.getByRole("dialog", { name: "API 设置" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "手动刷新频率" })).toBeVisible();
+    const cooldownOptions = dialog.getByRole("radiogroup", { name: "手动刷新冷却时间" });
+    await expect(cooldownOptions).toHaveCSS("width", "160px");
+    await expect(dialog.getByRole("radio", { name: "无" })).toBeVisible();
+    await expect(dialog.getByRole("radio", { name: "30 分钟" })).toHaveAttribute("aria-checked", "true");
+    await expect(dialog.getByText("仅限制手动刷新；不影响每日 07:00 更新和当天首次打开时的刷新。设置同步至此邮箱所有设备。")).toBeVisible();
+
+    await expect(dialog.getByRole("heading", { name: "配置 API" })).toBeVisible();
+    await expect(dialog.getByText("Key 和 Secret 由服务器加密保存；完整密钥不会返回浏览器。")).toBeVisible();
+    const connectionList = dialog.locator(".api-connection-list");
+    await expect(connectionList).toBeVisible();
+    await expect(connectionList.locator(":scope > .api-connection-row")).toHaveCount(8);
+    const euRow = connectionList.locator(".api-connection-row").filter({ hasText: "Bybit EU" });
+    await expect(euRow).toContainText("手动维护");
+    await expect(euRow).toContainText("产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）");
+    await expect(euRow).toContainText("持仓需手动维护");
+    await expect(euRow.getByRole("button", { name: "添加" })).toHaveCount(0);
+    const bybitRow = connectionList.locator(".api-connection-row").filter({ hasText: "Bybit.com" });
+    await expect(bybitRow).toContainText("产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓自动同步");
+
+    await expect(dialog.getByRole("heading", { name: "API 检测" })).toBeVisible();
+    const checkButton = dialog.getByRole("button", { name: "检测 API" });
+    const checkButtonWidth = await checkButton.evaluate((button) => getComputedStyle(button).width);
+    const checkButtonHeight = await checkButton.evaluate((button) => getComputedStyle(button).height);
+    await expect(checkButton).toHaveCSS("width", "96px");
+    await expect(checkButton).toHaveCSS("padding-left", "12px");
+    await expect(cooldownOptions).toHaveCSS("height", checkButtonHeight);
+    await expect(checkButton).toHaveText("检测 API");
+    await expect(dialog.getByText("只读检查已知接口，不写入产品、持仓或历史；报告不含持仓金额或密钥。OKX On-chain Earn 单独检查。")).toBeVisible();
+    await checkButton.click();
+    await expect.poll(() => checkStarted).toBe(true);
+    const loadingButton = dialog.getByRole("button", { name: "正在检测 API" });
+    await expect(loadingButton).toBeDisabled();
+    await expect(loadingButton).toHaveText("");
+    await expect(loadingButton).toHaveCSS("width", checkButtonWidth);
+    await expect(loadingButton).toHaveCSS("height", checkButtonHeight);
+    const spinner = dialog.locator(".api-check-spinner");
+    await expect(spinner).toBeVisible();
+    const spinnerWidth = await spinner.evaluate((icon) => getComputedStyle(icon).width);
+
+    releaseReport();
+    const completeButton = dialog.getByRole("button", { name: "检测完成" });
+    await expect(completeButton).toBeVisible();
+    await expect(completeButton).toHaveText("");
+    await expect(completeButton).toHaveCSS("width", checkButtonWidth);
+    await expect(completeButton).toHaveCSS("height", checkButtonHeight);
+    const downloadButton = dialog.getByRole("button", { name: /下载 JSON（\d{4}\/\d{1,2}\/\d{1,2}）/ });
+    await expect(downloadButton).toBeVisible();
+    await downloadButton.hover();
+    await expect(downloadButton).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    const successIcon = completeButton.locator(".api-check-success-icon");
+    await expect(successIcon).toBeVisible();
+    await expect(successIcon).toHaveAttribute("viewBox", "0 0 14 14");
+    await expect(successIcon).toHaveCSS("width", spinnerWidth);
+    await expect(dialog.getByText(/最近检查 · .* · 112 项/)).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "检测 API" })).toBeVisible({ timeout: 5_000 });
+    await expect(downloadButton).toBeVisible();
+
+    for (const width of [719, 536]) {
+      await page.setViewportSize({ width, height: 832 });
+      for (const rowIndex of [0, 1]) {
+        const row = dialog.locator(".api-settings-split-row").nth(rowIndex);
+        await row.scrollIntoViewIfNeeded();
+        const left = await row.locator(":scope > :first-child").boundingBox();
+        const right = await row.locator(":scope > :last-child").boundingBox();
+        expect(left).not.toBeNull();
+        expect(right).not.toBeNull();
+        expect(right.x).toBeGreaterThanOrEqual(left.x + left.width);
+      }
+    }
+
+    await dialog.getByRole("button", { name: "关闭" }).click();
+    await expect(dialog).toHaveCount(0);
+    await page.locator(".action-menu-trigger").click();
+    await page.getByRole("button", { name: "API 设置" }).click();
+    const reopenedDialog = page.getByRole("dialog", { name: "API 设置" });
+    await expect(reopenedDialog.getByRole("button", { name: /下载 JSON（\d{4}\/\d{1,2}\/\d{1,2}）/ })).toBeVisible();
+    await reopenedDialog.getByRole("button", { name: "关闭" }).click();
+    await page.getByRole("button", { name: "编辑持仓" }).click();
+    const tableApiSettings = page.locator(".table-toolbar-inline-action");
+    await expect(tableApiSettings).toBeVisible();
+    await tableApiSettings.hover();
+    await expect(tableApiSettings).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  } finally {
+    releaseReport();
+  }
+});
+
 test("table skeleton stays visible while the initial holdings read is pending", async ({ page }) => {
   let releaseHoldings;
   let holdingsIntercepted = false;

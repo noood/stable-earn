@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
-function routeWithMocks({ identity = { userId: "owner" }, credentials = { "bitget-global": { apiKey: "secret-key", apiSecret: "secret", passphrase: "pass" } }, report = { dataChangesCommitted: false, includesHoldingAmounts: false, checkedScopeCount: 64, scopes: [] } } = {}) {
+function routeWithMocks({ identity = { userId: "owner" }, credentials = { "bitget-global": { apiKey: "secret-key", apiSecret: "secret", passphrase: "pass" } }, report = { dataChangesCommitted: false, includesHoldingAmounts: false, checkedScopeCount: 56, checkedItemCount: 112, checks: [] } } = {}) {
   const calls = { database: 0, credentials: [], probe: [] };
   const load = moduleLoader({
     "next/server": {
@@ -50,7 +50,7 @@ test("capability diagnostics require login and same-origin before loading creden
 });
 
 test("capability diagnostics return only the probe report, scoped to the authenticated user", async () => {
-  const report = { dataChangesCommitted: false, includesHoldingAmounts: false, checkedScopeCount: 64, scopes: [], apiKey: "must-not-appear" };
+  const report = { dataChangesCommitted: false, includesHoldingAmounts: false, checkedScopeCount: 56, checkedItemCount: 112, checks: [], apiKey: "must-not-appear" };
   const { post, calls } = routeWithMocks({ report });
   const response = await post(request());
   const body = await response.json();
@@ -60,5 +60,5 @@ test("capability diagnostics return only the probe report, scoped to the authent
   assert.equal(calls.probe[0][0]["bitget-global"].apiKey, "secret-key");
   assert.equal(JSON.stringify(body).includes("secret-key"), false);
   assert.equal(response.headers.get("Cache-Control"), "private, no-store");
-  assert.equal(body.checkedScopeCount, 64);
+  assert.equal(body.checkedItemCount, 112);
 });

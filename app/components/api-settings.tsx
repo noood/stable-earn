@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AccountBadge, ActionButton, ModalFrame, SectionIntro } from "@/app/components/ui";
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
 import type { Account } from "@/lib/domain";
 import { accounts } from "@/lib/seed-data";
+import { apiCheckSuccessFeedbackMs, initialApiCheckUiState, transitionApiCheckUiState } from "@/lib/api-check-ui-state";
 
 type ApiCredentialSource = {
   id: string;
@@ -16,12 +17,13 @@ type ApiCredentialSource = {
 type ManualDataSource = {
   id: string;
   label: string;
+  statusLabel?: string;
   syncDescription: string;
 };
 type ApiConfigResult = { sources: ApiCredentialSource[]; manualSources: ManualDataSource[] };
 type ManualRefreshCooldownMinutes = 0 | 30;
 type PreferencesResult = { manualRefreshCooldownMinutes: ManualRefreshCooldownMinutes };
-type CapabilityReport = { generatedAt: string; dataChangesCommitted: false; includesHoldingAmounts: false; checkedScopeCount: number; scopes: unknown[]; additionalProbes?: unknown[] };
+type CapabilityReport = { generatedAt: string; dataChangesCommitted: false; includesHoldingAmounts: false; checkedScopeCount: number; checkedItemCount: number; checks: unknown[]; additionalProbes?: unknown[]; [key: string]: unknown };
 
 let apiConfigSessionCache: ApiConfigResult | null = null;
 let cooldownSessionCache: ManualRefreshCooldownMinutes | null = null;
@@ -36,7 +38,7 @@ function rememberCooldown(minutes: ManualRefreshCooldownMinutes) {
   return minutes;
 }
 
-export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }: { onClose: () => void; onCooldownChange: () => void; onCredentialsRemoved: () => Promise<void> }) {
+export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemoved }: { open: boolean; onClose: () => void; onCooldownChange: () => void; onCredentialsRemoved: () => Promise<void> }) {
   const [status, setStatus] = useState<ApiConfigResult | null>(() => apiConfigSessionCache);
   const [cooldownMinutes, setCooldownMinutes] = useState<ManualRefreshCooldownMinutes | null>(() => cooldownSessionCache);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -46,11 +48,11 @@ export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }:
   const [passphrase, setPassphrase] = useState("");
   const [busy, setBusy] = useState(false);
   const [savingCooldown, setSavingCooldown] = useState(false);
-  const [probingCapabilities, setProbingCapabilities] = useState(false);
+  const [apiCheckState, setApiCheckState] = useState(initialApiCheckUiState);
   const [capabilityReport, setCapabilityReport] = useState<CapabilityReport | null>(null);
-  const [capabilityProbeError, setCapabilityProbeError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [statusError, setStatusError] = useState(false);
+  const capabilityCompletionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function loadStatus() {
     return fetch("/private/api/credentials", { cache: "no-store" })
@@ -80,6 +82,18 @@ export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }:
       })
       .catch(() => setCooldownMinutes(cooldownSessionCache ?? 30));
   }, []);
+
+  useEffect(() => () => {
+    if (capabilityCompletionTimer.current) clearTimeout(capabilityCompletionTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (open) return;
+    setApiKey("");
+    setApiSecret("");
+    setPassphrase("");
+    setSelectedId(null);
+  }, [open]);
 
   const selected = status?.sources.find((source) => source.id === selectedId) ?? null;
 
@@ -153,8 +167,9 @@ export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }:
   }
 
   async function probeCapabilities() {
-    setProbingCapabilities(true);
-    setCapabilityProbeError(null);
+    if (capabilityCompletionTimer.current) clearTimeout(capabilityCompletionTimer.current);
+    capabilityCompletionTimer.current = null;
+    setApiCheckState((current) => transitionApiCheckUiState(current, { type: "start" }));
     setCapabilityReport(null);
     try {
       const response = await fetch("/private/api/diagnostics/platform-capabilities", {
@@ -164,14 +179,39 @@ export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }:
       const result = await response.json() as CapabilityReport & { error?: string };
       if (!response.ok) throw new Error(result.error || "检查失败，请稍后重试。");
       setCapabilityReport(result);
+      setApiCheckState((current) => transitionApiCheckUiState(current, { type: "report_generated" }));
+      capabilityCompletionTimer.current = setTimeout(() => {
+        setApiCheckState((current) => transitionApiCheckUiState(current, { type: "feedback_elapsed" }));
+        capabilityCompletionTimer.current = null;
+      }, apiCheckSuccessFeedbackMs);
     } catch (error) {
-      setCapabilityProbeError(error instanceof Error ? error.message : "检查失败，请稍后重试。");
+      setCapabilityReport(null);
+      setApiCheckState((current) => transitionApiCheckUiState(current, {
+        type: "failed",
+        error: error instanceof Error ? error.message : "检查失败，请稍后重试。",
+      }));
     } finally {
-      setProbingCapabilities(false);
+      setApiCheckState((current) => current.phase === "checking"
+        ? transitionApiCheckUiState(current, { type: "failed", error: "检查流程未能生成报告。" })
+        : current);
     }
   }
 
+  function downloadCapabilityReport() {
+    if (!capabilityReport) return;
+    const blob = new Blob([`${JSON.stringify(capabilityReport, null, 2)}\n`], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `platform-api-check-${new Date(capabilityReport.generatedAt).toISOString().replaceAll(":", "-")}.json`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  const probingCapabilities = apiCheckState.phase === "checking";
   const modalBusy = busy || savingCooldown || probingCapabilities;
+
+  if (!open) return null;
 
   if (pendingRemoval) return (
     <ModalFrame ariaLabel="移除 API 配置及产品" title="移除 API 配置及产品" onClose={() => setPendingRemoval(null)} busy={busy}>
@@ -185,33 +225,25 @@ export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }:
   );
 
   return (
-    <ModalFrame ariaLabel="API 设置" title="API 设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-5">
-      <div className="highlight-panel type-caption px-4 py-3 text-secondary">浏览器不会保存输入内容。服务器使用 AES-GCM 加密，并将密文绑定到当前邮箱与平台账号；完整 Key 和 Secret 不会从服务器返回。关闭弹窗或保存后，输入内容会从页面状态清除。</div>
+    <ModalFrame ariaLabel="API 设置" title="API 设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-6">
       <section>
-        <SectionIntro title="手动刷新" description="只限制主动点击手动刷新的频率；每天 07:00 的计划更新和当天首次打开页面的刷新不受影响。设置会同步到当前邮箱的所有设备。" />
-        <div className="cooldown-options" role="radiogroup" aria-label="手动刷新冷却时间" aria-busy={cooldownMinutes === null || savingCooldown}>
-          {([{ value: 0, label: "无" }, { value: 30, label: "30 分钟" }] as const).map((option) => (
-            <button key={option.value} type="button" role="radio" aria-checked={cooldownMinutes === option.value} className="cooldown-option" disabled={cooldownMinutes === null || savingCooldown} onClick={() => void updateCooldown(option.value)}>
-              {option.label}
-            </button>
-          ))}
+        <div className="api-settings-split-row">
+          <SectionIntro title="手动刷新频率" description="仅限制手动刷新；不影响每日 07:00 更新和当天首次打开时的刷新。设置同步至此邮箱所有设备。" />
+          <div className="cooldown-options" role="radiogroup" aria-label="手动刷新冷却时间" aria-busy={cooldownMinutes === null || savingCooldown}>
+            {([{ value: 0, label: "无" }, { value: 30, label: "30 分钟" }] as const).map((option) => (
+              <button key={option.value} type="button" role="radio" aria-checked={cooldownMinutes === option.value} className="cooldown-option" disabled={cooldownMinutes === null || savingCooldown} onClick={() => void updateCooldown(option.value)}>
+                {option.label}
+              </button>
+            ))}
+          </div>
         </div>
       </section>
       {message && <div className="muted-panel type-caption px-3 py-2.5 font-normal">{message}</div>}
       <section>
-        <SectionIntro title="平台连接" />
-        <div className="mb-4 rounded-xl border border-[var(--border)] p-3">
-          <p className="text-muted type-caption mb-2">只读检查已接入或可探测的平台接口；另外单独检查 OKX On-chain Earn（不算普通活期/定期）。不会保存产品、持仓或历史，结果不含持仓金额和 API 密钥。未接入不代表交易所不支持。</p>
-          <ActionButton variant="secondary" size="small" disabled={modalBusy} onClick={() => void probeCapabilities()}>{probingCapabilities ? "正在检查多个接口…" : capabilityReport ? "重新检查平台 API" : "检查平台 API"}</ActionButton>
-          {capabilityProbeError && <p className="error-panel type-caption mt-2 px-3 py-2" role="alert">{capabilityProbeError}</p>}
-          {capabilityReport && <div className="mt-3">
-            <p className="text-muted type-micro mb-1">检查结果 · {new Date(capabilityReport.generatedAt).toLocaleString("zh-CN")} · {capabilityReport.checkedScopeCount} 个矩阵范围{capabilityReport.additionalProbes?.length ? ` + ${capabilityReport.additionalProbes.length} 个附加探针` : ""}</p>
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-[11px] leading-relaxed">{JSON.stringify(capabilityReport, null, 2)}</pre>
-          </div>}
-        </div>
+        <SectionIntro title="配置 API" description="Key 和 Secret 由服务器加密保存；完整密钥不会返回浏览器。" />
         {statusError && <div className="error-panel type-caption mb-3 px-3 py-2.5" role="alert">配置状态读取失败，请重试。<ActionButton variant="text" size="small" onClick={() => { setStatusError(false); void loadStatus(); }}>重试</ActionButton></div>}
-        <div className="space-y-2">
-          {status?.sources.map((source) => {
+        <div className="api-connection-list">
+          {status?.sources.map((source, index) => {
             const account = accounts.find((item) => item.id === source.id);
             const isSelected = selected?.id === source.id;
             const statusLabel = source.configured ? "已配置" : "未配置";
@@ -223,9 +255,9 @@ export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }:
             };
 
             return (
-              <div key={source.id} className="card px-4 py-3">
+              <div key={source.id} className={`api-connection-row ${index ? "api-connection-row-divided" : ""}`}>
                 <div className="flex items-center justify-between gap-3">
-                  <SourceSummary account={account} label={source.label} statusLabel={statusLabel} statusClass={statusClass} description={`配置后${source.syncDescription}`} />
+                  <SourceSummary account={account} label={source.label} statusLabel={statusLabel} statusClass={statusClass} description={source.syncDescription} />
                   <div className="flex shrink-0 items-center gap-1.5">
                     {!source.configured && <ActionButton variant="secondary" disabled={modalBusy} onClick={openEditor}>添加</ActionButton>}
                     {source.configured && <ApiRowMenu label={source.label} disabled={modalBusy || isSelected} onUpdate={openEditor} onRemove={() => { setMessage(null); setPendingRemoval(source); }} />}
@@ -235,11 +267,36 @@ export function ApiSettings({ onClose, onCooldownChange, onCredentialsRemoved }:
               </div>
             );
           }) ?? (statusError ? null : <ApiSettingsSkeleton />)}
-          {(status?.manualSources ?? []).map((source) => {
+          {(status?.manualSources ?? []).map((source, index) => {
             const account = accounts.find((item) => item.id === source.id);
-            return <div key={source.id} className="card px-4 py-3"><SourceSummary account={account} label={source.label} statusLabel="手动维护" statusClass="status-chip-muted" description={source.syncDescription} /></div>;
+            const divided = (status?.sources.length ?? 0) > 0 || index > 0;
+            return <div key={source.id} className={`api-connection-row ${divided ? "api-connection-row-divided" : ""}`}><SourceSummary account={account} label={source.label} statusLabel={source.statusLabel ?? "手动维护"} statusClass="status-chip-muted" description={source.syncDescription} /></div>;
           })}
         </div>
+      </section>
+      <section>
+        <div className="api-settings-split-row">
+          <SectionIntro title="API 检测" description="只读检查已知接口，不写入产品、持仓或历史；报告不含持仓金额或密钥。OKX On-chain Earn 单独检查。" />
+          <div className="api-check-actions">
+            <ActionButton
+              variant="secondary"
+              className="api-check-button"
+              aria-label={probingCapabilities ? "正在检测 API" : apiCheckState.phase === "complete" ? "检测完成" : "检测 API"}
+              disabled={modalBusy}
+              onClick={() => void probeCapabilities()}
+            >
+              {probingCapabilities
+                ? <span className="api-check-spinner" aria-hidden="true" />
+                : apiCheckState.phase === "complete"
+                  ? <svg className="api-check-success-icon" viewBox="0 0 14 14" aria-hidden="true"><path d="m2.5 7.25 2.8 2.8 6.2-6.1" /></svg>
+                  : "检测 API"}
+            </ActionButton>
+            {capabilityReport && apiCheckState.downloadable && <>
+              <ActionButton variant="text" size="small" onClick={downloadCapabilityReport}>下载 JSON（{new Date(capabilityReport.generatedAt).toLocaleDateString("zh-CN")}）</ActionButton>
+            </>}
+          </div>
+        </div>
+        {apiCheckState.error && <p className="error-panel type-caption mt-3 px-3 py-2" role="alert">{apiCheckState.error}</p>}
       </section>
     </ModalFrame>
   );

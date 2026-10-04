@@ -135,7 +135,7 @@ input:focus-visible,
   text-decoration-color: var(--brand-line);
   text-underline-offset: 4px;
 }
-.button-text:hover:not(:disabled) { background: var(--surface-highlight); }
+.button-text:hover:not(:disabled) { background: transparent; color: var(--brand-hover); text-decoration-color: currentColor; }
 .inline-action { vertical-align: baseline; }
 
 .top-nav { border-bottom: var(--hairline) solid var(--border); background: var(--surface-nav); }
@@ -700,6 +700,53 @@ input:focus-visible,
 .modal-close svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.7; }
 .modal-body { max-height: calc(90vh - 5rem); overflow-y: auto; padding: var(--space-5); }
 .api-settings-body { height: min(40rem, calc(90vh - 5rem)); }
+.api-settings-split-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 1.5rem;
+}
+.api-settings-split-row > :first-child { margin-bottom: 0; }
+.api-connection-list {
+  overflow: hidden;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.api-connection-row { padding: .875rem 1rem; }
+.api-connection-row-divided { border-top: var(--hairline) solid var(--border); }
+.api-check-actions { display: grid; justify-items: end; gap: .25rem; }
+.api-check-button {
+  width: 6rem;
+  height: calc(var(--leading-body) + 2 * var(--space-control) + 2px);
+  min-height: calc(var(--leading-body) + 2 * var(--space-control) + 2px);
+  padding-inline: var(--space-3);
+}
+.api-check-spinner {
+  display: inline-block;
+  width: .9rem;
+  height: .9rem;
+  margin-right: .45rem;
+  vertical-align: -.12rem;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: api-check-spin .75s linear infinite;
+}
+.api-check-success-icon {
+  display: block;
+  width: .9rem;
+  height: .9rem;
+  fill: none;
+  color: var(--status-success, #16834a);
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.api-check-button .api-check-spinner,
+.api-check-button .api-check-success-icon { margin: 0; }
+@keyframes api-check-spin { to { transform: rotate(360deg); } }
 .api-credential-form { border-top: var(--hairline) solid var(--border); padding-top: var(--space-4); }
 .secret-input {
   width: 100%;
@@ -713,6 +760,8 @@ input:focus-visible,
 .secret-input:focus { border-color: var(--brand-line); box-shadow: 0 0 0 3px var(--focus); }
 .cooldown-options {
   display: grid;
+  width: 10rem;
+  height: calc(var(--leading-body) + 2 * var(--space-control) + 2px);
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: .25rem;
   border: var(--hairline) solid var(--border-strong);
@@ -721,7 +770,8 @@ input:focus-visible,
   background: var(--surface-muted);
 }
 .cooldown-option {
-  min-height: 2.5rem;
+  min-height: 0;
+  padding: 0;
   cursor: pointer;
   border: 0;
   border-radius: calc(var(--radius-control) - .25rem);
@@ -745,11 +795,9 @@ input:focus-visible,
   min-height: 5.25rem;
   align-items: flex-start;
   gap: .75rem;
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-control);
   padding: .75rem 1rem;
-  background: var(--surface);
 }
+.api-settings-skeleton-row + .api-settings-skeleton-row { border-top: var(--hairline) solid var(--border); }
 .api-settings-skeleton-badge { width: 2.75rem; height: 2.75rem; flex: 0 0 auto; border-radius: var(--radius-card); background: var(--surface-muted); }
 .api-settings-skeleton-copy { display: grid; width: min(20rem, 70%); gap: var(--space-2); padding-top: .2rem; }
 .api-settings-skeleton-copy span { height: .65rem; border-radius: 999px; background: var(--surface-muted); }
@@ -757,6 +805,7 @@ input:focus-visible,
 
 @media (max-width: 639px) {
   .metrics-panel .metric-item:nth-child(n + 2)::after { content: ""; }
+  .api-settings-split-row { gap: .75rem; }
 }
 
 @media (max-width: 359px) {

@@ -1,11 +1,14 @@
-import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import type { EligibilityStatus, Product, ProductAvailability, RateCoverage } from "@/lib/domain";
 import { buildPlatformProductIdentity } from "@/lib/product-identity";
 import { syncDiagnostic } from "@/lib/sync-diagnostics";
 import { publicProductAssetsFor } from "@/lib/platform-capabilities";
+import { fetchBybitFlexibleProductRows, scanBybitFixedProducts } from "@/lib/integrations/bybit";
 
 export type LiveRate = {
   productId: string;
+  /** A known position can exist even when no product/APR catalogue row exists. */
+  productDataMode?: "api" | "manual";
+  manualFields?: Product["manualFields"];
   canonicalProductId?: string;
   name?: string;
   apr: number;
@@ -46,22 +49,21 @@ export type LiveRate = {
 };
 
 type BybitEndpoint = {
-  bases: readonly string[];
   platform: "Bybit.com" | "Bybit EU";
   accountId: "bybit-global" | "bybit-eu";
-  coin: string;
+  coin: Product["asset"];
   label: string;
 };
 
 type BybitFlexibleRow = {
   productId?: string;
   coin?: string;
-  estimateApr?: string;
-  estimateApy?: string;
-  apr?: string;
-  apy?: string;
-  bonusApr?: string;
-  extraApr?: string;
+  estimateApr?: string | number;
+  estimateApy?: string | number;
+  apr?: string | number;
+  apy?: string | number;
+  bonusApr?: string | number;
+  extraApr?: string | number;
   tierAprDetails?: Array<{
     min?: string | number | null;
     max?: string | number | null;
@@ -72,11 +74,14 @@ type BybitFlexibleRow = {
   [key: string]: unknown;
 };
 
-const bybitEndpointDefinitions: BybitEndpoint[] = [
-  { bases: ["https://api.bybit.com", "https://api.bytick.com"], platform: "Bybit.com", accountId: "bybit-global", coin: "USDT", label: "Bybit 官方公开 API" },
-  { bases: ["https://api.bybit.com", "https://api.bytick.com"], platform: "Bybit.com", accountId: "bybit-global", coin: "USDC", label: "Bybit 官方公开 API" },
-  { bases: ["https://api.bybit.eu"], platform: "Bybit EU", accountId: "bybit-eu", coin: "USDT", label: "Bybit EU 官方公开 API" },
-];
+const bybitEndpointDefinitions: BybitEndpoint[] = (["bybit-global", "bybit-eu"] as const).flatMap((accountId) => (
+  publicProductAssetsFor(accountId, "flexible").map((coin) => ({
+    platform: accountId === "bybit-eu" ? "Bybit EU" as const : "Bybit.com" as const,
+    accountId,
+    coin: coin as Product["asset"],
+    label: accountId === "bybit-eu" ? "Bybit EU 官方公开 API" : "Bybit 官方公开 API",
+  }))
+));
 
 const bybitEndpoints = bybitEndpointDefinitions.filter((endpoint) => {
   const accountId = endpoint.platform === "Bybit.com" ? "bybit-global" : "bybit-eu";
@@ -86,12 +91,74 @@ const bybitEndpoints = bybitEndpointDefinitions.filter((endpoint) => {
 export async function fetchPublicRateSnapshot() {
   const jobs = [
     ...bybitEndpoints.map((endpoint) => ({ label: `${endpoint.platform} ${endpoint.coin} 公共 APR`, task: fetchBybitRate(endpoint) })),
+    ...(publicProductAssetsFor("bybit-eu", "fixed").length
+      ? [{ label: "Bybit EU 定期产品/API", task: fetchBybitEuFixedRates() }]
+      : []),
   ];
   const settled = await Promise.allSettled(jobs.map((job) => job.task));
   return {
-    rates: settled.flatMap((result) => result.status === "fulfilled" ? result.value : []),
+    rates: settled.flatMap((result) => result.status === "fulfilled" ? result.value.rates : []),
     failures: settled.flatMap((result, index) => result.status === "fulfilled" ? [] : [jobs[index].label]),
+    partials: settled.flatMap((result, index) => result.status === "fulfilled" && result.value.partial ? [jobs[index].label] : []),
+    empty: settled.flatMap((result, index) => result.status === "fulfilled" && result.value.empty ? [jobs[index].label] : []),
   };
+}
+
+async function fetchBybitEuFixedRates(): Promise<{ rates: LiveRate[]; partial: boolean; empty: boolean }> {
+  const productScan = await scanBybitFixedProducts("bybit-eu");
+  const products = productScan.rows;
+  const rates: LiveRate[] = products.map((row) => {
+    const identity = buildPlatformProductIdentity({
+      accountId: "bybit-eu",
+      asset: row.coin,
+      productType: "fixed",
+      externalProductId: row.externalProductId,
+    });
+    const tiers = (row.tiers ?? []).map((tier) => ({ min: tier.min, max: tier.max, apr: tier.apy }));
+    const termDays = bybitDurationDays(row.duration);
+    const eligibilityRequired = Boolean(row.isVip || row.specialUserGroupRequired);
+    return {
+      productId: identity.identityKey,
+      ...identity,
+      name: `Fixed Saving · ${row.duration}`,
+      apr: tiers[0]?.apr ?? 0,
+      rateShape: row.rateShape,
+      tiers,
+      fetchedAt: new Date().toISOString(),
+      sourceLabel: "Bybit EU 官方公开定期产品 API",
+      productType: "fixed",
+      ...(termDays !== undefined ? { termDays } : {}),
+      minimumAmount: row.minAmount,
+      availability: row.status === "Available" ? "available" : "unavailable",
+      eligibilityRequired,
+      eligibilityLabel: row.isVip ? "VIP 用户" : row.specialUserGroupRequired ? "需满足特殊用户组资格" : undefined,
+      eligibilityStatus: eligibilityRequired ? "unknown" : undefined,
+      rateCoverage: tiers.length ? "complete" : "unavailable",
+      catalog: {
+        accountId: "bybit-eu",
+        exchange: "bybit",
+        region: "eu",
+        asset: row.coin,
+        holdingDataMode: "manual",
+        apiAccess: "public",
+      },
+    };
+  });
+  return {
+    rates,
+    partial: !productScan.complete || products.some((row) => row.rateShape === "no_rate" || !bybitDurationDays(row.duration)),
+    empty: productScan.complete && products.length === 0,
+  };
+}
+
+function bybitDurationDays(value: string) {
+  const match = value.trim().toLowerCase().match(/^(\d+(?:\.\d+)?)([dhm])$/);
+  if (!match) return undefined;
+  const amount = Number.parseFloat(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return undefined;
+  if (match[2] === "h") return amount / 24;
+  if (match[2] === "m") return amount / 1440;
+  return amount;
 }
 
 export function summarizePublicFailures(failures: string[]) {
@@ -118,31 +185,28 @@ export function summarizePublicFailures(failures: string[]) {
   ));
 }
 
-async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate[]> {
-  let lastError: unknown;
-  for (const base of endpoint.bases) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5500);
-    try {
-      const url = `${base}/v5/earn/product?category=FlexibleSaving&coin=${endpoint.coin}`;
-      const response = await exchangeFetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
-      const body = await readExchangeJson<{
-        retCode?: number;
-        result?: { list?: BybitFlexibleRow[] };
-      }>(response);
-      if (!response.ok || body.retCode !== 0) throw new Error(`Bybit returned ${response.status}/${body.retCode ?? "unknown"}`);
-      const candidates = body.result?.list ?? [];
+async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRate[]; partial: boolean; empty: boolean }> {
+  const productScan = await fetchBybitFlexibleProductRows(endpoint.accountId, endpoint.coin);
+      const candidates = productScan.rows;
+      const paginationComplete = productScan.complete;
+      if (!paginationComplete && candidates.length === 0) return { rates: [], partial: true, empty: false };
+      if (candidates.length === 0 && paginationComplete) {
+        syncDiagnostic("bybit_flexible_rows", { platform: endpoint.platform, coin: endpoint.coin, rowCount: 0, unmappedRowCount: 0, rows: [], includedProducts: [] });
+        return { rates: [], partial: false, empty: true };
+      }
       const ratesByProductId = new Map<string, LiveRate>();
       const fetchedAt = new Date().toISOString();
-      const unmappedRowCount = candidates.filter((candidate) => !candidate.productId?.trim() && candidates.length > 1).length;
-      for (const item of candidates) {
-        const externalProductId = item.productId?.trim()
-          || (candidates.length === 1 ? `flexible-${endpoint.coin.toLowerCase()}` : undefined);
+      const scopeMismatchCount = candidates.filter((candidate) => candidate.coin && candidate.coin.toUpperCase() !== endpoint.coin).length;
+      const scopedCandidates = candidates.filter((candidate) => !candidate.coin || candidate.coin.toUpperCase() === endpoint.coin);
+      const unmappedRowCount = scopedCandidates.filter((candidate) => !candidate.productId?.trim()).length;
+      let missingRateCount = 0;
+      for (const item of scopedCandidates) {
+        const externalProductId = item.productId?.trim();
         if (!externalProductId) continue;
         const baseApr = parsePercent(item.estimateApr);
         const tiers = parseBybitTiers(item.tierAprDetails);
         const apr = tiers[0]?.apr ?? baseApr;
-        if (!Number.isFinite(apr)) continue;
+        if (!Number.isFinite(apr)) { missingRateCount += 1; continue; }
         const identity = buildPlatformProductIdentity({
           accountId: endpoint.accountId,
           asset: endpoint.coin,
@@ -170,7 +234,7 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate[]> {
             exchange: "bybit",
             region: endpoint.platform === "Bybit.com" ? "global" : "eu",
             asset: endpoint.coin as Product["asset"],
-            holdingDataMode: endpoint.platform === "Bybit.com" ? "api" : "manual",
+            holdingDataMode: endpoint.accountId === "bybit-global" ? "api" : "manual",
             apiAccess: "public",
           },
         };
@@ -183,6 +247,7 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate[]> {
         coin: endpoint.coin,
         rowCount: candidates.length,
         unmappedRowCount,
+        scopeMismatchCount,
         rows: candidates.map((candidate) => ({
           productId: candidate.productId ?? null,
           coin: candidate.coin ?? null,
@@ -203,15 +268,7 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<LiveRate[]> {
           tierCount: rate.tiers?.length ?? 0,
         })),
       });
-      if (rates.length === 0) throw new Error("Bybit returned no usable flexible product APR");
-      return rates;
-    } catch (error) {
-      lastError = error;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  throw lastError ?? new Error("Bybit public API unavailable");
+  return { rates, partial: !paginationComplete || scopeMismatchCount > 0 || unmappedRowCount > 0 || missingRateCount > 0, empty: false };
 }
 
 function bybitRateScore(rate: LiveRate) {
@@ -266,6 +323,6 @@ function sanitizeBybitRateValue(value: unknown, depth = 0): unknown {
     .map(([key, nested]) => [key, sanitizeBybitRateValue(nested, depth + 1)]));
 }
 
-function parsePercent(value: string | undefined) {
-  return Number.parseFloat(value?.replace("%", "") ?? "");
+function parsePercent(value: string | number | undefined) {
+  return Number.parseFloat(String(value ?? "").replace("%", ""));
 }

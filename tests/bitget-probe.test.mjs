@@ -36,10 +36,11 @@ test("Bitget USDGO capability probe checks products and holdings without returni
   const { probeBitgetAsset } = load("@/lib/integrations/bitget");
   const result = await probeBitgetAsset({ apiKey: "key", apiSecret: "secret", passphrase: "pass" }, "USDGO");
 
-  assert.equal(result.productApi.status, "returned");
+  assert.equal(result.productApi.status, "partial");
+  assert.equal(result.productApi.diagnostic, "product_scope_mismatch");
   assert.equal(result.productApi.rowCount, 3);
   assert.equal(result.productApi.eligibleFlexibleCount, 1);
-  assert.deepEqual(result.productApi.rows.map((row) => row.productId), ["usdgo-flex", "usdgo-vip", "usdgo-fixed"]);
+  assert.deepEqual(result.productApi.rows.map((row) => row.productId), ["usdgo-flex", "usdgo-vip", "usdgo-fixed@7d"]);
   assert.equal(result.productApi.rows[0].eligibleForMonitoring, true);
   assert.equal(result.productApi.rows[1].eligibleForMonitoring, false);
   assert.equal("eligibleForMonitoring" in result.productApi.rows[2], false);
@@ -90,4 +91,29 @@ test("Bitget capability matrix probe fetches one holdings pagination sequence pe
   assert.ok(result.every((entry) => entry.holdingsApi.complete));
   assert.ok(result.every((entry) => entry.fixedHoldingsApi.complete));
   assert.deepEqual(requests.filter((url) => url.pathname.endsWith("/savings/assets")).map((url) => url.searchParams.get("periodType")).sort(), ["fixed", "flexible"]);
+});
+
+test("Bitget fixed product probe matches daily-sync duplicate identity classification", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url, text: async () => "" }),
+      readExchangeText: async (response) => {
+        const url = new URL(response.url);
+        if (url.pathname.endsWith("/savings/product")) return JSON.stringify({ code: "00000", data: [
+          { productId: "same-offer", coin: "USDT", periodType: "fixed", period: "7d", status: "in_progress", apyList: [{ minStepVal: "0", maxStepVal: "300", currentApy: "5" }] },
+          { productId: "same-offer", coin: "USDT", periodType: "fixed", period: "7d", status: "in_progress", apyList: [{ minStepVal: "0", maxStepVal: "300", currentApy: "6" }] },
+        ] });
+        return JSON.stringify({ code: "00000", data: { resultList: [], endId: "" } });
+      },
+      readExchangeJson: async () => ({ code: "00000", data: {} }),
+      logExchangePayload: () => {},
+    },
+  });
+  const { probeBitgetAsset } = load("@/lib/integrations/bitget");
+
+  const result = await probeBitgetAsset({ apiKey: "key", apiSecret: "secret", passphrase: "pass" }, "USDT");
+
+  assert.equal(result.productApi.status, "partial");
+  assert.equal(result.productApi.diagnostic, "duplicate_fixed_product_identity");
+  assert.equal(result.fixedHoldingsApi.status, "complete");
 });

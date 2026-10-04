@@ -25,6 +25,46 @@ test("one-off capability checks capture adapter diagnostics without writing them
   assert.deepEqual(f.logs, []);
 });
 
+test("routine sync logs omit private position amounts, identities, and result counts", async () => {
+  const f = fixture(async () => Response.json({}));
+  await f.withSyncDiagnostics("user", { trigger: "scheduled", attempt: 1 }, async () => {
+    f.syncDiagnostic("binance_flexible_rows", {
+      positionApiStatus: "complete",
+      positionListComplete: true,
+      positionRowCount: 1,
+      positionRows: [{ productId: "private-binance-product", totalAmount: 123.456 }],
+    });
+    f.syncDiagnostic("bybit_flexible_position_rows", {
+      account: "bybit-global",
+      asset: "USDT",
+      listComplete: true,
+      rowCount: 1,
+      rows: [{ productId: "private-bybit-product", amount: 45.67 }],
+      productTotals: [{ identityKey: "private-bybit-product", amount: 45.67 }],
+    });
+    f.syncDiagnostic("bitget_assets_rows", {
+      complete: true,
+      rowCount: 1,
+      rows: [{ productId: "private-bitget-product", holdAmount: 89.01 }],
+    });
+    f.syncDiagnostic("bitget_holding_mapping", {
+      adapterHoldings: { "private-bitget-product": 89.01 },
+      finalCatalogHoldings: { "private-bitget-product": 89.01 },
+    });
+    f.syncDiagnostic("binance_catalog_decisions", {
+      completeScopes: ["binance-global:USDT:flexible"],
+      decisions: [{ productId: "private-binance-product", holdingAmount: 123.456 }],
+    });
+  });
+
+  const json = JSON.stringify(f.logs);
+  assert.doesNotMatch(json, /123\.456|45\.67|89\.01|private-(?:binance|bybit|bitget)-product|positionRowCount|productTotals|holdingAmount/);
+  assert.equal(f.logs[0].positionApiStatus, "complete");
+  assert.equal(f.logs[0].positionListComplete, true);
+  assert.equal(f.logs[1].listComplete, true);
+  assert.equal(f.logs[2].complete, true);
+});
+
 test("HTTP and API codes remain distinct, without logging signed queries or response data", async () => {
   const f = fixture(async () => Response.json({ code: -1021, msg: "SECRET-BODY", balance: 987654321 }));
   await f.withSyncDiagnostics("cloudflare:secret@example.test", { trigger: "scheduled", attempt: 3, runId: "run-a" }, () =>

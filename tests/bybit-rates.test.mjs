@@ -108,6 +108,97 @@ test("Bybit EU fixed product probe checks the public endpoint once and distingui
   assert.equal(JSON.stringify(rows).includes("7%"), false);
 });
 
+test("Bybit flexible public scan follows advertised cursors and keeps later-page products", async () => {
+  const requests = [];
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => {
+        requests.push(new URL(url));
+        return { ok: true, status: 200, headers: new Headers(), url };
+      },
+      readExchangeJson: async (response) => {
+        const url = new URL(response.url);
+        const coin = url.searchParams.get("coin");
+        if (coin === "USDT" && !url.searchParams.has("cursor")) {
+          return { retCode: 0, result: { list: [{ productId: "first", coin, status: "Available", estimateApr: "1%" }], nextPageCursor: "page-2" } };
+        }
+        if (coin === "USDT") {
+          return { retCode: 0, result: { list: [{ productId: "second", coin, status: "Available", estimateApr: "2%" }] } };
+        }
+        return { retCode: 0, result: { list: [] } };
+      },
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { fetchPublicRateSnapshot } = load("@/lib/live-rates");
+  const result = await fetchPublicRateSnapshot();
+  const usdt = result.rates.filter((rate) => rate.identityKey?.startsWith("bybit-global:USDT:flexible:"));
+
+  assert.deepEqual(usdt.map((rate) => rate.externalProductId), ["first", "second"]);
+  assert.equal(result.partials.some((entry) => entry.includes("USDT")), false);
+  assert.equal(requests.some((url) => url.searchParams.get("cursor") === "page-2"), true);
+});
+
+test("Bybit repeated cursor marks product result partial instead of accepting a truncated list", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url }),
+      readExchangeJson: async (response) => {
+        const url = new URL(response.url);
+        if (url.searchParams.get("coin") !== "USDT") return { retCode: 0, result: { list: [] } };
+        return { retCode: 0, result: { list: [{ productId: url.searchParams.get("cursor") ?? "first", coin: "USDT", estimateApr: "1%" }], nextPageCursor: "repeat" } };
+      },
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { fetchPublicRateSnapshot } = load("@/lib/live-rates");
+  const result = await fetchPublicRateSnapshot();
+
+  assert.equal(result.partials.includes("Bybit.com USDT 公共 APR"), true);
+});
+
+test("Bybit fixed product scan preserves first-page rows but marks a failed next page incomplete", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: !new URL(url).searchParams.has("cursor"), status: new URL(url).searchParams.has("cursor") ? 503 : 200, headers: new Headers(), url }),
+      readExchangeJson: async (response) => new URL(response.url).searchParams.has("cursor")
+        ? { retCode: 10000, result: { list: [] } }
+        : { retCode: 0, result: { list: [{ productId: "first", coin: "USDC", duration: "30d", tieredApyList: [{ min: "0", max: "-1", apy: "3%" }] }], nextPageCursor: "next" } },
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { scanBybitFixedProducts } = load("@/lib/integrations/bybit");
+  const scan = await scanBybitFixedProducts("bybit-eu");
+
+  assert.equal(scan.rows.length, 1);
+  assert.equal(scan.complete, false);
+});
+
+test("Bybit fixed holding scan marks missing or invalid amounts partial without exposing amounts", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url }),
+      readExchangeJson: async () => ({ retCode: 0, result: { list: [
+        { productId: "missing-amount", coin: "USDT", duration: "7d", status: "Active" },
+        { productId: "negative-amount", coin: "USDC", duration: "30d", amount: "-1", status: "Active" },
+      ] } }),
+    },
+  });
+  const { scanBybitFixedHoldings } = load("@/lib/integrations/bybit");
+
+  const scan = await scanBybitFixedHoldings({
+    apiKey: "secret-key",
+    apiSecret: "secret-value",
+    baseUrls: ["https://api.bybit.com"],
+  });
+
+  assert.equal(scan.rowCount, 2);
+  assert.equal(scan.complete, false);
+  assert.equal(scan.rows.every((row) => row.hasPositiveHolding === false), true);
+  assert.equal(scan.rows.every((row) => !Object.hasOwn(row, "amount")), true);
+  assert.equal(JSON.stringify(scan).includes("secret-key"), false);
+});
+
 test("Bybit fixed sync emits a sanitized product-to-position ID summary", async () => {
   const diagnostics = [];
   const load = moduleLoader({
@@ -146,6 +237,8 @@ test("Bybit fixed sync emits a sanitized product-to-position ID summary", async 
   assert.equal(result.holdings["bybit-global:USDT:fixed:shared-id@90d"], 34);
   assert.equal(result.sync.products, true);
   assert.equal(result.sync.holdings, true);
+  assert.equal(result.sync.productStatus, "complete");
+  assert.equal(result.sync.holdingStatus, "complete");
   const record = diagnostics.find((entry) => entry.event === "bybit_fixed_rows");
   assert.ok(record);
   assert.deepEqual(record.fields.productRows.map((row) => [row.productId, row.duration]), [
@@ -185,8 +278,9 @@ test("Bybit fixed sync refuses to guess when a repeated product ID has no holdin
 
   assert.equal(result.sync.products, true);
   assert.equal(result.sync.holdings, false);
-  assert.equal(result.holdings["bybit-global:USDT:fixed:shared-id@7d"], 0);
-  assert.equal(result.holdings["bybit-global:USDT:fixed:shared-id@90d"], 0);
+  assert.equal(result.sync.holdingStatus, "partial");
+  assert.equal(result.holdings["bybit-global:USDT:fixed:shared-id@7d"], undefined);
+  assert.equal(result.holdings["bybit-global:USDT:fixed:shared-id@90d"], undefined);
 });
 
 test("Bybit capability probe can check any monitored flexible coin on global and EU public hosts", async () => {

@@ -75,6 +75,8 @@ export type BinanceFlexibleSnapshot = {
   holdings: Record<string, number>;
   productListsComplete: boolean;
   positionListsComplete: boolean;
+  productApiStatus: "complete" | "partial" | "error";
+  positionApiStatus: "complete" | "partial" | "error";
 };
 
 export type BinanceLockedSnapshot = {
@@ -87,6 +89,8 @@ export type BinanceLockedSnapshot = {
   }>;
   productListComplete: boolean;
   positionListComplete: boolean;
+  productApiStatus: "complete" | "partial" | "error";
+  positionApiStatus: "complete" | "partial" | "error";
 };
 
 const accounts = {
@@ -109,39 +113,54 @@ export async function fetchBinanceFlexibleSnapshot(
     "flexible",
     "productApi",
   ) as SupportedAsset[],
-  allowEmpty = false,
 ): Promise<BinanceFlexibleSnapshot> {
   const accountConfig = accounts[account];
   const fetchedAt = new Date().toISOString();
   const results = await Promise.all(assets.map(async (asset) => {
-    const [productPage, positionPage] = await Promise.all([
+    const [productResult, positionResult] = await Promise.allSettled([
       signedGet<PageResponse<FlexibleProductRow>>(
         "/sapi/v1/simple-earn/flexible/list",
         { asset, current: 1, size: 100 },
         credentials,
-      ),
+      ).then((page) => collectBinancePages("/sapi/v1/simple-earn/flexible/list", page, credentials, { asset })),
       signedGet<PageResponse<FlexiblePositionRow>>(
         "/sapi/v1/simple-earn/flexible/position",
         { asset, current: 1, size: 100 },
         credentials,
-      ),
+      ).then((page) => collectBinancePages("/sapi/v1/simple-earn/flexible/position", page, credentials, { asset })),
     ]);
-
-    const [products, positions] = await Promise.all([
-      collectBinancePages("/sapi/v1/simple-earn/flexible/list", productPage, credentials, { asset }),
-      collectBinancePages("/sapi/v1/simple-earn/flexible/position", positionPage, credentials, { asset }),
-    ]);
-    const productRows = products.rows?.filter((row) => row.asset === asset) ?? [];
-    const positionRows = positions.rows?.filter((row) => row.asset === asset) ?? [];
+    const products = productResult.status === "fulfilled"
+      ? productResult.value
+      : { rows: [], total: undefined, complete: false };
+    const positions = positionResult.status === "fulfilled"
+      ? positionResult.value
+      : { rows: [], total: undefined, complete: false };
+    const productRows = products.rows.filter((row) => row.asset?.toUpperCase() === asset);
+    const positionRows = positions.rows.filter((row) => row.asset?.toUpperCase() === asset);
+    const productScopeMismatchCount = products.rows.length - productRows.length;
+    const positionScopeMismatchCount = positions.rows.length - positionRows.length;
+    const productRowsShapeComplete = productRows.every((row) => normalizeBinanceProductId(row.productId) && hasBinanceApr(row));
+    const positionRowsShapeComplete = positionRows.every((row) => normalizeBinanceProductId(row.productId)
+      && parseStrictFinite(row.totalAmount) !== undefined);
+    const productListComplete = productResult.status === "fulfilled"
+      && products.complete && productScopeMismatchCount === 0 && productRowsShapeComplete;
+    const positionResponseComplete = positionResult.status === "fulfilled"
+      && positions.complete && positionScopeMismatchCount === 0 && positionRowsShapeComplete;
+    const productApiStatus = productResult.status === "rejected" ? "error" as const
+      : productListComplete ? "complete" as const : "partial" as const;
+    const positionApiStatus = positionResult.status === "rejected" ? "error" as const
+      : positionResponseComplete ? "complete" as const : "partial" as const;
     // Sanitized trace for verifying whether one flexible asset maps to
     // multiple upstream products. Keep product/position IDs and amounts only;
     // never emit credentials, signatures, or raw exchange responses.
     syncDiagnostic("binance_flexible_rows", {
       account: account === "global" ? "binance-global" : "binance-bahrain",
       asset,
-      productListComplete: products.complete,
+      productApiStatus,
+      productListComplete,
       productTotal: products.total ?? null,
       productRowCount: productRows.length,
+      productScopeMismatchCount,
       productRows: productRows.map((row) => {
         const tiers = parseBinanceTiers(asset, row.latestAnnualPercentageRate, row.tierAnnualPercentageRate);
         const hasApr = hasBinanceApr(row);
@@ -153,9 +172,11 @@ export async function fetchBinanceFlexibleSnapshot(
           tierAnnualPercentageRate: tiers,
         };
       }),
-      positionListComplete: positions.complete,
+      positionApiStatus,
+      positionListComplete: positionResponseComplete,
       positionTotal: positions.total ?? null,
       positionRowCount: positionRows.length,
+      positionScopeMismatchCount,
       positionRows: positionRows.map((row) => ({
         productId: String(row.productId ?? "").trim() || null,
         asset: row.asset ?? null,
@@ -168,36 +189,39 @@ export async function fetchBinanceFlexibleSnapshot(
     // every position for the coin into it.
     const productRowsById = new Map<string, FlexibleProductRow>();
     let unmappedProductRowCount = 0;
+    let missingProductAprCount = 0;
     productRows.forEach((row) => {
-      const productId = normalizeBinanceProductId(row.productId)
-        ?? (productRows.length === 1 ? `flexible-${asset.toLowerCase()}` : undefined);
+      const productId = normalizeBinanceProductId(row.productId);
       if (!productId) {
         unmappedProductRowCount += 1;
         return;
       }
+      if (!hasBinanceApr(row)) missingProductAprCount += 1;
       const existing = productRowsById.get(productId);
       if (!existing || (!hasBinanceApr(existing) && hasBinanceApr(row))) productRowsById.set(productId, row);
     });
 
-    const positionsById = new Map<string, { amount: number; rateRow?: FlexiblePositionRow }>();
-    let unmappedPositivePositionCount = 0;
+    const positionsById = new Map<string, { amount: number }>();
+    let unmappedPositionCount = 0;
+    let invalidPositionAmountCount = 0;
     positionRows.forEach((row) => {
-      const productId = normalizeBinanceProductId(row.productId)
-        ?? (productRowsById.size === 1
-          ? productRowsById.keys().next().value
-          : productRowsById.size === 0 && positionRows.length === 1
-            ? `flexible-${asset.toLowerCase()}`
-            : undefined);
+      const productId = normalizeBinanceProductId(row.productId);
       if (!productId) {
-        if (finiteNumber(row.totalAmount) > 0) unmappedPositivePositionCount += 1;
+        unmappedPositionCount += 1;
+        return;
+      }
+      const amount = parseStrictFinite(row.totalAmount);
+      if (amount === undefined) {
+        invalidPositionAmountCount += 1;
         return;
       }
       const existing = positionsById.get(productId);
       positionsById.set(productId, {
-        amount: (existing?.amount ?? 0) + finiteNumber(row.totalAmount),
-        rateRow: existing?.rateRow ?? (hasBinanceApr(row) ? row : undefined),
+        amount: (existing?.amount ?? 0) + amount,
       });
     });
+    const positionListComplete = positionResponseComplete
+      && unmappedPositionCount === 0 && invalidPositionAmountCount === 0;
 
     const productIds = new Set(productRowsById.keys());
     for (const [productId, position] of positionsById) {
@@ -210,7 +234,8 @@ export async function fetchBinanceFlexibleSnapshot(
     for (const externalProductId of productIds) {
       const product = productRowsById.get(externalProductId);
       const position = positionsById.get(externalProductId);
-      const rateSource = hasBinanceApr(product) ? product : position?.rateRow ?? product;
+      const hasProductRow = Boolean(product);
+      const rateSource = product;
       const hasApr = hasBinanceApr(rateSource);
       const tiers = hasApr
         ? parseBinanceTiers(asset, rateSource?.latestAnnualPercentageRate, rateSource?.tierAnnualPercentageRate)
@@ -225,13 +250,14 @@ export async function fetchBinanceFlexibleSnapshot(
       rates.push({
         productId: identity.identityKey,
         ...identity,
+        ...(!hasProductRow || !hasApr ? { productDataMode: "manual" as const } : {}),
         apr: tiers[0]?.apr ?? 0,
         rateShape: !hasApr ? "no_rate" : tiers.length > 1 ? "tiered_rate" : "single_rate",
         tiers,
         fetchedAt,
-        sourceLabel: product
+        sourceLabel: hasProductRow
           ? accountConfig.sourceLabel
-          : accountConfig.sourceLabel.replace("账户 API", "账户持仓 API"),
+          : accountConfig.sourceLabel.replace("账户 API", "账户持仓 API；产品资料待填写"),
         rateCoverage: hasApr ? "complete" : "unavailable",
         catalog: {
           accountId,
@@ -242,15 +268,20 @@ export async function fetchBinanceFlexibleSnapshot(
           apiAccess: "authenticated" as const,
         },
       });
-      holdings[identity.identityKey] = position?.amount ?? 0;
+      if (position) holdings[identity.identityKey] = position.amount;
+      else if (positionListComplete) holdings[identity.identityKey] = 0;
     };
 
-    if (rates.length === 0 && !allowEmpty) throw new Error(`Binance returned no ${asset} flexible product`);
     return {
       rates,
       holdings,
-      productListComplete: products.complete && unmappedProductRowCount === 0,
-      positionListComplete: positions.complete && unmappedPositivePositionCount === 0,
+      productListComplete: productResult.status === "fulfilled"
+        && products.complete && productScopeMismatchCount === 0 && unmappedProductRowCount === 0 && missingProductAprCount === 0,
+      positionListComplete,
+      productApiStatus: productResult.status === "rejected" ? "error" as const
+        : products.complete && productScopeMismatchCount === 0 && unmappedProductRowCount === 0 && missingProductAprCount === 0 ? "complete" as const : "partial" as const,
+      positionApiStatus: positionResult.status === "rejected" ? "error" as const
+        : positionListComplete ? "complete" as const : "partial" as const,
     };
   }));
 
@@ -259,6 +290,8 @@ export async function fetchBinanceFlexibleSnapshot(
     holdings: Object.assign({}, ...results.map((result) => result.holdings)),
     productListsComplete: results.every((result) => result.productListComplete),
     positionListsComplete: results.every((result) => result.positionListComplete),
+    productApiStatus: aggregateSnapshotStatus(results.map((result) => result.productApiStatus)),
+    positionApiStatus: aggregateSnapshotStatus(results.map((result) => result.positionApiStatus)),
   };
 }
 
@@ -279,26 +312,82 @@ export async function fetchBinanceLockedSnapshot(
 ): Promise<BinanceLockedSnapshot> {
   const accountConfig = accounts[account];
   const supported = new Set(assets.map((asset) => asset.toUpperCase()));
-  const [productPage, positionPage] = await Promise.all([
+  const [productResult, positionResult] = await Promise.allSettled([
     signedGet<PageResponse<LockedProductRow>>(
       "/sapi/v1/simple-earn/locked/list",
       { current: 1, size: 100 },
       credentials,
-    ),
+    ).then((page) => collectBinancePages("/sapi/v1/simple-earn/locked/list", page, credentials)),
     signedGet<PageResponse<LockedPositionRow>>(
       "/sapi/v1/simple-earn/locked/position",
       { current: 1, size: 100 },
       credentials,
-    ),
+    ).then((page) => collectBinancePages("/sapi/v1/simple-earn/locked/position", page, credentials)),
   ]);
-
-  const [products, positionsResponse] = await Promise.all([
-    collectBinancePages("/sapi/v1/simple-earn/locked/list", productPage, credentials),
-    collectBinancePages("/sapi/v1/simple-earn/locked/position", positionPage, credentials),
-  ]);
+  const products = productResult.status === "fulfilled"
+    ? productResult.value
+    : { rows: [], total: undefined, complete: false };
+  const positionsResponse = positionResult.status === "fulfilled"
+    ? positionResult.value
+    : { rows: [], total: undefined, complete: false };
   const productRows = products.rows;
   const positionRows = positionsResponse.rows;
   const fetchedAt = new Date().toISOString();
+  const normalizedAsset = (value: string | undefined) => String(value ?? "").toUpperCase();
+  const monitoredProductRows = productRows.filter((row) => supported.has(normalizedAsset(row.detail?.asset)));
+  const monitoredPositionRows = positionRows.filter((row) => supported.has(normalizedAsset(row.asset)));
+  const productShapeComplete = productRows.every((row) => {
+    const asset = normalizedAsset(row.detail?.asset);
+    if (!asset) return false;
+    if (!supported.has(asset)) return true;
+    return Boolean(String(row.projectId ?? "").trim())
+      && positiveNumber(row.detail?.duration) !== undefined
+      && Number.isFinite(parseBinanceApr(row.detail?.apr ?? row.detail?.apy ?? row.detail?.annualPercentageRate ?? row.detail?.interestRate));
+  });
+  const positionShapeComplete = positionRows.every((row) => {
+    const asset = normalizedAsset(row.asset);
+    if (!asset) return false;
+    if (!supported.has(asset)) return true;
+    return Boolean(String(row.projectId ?? "").trim())
+      && positiveNumber(row.duration) !== undefined
+      && parseStrictFinite(row.amount ?? row.principal) !== undefined;
+  });
+  const collectTerms = (rows: Array<LockedProductRow | LockedPositionRow>) => {
+    const terms = new Map<string, Set<number>>();
+    for (const row of rows) {
+      const projectId = String(row.projectId ?? "").trim();
+      const productRow = "detail" in row;
+      const asset = normalizedAsset(productRow
+        ? (row as LockedProductRow).detail?.asset
+        : (row as LockedPositionRow).asset);
+      const duration = positiveNumber(productRow
+        ? (row as LockedProductRow).detail?.duration
+        : (row as LockedPositionRow).duration);
+      if (!projectId || !asset || duration === undefined) continue;
+      const key = `${asset}:${projectId}`;
+      const knownTerms = terms.get(key) ?? new Set<number>();
+      knownTerms.add(duration);
+      terms.set(key, knownTerms);
+    }
+    return terms;
+  };
+  const productTermSets = collectTerms(monitoredProductRows);
+  const positionTermSets = collectTerms(monitoredPositionRows);
+  const conflictingProductIds = new Set([...productTermSets.entries()].filter(([, terms]) => terms.size > 1).map(([key]) => key));
+  const conflictingPositionIds = new Set([...positionTermSets.entries()].filter(([, terms]) => terms.size > 1).map(([key]) => key));
+  const conflictingTerms = new Set([...conflictingProductIds, ...conflictingPositionIds]);
+  const productDurationMismatch = new Set<string>();
+  for (const [key, positionTerms] of positionTermSets) {
+    const productTerms = productTermSets.get(key);
+    if (productTerms?.size === 1 && [...positionTerms].some((term) => !productTerms.has(term))) productDurationMismatch.add(key);
+  }
+  const ambiguousProjectIds = new Set([...conflictingTerms, ...productDurationMismatch]);
+  const productListComplete = products.complete && productShapeComplete
+    && conflictingProductIds.size === 0;
+  const positionListComplete = positionsResponse.complete && positionShapeComplete
+    && conflictingPositionIds.size === 0 && productDurationMismatch.size === 0;
+  const productApiStatus = productResult.status === "rejected" ? "error" as const : productListComplete ? "complete" as const : "partial" as const;
+  const positionApiStatus = positionResult.status === "rejected" ? "error" as const : positionListComplete ? "complete" as const : "partial" as const;
 
   // Temporary, sanitized trace for verifying why an expired locked product
   // remains visible. Keep product and position IDs together with only the
@@ -309,9 +398,11 @@ export async function fetchBinanceLockedSnapshot(
     positionRowCount: positionRows.length,
     productTotal: products.total ?? null,
     positionTotal: positionsResponse.total ?? null,
-    productListComplete: products.complete,
-    positionListComplete: positionsResponse.complete,
-    productRows: productRows.flatMap((row) => {
+    productApiStatus,
+    positionApiStatus,
+    productListComplete,
+    positionListComplete,
+    productRows: monitoredProductRows.flatMap((row) => {
       const detail = row.detail;
       const asset = String(detail?.asset ?? "").toUpperCase();
       return supported.has(asset) ? [{
@@ -324,7 +415,7 @@ export async function fetchBinanceLockedSnapshot(
         isSoldOut: detail?.isSoldOut ?? null,
       }] : [];
     }),
-    positionRows: positionRows.flatMap((row) => {
+    positionRows: monitoredPositionRows.flatMap((row) => {
       const asset = String(row.asset ?? "").toUpperCase();
       return supported.has(asset) ? [{
         positionId: row.positionId === undefined ? null : String(row.positionId),
@@ -344,29 +435,65 @@ export async function fetchBinanceLockedSnapshot(
   const rates: LiveRate[] = [];
   const rateByProject = new Map<string, LiveRate>();
 
-  for (const row of productRows) {
+  for (const row of monitoredProductRows) {
     const projectId = String(row.projectId ?? "").trim();
     const detail = row.detail;
     const asset = String(detail?.asset ?? "").toUpperCase();
     const duration = positiveNumber(detail?.duration);
     const apr = parseBinanceApr(detail?.apr ?? detail?.apy ?? detail?.annualPercentageRate ?? detail?.interestRate);
-    if (!projectId || !supported.has(asset) || !duration || !Number.isFinite(apr)) continue;
+    if (!projectId || !supported.has(asset) || !duration || !Number.isFinite(apr)
+      || ambiguousProjectIds.has(`${asset}:${projectId}`)) continue;
     const rate = lockedRate(accountConfig, account, asset, projectId, duration, apr, detail, row.quota, fetchedAt);
     rates.push(rate);
     rateByProject.set(`${asset}:${projectId}`, rate);
   }
 
-  // A held project may disappear from the available-product list. Prefer the
-  // position's own APR/term in that case, when Binance supplies them.
-  for (const row of positionRows) {
+  const validPositions = monitoredPositionRows.flatMap((row) => {
     const projectId = String(row.projectId ?? "").trim();
     const asset = String(row.asset ?? "").toUpperCase();
     const duration = positiveNumber(row.duration);
-    const apr = parseBinanceApr(row.apr ?? row.apy ?? row.annualPercentageRate ?? row.interestRate);
-    if (!projectId || !supported.has(asset) || rateByProject.has(`${asset}:${projectId}`) || !duration || !Number.isFinite(apr)) continue;
-    const rate = lockedRate(accountConfig, account, asset, projectId, duration, apr, undefined, undefined, fetchedAt);
+    const amount = parseStrictFinite(row.amount ?? row.principal);
+    if (!projectId || !supported.has(asset) || amount === undefined || ambiguousProjectIds.has(`${asset}:${projectId}`)) return [];
+    return [{ row, projectId, asset, duration, amount }];
+  });
+
+  // A positive position without a usable product row is retained as a manual
+  // information shell. Position-side APR fields do not substitute for the
+  // product catalogue endpoint.
+  for (const position of validPositions) {
+    const key = `${position.asset}:${position.projectId}`;
+    if (position.amount <= 0 || rateByProject.has(key)) continue;
+    const identity = buildPlatformProductIdentity({
+      accountId: account === "global" ? "binance-global" : "binance-bahrain",
+      asset: position.asset,
+      productType: "fixed",
+      externalProductId: position.projectId,
+    });
+    const rate: LiveRate = {
+      productId: identity.identityKey,
+      ...identity,
+      productDataMode: "manual",
+      manualFields: position.duration === undefined ? { termDays: true } : undefined,
+      name: position.duration === undefined ? "Simple Earn Locked" : `Simple Earn Locked · ${formatLockedDuration(position.duration)}`,
+      apr: 0,
+      rateShape: "no_rate",
+      tiers: [],
+      fetchedAt,
+      sourceLabel: accountConfig.sourceLabel.replace("账户 API", "定期账户持仓 API；产品资料待填写"),
+      productType: "fixed",
+      ...(position.duration !== undefined ? { termDays: position.duration } : {}),
+      rateCoverage: "unavailable",
+      catalog: {
+        accountId: account === "global" ? "binance-global" : "binance-bahrain",
+        exchange: "binance",
+        region: account,
+        asset: position.asset as Product["asset"],
+        holdingDataMode: "api",
+        apiAccess: "authenticated",
+      },
+    };
     rates.push(rate);
-    rateByProject.set(`${asset}:${projectId}`, rate);
+    rateByProject.set(key, rate);
   }
 
   const holdings: Record<string, number> = {};
@@ -374,38 +501,21 @@ export async function fetchBinanceLockedSnapshot(
     const projectId = rate.externalProductId;
     const asset = rate.catalog?.asset;
     if (!projectId || !asset) continue;
-    const amount = positionRows
-      .filter((row) => String(row.projectId ?? "") === projectId && String(row.asset ?? "").toUpperCase() === asset)
-      .reduce((sum, row) => sum + finiteNumber(row.amount ?? row.principal), 0);
-    holdings[rate.productId] = amount;
+    const matches = validPositions.filter((position) => position.projectId === projectId && position.asset === asset);
+    const amount = matches.reduce((sum, position) => sum + position.amount, 0);
+    if (matches.length > 0) holdings[rate.productId] = amount;
+    else if (positionListComplete) holdings[rate.productId] = 0;
     const accountId = account === "global" ? "binance-global" : "binance-bahrain";
-    holdings[scopedExternalProductAlias(accountId, asset, projectId)] = amount;
+    if (matches.length > 0 || positionListComplete) holdings[scopedExternalProductAlias(accountId, asset, projectId)] = amount;
   }
 
-  // Preserve a position key even if its APR is currently unavailable. The
-  // catalogue can match it to an existing row, while new products remain
-  // blocked until a comparable APR is returned.
-  for (const row of positionRows) {
-    const projectId = String(row.projectId ?? "").trim();
-    const asset = String(row.asset ?? "").toUpperCase();
-    if (!projectId || !supported.has(asset)) continue;
-    const key = `${asset}:${projectId}`;
-    if (rateByProject.has(key)) continue;
-    const accountId = account === "global" ? "binance-global" : "binance-bahrain";
-    const alias = scopedExternalProductAlias(accountId, asset, projectId);
-    holdings[alias] = (holdings[alias] ?? 0) + finiteNumber(row.amount ?? row.principal);
-  }
-
-  const positions = positionRows.flatMap((row) => {
-    const projectId = String(row.projectId ?? "").trim();
-    const asset = String(row.asset ?? "").toUpperCase() as Product["asset"];
-    const amount = finiteNumber(row.amount ?? row.principal);
-    if (!projectId || !supported.has(asset) || amount <= 0) return [];
+  const positions = validPositions.flatMap(({ row, projectId, asset, amount }) => {
+    if (amount <= 0) return [];
     const accountId = account === "global" ? "binance-global" : "binance-bahrain";
     return [{
       sourceProductId: scopedExternalProductAlias(accountId, asset, projectId),
       accountId,
-      asset,
+      asset: asset as Product["asset"],
       positionId: row.positionId === undefined ? undefined : String(row.positionId),
       amount,
       purchaseAt: timestampIso(row.purchaseTime),
@@ -417,8 +527,10 @@ export async function fetchBinanceLockedSnapshot(
     rates,
     holdings,
     positions,
-    productListComplete: products.complete,
-    positionListComplete: positionsResponse.complete,
+    productListComplete,
+    positionListComplete,
+    productApiStatus,
+    positionApiStatus,
   };
 }
 
@@ -557,7 +669,8 @@ async function collectBinancePages<Row>(
   credentials: Credentials,
   baseParams: Record<string, string | number> = {},
 ) {
-  const rows = [...(firstPage.rows ?? [])];
+  let shapeComplete = Array.isArray(firstPage.rows);
+  const rows = Array.isArray(firstPage.rows) ? [...firstPage.rows] : [];
   const reportedTotal = finiteOptional(firstPage.total);
   const totalPages = reportedTotal === undefined
     ? undefined
@@ -568,8 +681,18 @@ async function collectBinancePages<Row>(
   while (current < (totalPages ?? maxBinancePages)
     && (totalPages !== undefined || lastPageSize === binancePageSize)) {
     current += 1;
-    const page = await signedGet<PageResponse<Row>>(path, { ...baseParams, current, size: binancePageSize }, credentials);
-    const pageRows = page.rows ?? [];
+    let page: PageResponse<Row>;
+    try {
+      page = await signedGet<PageResponse<Row>>(path, { ...baseParams, current, size: binancePageSize }, credentials);
+    } catch {
+      // We already received one or more pages, so keep those rows available
+      // but never treat the truncated result as an authoritative empty/zero.
+      shapeComplete = false;
+      break;
+    }
+    const pageShapeValid = Array.isArray(page.rows);
+    shapeComplete &&= pageShapeValid;
+    const pageRows = pageShapeValid ? page.rows! : [];
     rows.push(...pageRows);
     lastPageSize = pageRows.length;
     if (totalPages === undefined && pageRows.length < binancePageSize) break;
@@ -578,9 +701,9 @@ async function collectBinancePages<Row>(
   return {
     rows,
     total: reportedTotal,
-    complete: reportedTotal !== undefined
+    complete: shapeComplete && (reportedTotal !== undefined
       ? rows.length >= reportedTotal
-      : lastPageSize < binancePageSize,
+      : lastPageSize < binancePageSize),
   };
 }
 
@@ -599,6 +722,18 @@ async function hmacHex(payload: string, secret: string) {
 function finiteNumber(value: string | number | undefined) {
   const parsed = typeof value === "number" ? value : Number.parseFloat(value ?? "0");
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function aggregateSnapshotStatus(statuses: Array<"complete" | "partial" | "error">) {
+  if (statuses.length > 0 && statuses.every((status) => status === "error")) return "error" as const;
+  return statuses.length > 0 && statuses.every((status) => status === "complete") ? "complete" as const : "partial" as const;
+}
+
+function parseStrictFinite(value: unknown) {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  if (typeof value === "string" && !value.trim()) return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function normalizeBinanceProductId(value: string | undefined) {

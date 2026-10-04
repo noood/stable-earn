@@ -67,6 +67,7 @@ type BitgetAssetCollection = {
   pageCount: number;
   pages: BitgetAssetPageDiagnostic[];
 };
+type BitgetApiReadStatus = "complete" | "partial" | "error";
 
 export type BitgetSavingsSnapshot = {
   rates: LiveRate[];
@@ -74,6 +75,8 @@ export type BitgetSavingsSnapshot = {
   sync: {
     products: boolean;
     holdings: boolean;
+    productStatus: BitgetApiReadStatus;
+    holdingStatus: BitgetApiReadStatus;
     productDiagnostic?: string;
     holdingsDiagnostic?: string;
   };
@@ -87,7 +90,7 @@ type SupportedAsset = "USDT" | "USDC" | "USDGO" | "BTC";
 export type BitgetCapabilityProbe = {
   asset: SupportedAsset;
   productApi: {
-    status: "returned" | "empty" | "error";
+    status: "returned" | "empty" | "partial" | "error";
     rowCount: number;
     eligibleFlexibleCount: number;
     rows: Array<{
@@ -173,13 +176,31 @@ function buildBitgetCapabilityProbe(
   const productApi: BitgetCapabilityProbe["productApi"] = productResult.status === "rejected"
     ? { status: "error", rowCount: 0, eligibleFlexibleCount: 0, rows: [], diagnostic: endpointDiagnostic(productResult.reason) }
     : (() => {
-      const rows = (productResult.value.data ?? []).filter((row) => row.coin === asset);
-      const normalizedRows = rows.map((row) => {
+      const dataIsList = Array.isArray(productResult.value.data);
+      const rows: BitgetProductRow[] = dataIsList ? productResult.value.data as BitgetProductRow[] : [];
+      const scopedRows = rows.filter((row) => row.coin === asset);
+      const wrongCoinRows = rows.some((row) => row.coin !== asset);
+      const fixedIdentityCounts = new Map<string, number>();
+      for (const row of scopedRows) {
+        if (row.periodType !== "fixed") continue;
+        const identity = bitgetFixedIdentityId(row.productId, row.period);
+        if (identity) fixedIdentityCounts.set(identity, (fixedIdentityCounts.get(identity) ?? 0) + 1);
+      }
+      const duplicateFixedIdentity = [...fixedIdentityCounts.values()].some((count) => count > 1);
+      const malformedRows = scopedRows.some((row) => (
+        !normalizeExternalProductId(row.productId)
+        || !["flexible", "fixed"].includes(row.periodType ?? "")
+        || (row.periodType === "fixed" && (parseBitgetTermDays(row.period) === undefined || normalizeTiers(row.apyList).length === 0))
+        || (row.periodType === "flexible" && normalizeTiers(row.apyList).length === 0)
+      )) || duplicateFixedIdentity;
+      const normalizedRows = scopedRows.map((row) => {
         const eligibleForMonitoring = row.periodType === "flexible"
           ? row.status !== "off_line" && !isBitgetVipLevel(row.productLevel)
           : undefined;
         return {
-          productId: normalizeExternalProductId(row.productId) ?? null,
+          productId: row.periodType === "fixed"
+            ? bitgetFixedIdentityId(row.productId, row.period) ?? null
+            : normalizeExternalProductId(row.productId) ?? null,
           periodType: row.periodType ?? null,
           period: row.period ?? null,
           status: row.status ?? null,
@@ -190,10 +211,11 @@ function buildBitgetCapabilityProbe(
       });
       const eligibleFlexibleCount = normalizedRows.filter((row) => row.eligibleForMonitoring === true && row.tiers.length > 0).length;
       return {
-        status: rows.length > 0 ? "returned" : "empty",
-        rowCount: rows.length,
+        status: !dataIsList || wrongCoinRows || malformedRows ? "partial" : scopedRows.length > 0 ? "returned" : "empty",
+        rowCount: scopedRows.length,
         eligibleFlexibleCount,
         rows: normalizedRows,
+        ...(!dataIsList ? { diagnostic: "missing_product_list" } : wrongCoinRows ? { diagnostic: "product_scope_mismatch" } : duplicateFixedIdentity ? { diagnostic: "duplicate_fixed_product_identity" } : malformedRows ? { diagnostic: "missing_required_fields" } : {}),
       };
     })();
 
@@ -207,20 +229,28 @@ function buildBitgetCapabilityProbe(
       const rows = collection.rows
         .filter((row) => row.productCoin === asset && row.periodType === periodType)
         .map((row) => ({
-          productId: normalizeExternalProductId(row.productId) ?? null,
+          productId: periodType === "fixed"
+            ? bitgetFixedIdentityId(row.productId, row.period) ?? null
+            : normalizeExternalProductId(row.productId) ?? null,
           periodType: row.periodType ?? null,
           period: row.period ?? null,
           productLevel: row.productLevel ?? null,
           hasPositiveHolding: finiteNumber(row.holdAmount) > 0,
           tiers: normalizeAssetTiers(row.apy),
         }));
+      const identityComplete = collection.rows.every((row) => row.productCoin && row.periodType
+        && normalizeExternalProductId(row.productId)
+        && strictBitgetNumber(row.holdAmount) !== undefined
+        && row.periodType === periodType
+        && (periodType !== "fixed" || parseBitgetTermDays(row.period) !== undefined));
+      const complete = collection.complete && identityComplete;
       return {
-        status: collection.complete ? "complete" : "incomplete",
-        complete: collection.complete,
+        status: complete ? "complete" : "incomplete",
+        complete,
         pageCount: collection.pageCount,
         rowCount: rows.length,
         rows,
-        ...(!collection.complete ? { diagnostic: "pagination_incomplete" } : {}),
+        ...(!collection.complete ? { diagnostic: "pagination_incomplete" } : !identityComplete ? { diagnostic: "missing_product_identity" } : {}),
       };
     })();
 
@@ -239,15 +269,10 @@ export async function fetchBitgetSavingsSnapshot(
   // Bitget documents `coin` as required for the product-list endpoint. Fetch
   // each monitored coin separately so an empty or unavailable coin cannot
   // prevent the other products from updating.
-  const [productResults, assetResults] = await Promise.all([
-    Promise.allSettled(assets.map((asset) => signedGet<BitgetProductRow[]>(
-      "/api/v2/earn/savings/product",
-      new URLSearchParams({ coin: asset, filter: "available_and_held" }),
-      credentials,
-    ))),
-    Promise.allSettled([fetchBitgetAssetPages(credentials)]),
+  const [productResults, assetsResult] = await Promise.all([
+    Promise.allSettled(assets.map((asset) => fetchBitgetCapabilityProducts(credentials, asset))),
+    Promise.allSettled([fetchBitgetAssetPages(credentials, "flexible")]).then(([result]) => result),
   ]);
-  const assetsResult = assetResults[0];
   const failedProduct = productResults.find((result) => result.status === "rejected");
   if (productResults.every((result) => result.status === "rejected") && assetsResult.status === "rejected") {
     const publicApiReachable = await canReachBitgetPublicApi(credentials.baseUrl);
@@ -256,9 +281,25 @@ export async function fetchBitgetSavingsSnapshot(
 
   const fetchedAt = new Date().toISOString();
   const rates: BitgetSavingsSnapshot["rates"] = [];
-  const productRows = productResults.flatMap((result) => result.status === "fulfilled" ? result.value.data ?? [] : []);
+  const malformedProductResponse = productResults.some((result) => result.status === "fulfilled" && !Array.isArray(result.value.data));
+  const productEntries = productResults.flatMap((result, index) => result.status === "fulfilled" && Array.isArray(result.value.data)
+    ? result.value.data.map((row) => ({ requestedAsset: assets[index], row }))
+    : []);
+  const productRows = productEntries.map((entry) => entry.row);
   const assetCollection = assetsResult.status === "fulfilled" ? assetsResult.value : null;
   const assetRows = assetCollection?.rows ?? [];
+  const malformedProductRows = productRows.filter((row) => assets.includes(row.coin as SupportedAsset)
+    && (!normalizeExternalProductId(row.productId)
+      || !["flexible", "fixed"].includes(row.periodType ?? "")
+      || (row.periodType === "flexible" && normalizeTiers(row.apyList).length === 0)
+      || (row.periodType === "fixed" && (parseBitgetTermDays(row.period) === undefined || normalizeTiers(row.apyList).length === 0))));
+  const productRowsMissingScope = productEntries.some(({ requestedAsset, row }) => !row.coin || !row.periodType || row.coin !== requestedAsset);
+  const malformedHoldingRows = assetRows.filter((row) => !row.productCoin || !row.periodType
+    || assets.includes(row.productCoin as SupportedAsset)
+      && (row.periodType !== "flexible"
+        || !normalizeExternalProductId(row.productId)
+        || strictBitgetNumber(row.holdAmount) === undefined));
+  const holdingsListComplete = assetCollection?.complete === true && malformedHoldingRows.length === 0;
 
   // Temporary, sanitized trace for comparing Bitget's product-list IDs with
   // the IDs returned by the assets/holdings endpoint. Keep only controlled
@@ -266,9 +307,11 @@ export async function fetchBitgetSavingsSnapshot(
   syncDiagnostic("bitget_product_rows", {
     fetchedAt,
     rows: productRows
-      .filter((row) => ["USDT", "USDC", "USDGO"].includes(row.coin ?? ""))
+      .filter((row) => assets.includes(row.coin as SupportedAsset))
       .map((row) => ({
-        productId: normalizeExternalProductId(row.productId) ?? null,
+        productId: row.periodType === "fixed"
+            ? bitgetFixedIdentityId(row.productId, row.period) ?? null
+            : normalizeExternalProductId(row.productId) ?? null,
         coin: row.coin ?? null,
         periodType: row.periodType ?? null,
         status: row.status ?? null,
@@ -288,7 +331,7 @@ export async function fetchBitgetSavingsSnapshot(
     complete: assetCollection?.complete ?? false,
     pages: assetCollection?.pages ?? [],
     rows: assetRows
-      .filter((row) => ["USDT", "USDC", "USDGO"].includes(row.productCoin ?? ""))
+      .filter((row) => assets.includes(row.productCoin as SupportedAsset))
       .map((row) => ({
         productId: normalizeExternalProductId(row.productId) ?? null,
         productCoin: row.productCoin ?? null,
@@ -307,7 +350,8 @@ export async function fetchBitgetSavingsSnapshot(
     // has disappeared from the current product list.
     const selectedRows = mergeBitgetRows(asset, productRows, assetRows);
     selectedRows.forEach((item, index) => {
-      const externalProductId = item.externalProductId ?? bitgetFallbackExternalId(item.tiers, item.row.productLevel, index);
+      const externalProductId = item.externalProductId;
+      if (!externalProductId) return;
       const identity = buildPlatformProductIdentity({
         accountId: "bitget-global",
         asset,
@@ -318,10 +362,13 @@ export async function fetchBitgetSavingsSnapshot(
         productId: identity.identityKey,
         ...identity,
         name: bitgetProductName(item.row, index),
-        apr: item.tiers[0]?.apr ?? 0,
-        tiers: item.tiers,
+        apr: item.hasProductRow ? item.tiers[0]?.apr ?? 0 : 0,
+        tiers: item.hasProductRow ? item.tiers : [],
         fetchedAt,
-        sourceLabel: item.hasProductRow ? "Bitget 官方账户产品 API" : "Bitget 官方账户持仓 API",
+        sourceLabel: item.hasProductRow
+          ? item.tiers.length ? "Bitget 官方账户产品 API" : "Bitget 产品资料缺少 APR；待手动填写"
+          : "Bitget 官方账户持仓 API；产品资料待填写",
+        ...(!item.hasProductRow || item.tiers.length === 0 ? { productDataMode: "manual" as const } : {}),
         catalog: {
           accountId: "bitget-global",
           exchange: "bitget" as const,
@@ -335,7 +382,7 @@ export async function fetchBitgetSavingsSnapshot(
           eligibilityLabel: "Bitget VIP 专属产品，账号资格需确认",
           eligibilityStatus: "unknown" as const,
         } : {}),
-        rateCoverage: item.tiers.length > 0 ? "complete" : "unavailable",
+        rateCoverage: item.hasProductRow && item.tiers.length > 0 ? "complete" : "unavailable",
       });
     });
   }
@@ -345,20 +392,21 @@ export async function fetchBitgetSavingsSnapshot(
   if (assetsResult.status === "fulfilled") {
     for (const asset of assets) {
       const matchingRows = assetRows
-        .filter((row) => row.productCoin === asset && row.periodType === "flexible");
+        .filter((row) => row.productCoin === asset && row.periodType === "flexible"
+          && normalizeExternalProductId(row.productId)
+          && strictBitgetNumber(row.holdAmount) !== undefined);
       const assetRates = rates.filter((rate) => rate.catalog?.asset === asset);
       if (matchingRows.length > 0) {
-        matchingRows.forEach((row, index) => {
-          const tiers = normalizeAssetTiers(row.apy);
-          const externalProductId = normalizeExternalProductId(row.productId)
-            ?? bitgetFallbackExternalId(tiers, row.productLevel, index);
+        matchingRows.forEach((row) => {
+          const externalProductId = normalizeExternalProductId(row.productId);
+          if (!externalProductId) return;
           const identity = buildPlatformProductIdentity({
             accountId: "bitget-global",
             asset,
             productType: "flexible",
             externalProductId,
           });
-          holdings[identity.identityKey] = (holdings[identity.identityKey] ?? 0) + finiteNumber(row.holdAmount);
+          holdings[identity.identityKey] = (holdings[identity.identityKey] ?? 0) + strictBitgetNumber(row.holdAmount)!;
         });
       }
       // Bitget's assets endpoint is a paged list of current holdings, not a
@@ -366,15 +414,15 @@ export async function fetchBitgetSavingsSnapshot(
       // absent from this list is an authoritative zero. Before pagination is
       // complete, keep it unknown so a truncated response cannot erase a
       // previously known holding.
-      if (assetCollection?.complete) {
+      if (holdingsListComplete) {
         for (const rate of assetRates) {
-          if (!matchingRows.some((row, index) => bitgetRowExternalId(row, index) === rate.externalProductId)) {
+          if (!matchingRows.some((row) => normalizeExternalProductId(row.productId) === rate.externalProductId)) {
             holdings[rate.identityKey ?? rate.productId] = 0;
           }
         }
       } else {
         for (const rate of assetRates) {
-          if (!matchingRows.some((row, index) => bitgetRowExternalId(row, index) === rate.externalProductId)) {
+          if (!matchingRows.some((row) => normalizeExternalProductId(row.productId) === rate.externalProductId)) {
             missingHoldingAssets.push(`${asset}:${rate.externalProductId ?? "unknown"}`);
           }
         }
@@ -382,21 +430,194 @@ export async function fetchBitgetSavingsSnapshot(
     }
   }
 
-  syncDiagnostic("bitget_holdings_normalized", { holdings });
-
   const failedRequiredProduct = productResults.find((result) => result.status === "rejected");
-  const missingRequiredAssets = assets.filter((asset) => !rates.some((rate) => rate.catalog?.asset === asset));
+  const productStatus: BitgetApiReadStatus = productResults.length > 0 && productResults.every((result) => result.status === "rejected")
+    ? "error"
+    : productResults.some((result) => result.status === "rejected") || malformedProductResponse || productRowsMissingScope || malformedProductRows.length > 0
+      ? "partial"
+      : "complete";
+  const holdingStatus: BitgetApiReadStatus = assetsResult.status === "rejected"
+    ? "error"
+    : holdingsListComplete && missingHoldingAssets.length === 0 ? "complete" : "partial";
 
   return {
     rates,
     holdings,
     sync: {
-      products: productResults.every((result) => result.status === "fulfilled") && missingRequiredAssets.length === 0,
-      holdings: assetsResult.status === "fulfilled" && assetCollection?.complete === true && missingHoldingAssets.length === 0,
-      productDiagnostic: failedRequiredProduct ? endpointDiagnostic(failedRequiredProduct.reason) : missingRequiredAssets.length > 0 ? `missing_${missingRequiredAssets.join("_")}` : undefined,
+      products: productStatus === "complete",
+      holdings: holdingStatus === "complete",
+      productStatus,
+      holdingStatus,
+      productDiagnostic: failedRequiredProduct ? endpointDiagnostic(failedRequiredProduct.reason) : malformedProductResponse ? "missing_product_list" : productRowsMissingScope ? "missing_product_scope" : malformedProductRows.length ? "missing_required_fields" : undefined,
       holdingsDiagnostic: assetsResult.status === "rejected"
         ? endpointDiagnostic(assetsResult.reason)
-        : !assetCollection?.complete ? "pagination_incomplete" : missingHoldingAssets.length > 0 ? `missing_${missingHoldingAssets.join("_")}` : undefined,
+        : !assetCollection?.complete ? "pagination_incomplete" : malformedHoldingRows.length ? "missing_product_identity" : missingHoldingAssets.length > 0 ? `missing_${missingHoldingAssets.join("_")}` : undefined,
+    },
+  };
+}
+
+/** Daily fixed-term snapshot, using the same authenticated Savings endpoints as the read-only scan. */
+export async function fetchBitgetFixedSnapshot(
+  credentials: BitgetCredentials,
+  assets: readonly SupportedAsset[] = apiAssetsFor("bitget-global", "fixed", "productApi") as SupportedAsset[],
+): Promise<BitgetSavingsSnapshot> {
+  const [productResults, holdingsResult] = await Promise.all([
+    Promise.allSettled(assets.map((asset) => fetchBitgetCapabilityProducts(credentials, asset))),
+    Promise.allSettled([fetchBitgetAssetPages(credentials, "fixed")]),
+  ]);
+  const holdingsPageResult = holdingsResult[0];
+  const productError = productResults.find((result) => result.status === "rejected");
+  if (productResults.every((result) => result.status === "rejected") && holdingsPageResult.status === "rejected") {
+    throw new Error(`Bitget fixed Savings API failed (${endpointDiagnostic(productError?.reason)})`);
+  }
+
+  const fetchedAt = new Date().toISOString();
+  const malformedProductResponse = productResults.some((result) => result.status === "fulfilled" && !Array.isArray(result.value.data));
+  const productEntries = productResults.flatMap((result, index) => result.status === "fulfilled" && Array.isArray(result.value.data)
+    ? result.value.data.map((row) => ({ requestedAsset: assets[index], row }))
+    : []);
+  const productRows = productEntries.map((entry) => entry.row);
+  const holdingsPage = holdingsPageResult.status === "fulfilled" ? holdingsPageResult.value : null;
+  const holdingRows = holdingsPage?.rows ?? [];
+  const rates: LiveRate[] = [];
+  const holdings: Record<string, number> = {};
+  const malformedProducts = new Set<string>();
+  const malformedHoldings = new Set<string>();
+  const duplicateOfferIds = new Set<string>();
+  const seenOfferIds = new Set<string>();
+
+  for (const { requestedAsset, row } of productEntries) {
+    if (!row.coin || !row.periodType || row.coin !== requestedAsset) malformedProducts.add(requestedAsset);
+    if (row.coin !== requestedAsset || row.periodType !== "fixed") continue;
+    const identity = bitgetFixedIdentityId(row.productId, row.period);
+    if (!identity || normalizeTiers(row.apyList).length === 0) malformedProducts.add(requestedAsset);
+    if (identity && seenOfferIds.has(`${requestedAsset}:${identity}`)) duplicateOfferIds.add(`${requestedAsset}:${identity}`);
+    if (identity) seenOfferIds.add(`${requestedAsset}:${identity}`);
+  }
+  for (const row of holdingRows) {
+    if (!row.productCoin) {
+      assets.forEach((asset) => malformedHoldings.add(asset));
+      continue;
+    }
+    if (!assets.includes(row.productCoin as SupportedAsset)) continue;
+    const asset = row.productCoin as SupportedAsset;
+    if (row.periodType !== "fixed"
+      || !bitgetFixedIdentityId(row.productId, row.period)
+      || strictBitgetNumber(row.holdAmount) === undefined) malformedHoldings.add(asset);
+  }
+  for (const key of duplicateOfferIds) malformedProducts.add(key.slice(0, key.indexOf(":")));
+  const holdingsListComplete = holdingsPage?.complete === true && malformedHoldings.size === 0;
+
+  for (const asset of assets) {
+    const offerRows = productRows.filter((row) => row.coin === asset && row.periodType === "fixed");
+    const assetHoldingRows = holdingRows.filter((row) => row.productCoin === asset && row.periodType === "fixed");
+
+    const byId = new Map<string, { row: BitgetProductRow & Partial<BitgetAssetRow>; tiers: Array<{ min: number; max: number | null; apr: number }>; hasProduct: boolean }>();
+    for (const row of offerRows) {
+      const id = bitgetFixedIdentityId(row.productId, row.period);
+      if (!id || row.status === "off_line") continue;
+      if (duplicateOfferIds.has(`${asset}:${id}`)) continue;
+      const matchingHolding = assetHoldingRows.find((holding) => bitgetFixedIdentityId(holding.productId, holding.period) === id);
+      const tiers = normalizeTiers(row.apyList);
+      if (isBitgetVipLevel(row.productLevel) && finiteNumber(matchingHolding?.holdAmount) <= 0) continue;
+      byId.set(id, { row: { ...row, ...matchingHolding }, tiers, hasProduct: true });
+    }
+    for (const row of assetHoldingRows) {
+      const id = bitgetFixedIdentityId(row.productId, row.period);
+      if (!id) continue;
+      if (duplicateOfferIds.has(`${asset}:${id}`)) continue;
+      const parsedAmount = strictBitgetNumber(row.holdAmount);
+      if (parsedAmount === undefined) continue;
+      const amount = parsedAmount;
+      if (isBitgetVipLevel(row.productLevel) && amount <= 0) continue;
+      const current = byId.get(id);
+      if (!current && amount <= 0) continue;
+      byId.set(id, {
+        row: { ...current?.row, ...row },
+        tiers: current?.tiers ?? [],
+        hasProduct: current?.hasProduct ?? false,
+      });
+      const identity = buildPlatformProductIdentity({ accountId: "bitget-global", asset, productType: "fixed", externalProductId: id });
+      holdings[identity.identityKey] = (holdings[identity.identityKey] ?? 0) + amount;
+    }
+
+    for (const [externalProductId, item] of byId) {
+      const identity = buildPlatformProductIdentity({ accountId: "bitget-global", asset, productType: "fixed", externalProductId });
+      const termDays = parseBitgetTermDays(item.row.period);
+      const rowRate = {
+        productId: identity.identityKey,
+        ...identity,
+        name: bitgetProductName(item.row, 0, "fixed"),
+        apr: item.hasProduct ? item.tiers[0]?.apr ?? 0 : 0,
+        tiers: item.hasProduct ? item.tiers : [],
+        fetchedAt,
+        sourceLabel: item.hasProduct
+          ? item.tiers.length ? "Bitget 官方 Savings 定期产品 API" : "Bitget 定期产品资料缺少 APR；待手动填写"
+          : "Bitget 官方 Savings 定期持仓 API；产品资料待填写",
+        ...(!item.hasProduct || item.tiers.length === 0 ? { productDataMode: "manual" as const } : {}),
+        productType: "fixed" as const,
+        ...(termDays !== undefined ? { termDays } : {}),
+        catalog: {
+          accountId: "bitget-global",
+          exchange: "bitget" as const,
+          region: "global" as const,
+          asset,
+          holdingDataMode: "api" as const,
+          apiAccess: "authenticated" as const,
+        },
+        ...(isBitgetVipLevel(item.row.productLevel) ? {
+          eligibilityRequired: true,
+          eligibilityLabel: "Bitget VIP 专属产品，账号资格需确认",
+          eligibilityStatus: "unknown" as const,
+        } : {}),
+        rateCoverage: item.hasProduct && item.tiers.length ? "complete" as const : "unavailable" as const,
+      };
+      rates.push(rowRate);
+      if (holdingsListComplete && !Object.hasOwn(holdings, identity.identityKey)) holdings[identity.identityKey] = 0;
+    }
+  }
+
+  syncDiagnostic("bitget_fixed_rows", {
+    productApiStatus: productResults.every((result) => result.status === "fulfilled") && !malformedProductResponse && malformedProducts.size === 0 ? "success" : "partial",
+    productRowCount: productRows.filter((row) => row.periodType === "fixed").length,
+    productRows: productRows.filter((row) => assets.includes(row.coin as SupportedAsset) && row.periodType === "fixed").map((row) => ({
+      productId: bitgetFixedIdentityId(row.productId, row.period) ?? null,
+      coin: row.coin ?? null,
+      duration: row.period ?? null,
+      status: row.status ?? null,
+      isVip: isBitgetVipLevel(row.productLevel),
+      rateShape: normalizeTiers(row.apyList).length ? "tiered_rate" : "no_rate",
+    })),
+    holdingsApiStatus: holdingsPageResult.status === "rejected" ? "error" : holdingsListComplete ? "success" : "partial",
+    positionRowCount: holdingRows.length,
+    positionRows: holdingRows.filter((row) => assets.includes(row.productCoin as SupportedAsset) && row.periodType === "fixed").map((row) => ({
+      productId: bitgetFixedIdentityId(row.productId, row.period) ?? null,
+      coin: row.productCoin ?? null,
+      duration: row.period ?? null,
+      status: row.productLevel ?? null,
+      hasPositiveHolding: finiteNumber(row.holdAmount) > 0,
+    })),
+  });
+
+  const productStatus: BitgetApiReadStatus = productResults.length > 0 && productResults.every((result) => result.status === "rejected")
+    ? "error"
+    : productResults.some((result) => result.status === "rejected") || malformedProductResponse || malformedProducts.size > 0
+      ? "partial"
+      : "complete";
+  const holdingStatus: BitgetApiReadStatus = holdingsPageResult.status === "rejected"
+    ? "error"
+    : holdingsListComplete ? "complete" : "partial";
+
+  return {
+    rates,
+    holdings,
+    sync: {
+      products: productStatus === "complete",
+      holdings: holdingStatus === "complete",
+      productStatus,
+      holdingStatus,
+      productDiagnostic: productError ? endpointDiagnostic(productError.reason) : malformedProductResponse ? "missing_product_list" : malformedProducts.size ? `missing_required_fields_${[...malformedProducts].join("_")}` : undefined,
+      holdingsDiagnostic: holdingsPageResult.status === "rejected" ? endpointDiagnostic(holdingsPageResult.reason) : !holdingsPage?.complete ? "pagination_incomplete" : malformedHoldings.size ? `missing_product_identity_${[...malformedHoldings].join("_")}` : undefined,
     },
   };
 }
@@ -419,8 +640,18 @@ async function fetchBitgetAssetPages(
       query,
       credentials,
     );
-    const data = response.data ?? {};
-    const pageRows = Array.isArray(data.resultList) ? data.resultList : [];
+    if (!response.data || !Array.isArray(response.data.resultList)) {
+      pages.push({
+        page,
+        requestedLimit: bitgetAssetPageSize,
+        rowCount: 0,
+        responseKeys: response.data ? Object.keys(response.data).sort() : [],
+        endId: null,
+      });
+      break;
+    }
+    const data = response.data;
+    const pageRows = data.resultList as BitgetAssetRow[];
     const nextEndId = normalizeExternalProductId(data.endId);
     rows.push(...pageRows);
     pages.push({
@@ -475,9 +706,11 @@ type BitgetMergedRow = {
 function mergeBitgetRows(asset: SupportedAsset, productRows: BitgetProductRow[], assetRows: BitgetAssetRow[]) {
   const merged = new Map<string, BitgetMergedRow>();
   const productCandidates = productRows
-    .filter((row) => row.coin === asset && row.periodType === "flexible" && row.status !== "off_line" && !isBitgetVipLevel(row.productLevel))
-    .map((row, index) => ({
-      key: bitgetRowKey(row.productId, normalizeTiers(row.apyList), row.productLevel, index),
+    .filter((row) => row.coin === asset && row.periodType === "flexible" && row.status !== "off_line"
+      && Boolean(normalizeExternalProductId(row.productId))
+      && (!isBitgetVipLevel(row.productLevel) || assetRows.some((holding) => normalizeExternalProductId(holding.productId) === normalizeExternalProductId(row.productId) && finiteNumber(holding.holdAmount) > 0)))
+    .map((row) => ({
+      key: normalizeExternalProductId(row.productId)!,
       row,
       tiers: normalizeTiers(row.apyList),
     }));
@@ -494,10 +727,11 @@ function mergeBitgetRows(asset: SupportedAsset, productRows: BitgetProductRow[],
   assetRows
     .filter((row) => row.productCoin === asset
       && row.periodType === "flexible"
+      && Boolean(normalizeExternalProductId(row.productId))
       && (!isBitgetVipLevel(row.productLevel) || finiteNumber(row.holdAmount) > 0))
-    .forEach((row, index) => {
+    .forEach((row) => {
       const tiers = normalizeAssetTiers(row.apy);
-      const key = bitgetRowKey(row.productId, tiers, row.productLevel, index);
+      const key = normalizeExternalProductId(row.productId)!;
       const current = merged.get(key);
       // A held-only row is still a real product. If the product endpoint no
       // longer lists it, retain it rather than manufacturing a second row for
@@ -525,20 +759,6 @@ function mergeBitgetRows(asset: SupportedAsset, productRows: BitgetProductRow[],
 
 function isBitgetVipLevel(value: string | undefined) {
   return value?.trim().toUpperCase() === "VIP";
-}
-
-function bitgetRowKey(productId: string | undefined, tiers: Array<{ min: number; max: number | null; apr: number }>, productLevel: string | undefined, index: number) {
-  return normalizeExternalProductId(productId)
-    ?? `fallback:${productLevel ?? "normal"}:${tiers.map((tier) => `${tier.min}-${tier.max ?? "inf"}`).join(",") || index}`;
-}
-
-function bitgetRowExternalId(row: BitgetAssetRow, index: number) {
-  return normalizeExternalProductId(row.productId)
-    ?? bitgetFallbackExternalId(normalizeAssetTiers(row.apy), row.productLevel, index);
-}
-
-function bitgetFallbackExternalId(tiers: Array<{ min: number; max: number | null; apr: number }>, productLevel: string | undefined, index: number) {
-  return `fallback:${productLevel ?? "normal"}:${tiers.map((tier) => `${tier.min}-${tier.max ?? "inf"}`).join(",") || index}`;
 }
 
 function normalizeExternalProductId(value: string | undefined) {
@@ -578,9 +798,31 @@ function normalizeAssetTiers(rows: BitgetAssetRow["apy"]) {
   })));
 }
 
-function bitgetProductName(row: { productLevel?: string }, index: number) {
+function bitgetProductName(row: { productLevel?: string; period?: string }, index: number, productType: "flexible" | "fixed" = "flexible") {
   const level = row.productLevel && row.productLevel !== "normal" ? ` · ${row.productLevel}` : "";
-  return `Savings Flexible${level}${index > 0 ? ` · 产品 ${index + 1}` : ""}`;
+  const period = productType === "fixed" && row.period ? ` · ${row.period}` : "";
+  return `Savings ${productType === "fixed" ? "Fixed" : "Flexible"}${period}${level}${index > 0 ? ` · 产品 ${index + 1}` : ""}`;
+}
+
+function parseBitgetTermDays(value: string | undefined) {
+  const match = value?.trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(d|day|days|h|hour|hours)?$/);
+  if (!match) return undefined;
+  const amount = Number.parseFloat(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return undefined;
+  return match[2]?.startsWith("h") ? amount / 24 : amount;
+}
+
+function bitgetFixedIdentityId(productId: string | undefined, period: string | undefined) {
+  const id = normalizeExternalProductId(productId);
+  const days = parseBitgetTermDays(period);
+  if (!id || days === undefined) return undefined;
+  return `${id}@${Number(days.toPrecision(12))}d`;
+}
+
+function strictBitgetNumber(value: string | number | undefined) {
+  if (typeof value === "string" && !value.trim()) return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 async function signedGet<Data>(path: string, query: URLSearchParams, credentials: BitgetCredentials) {

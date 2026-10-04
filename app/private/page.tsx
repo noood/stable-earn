@@ -1,6 +1,9 @@
 import { Dashboard } from "@/app/page";
 import type { Asset } from "@/lib/domain";
 
+// The private dashboard is user-scoped and consumes URL search parameters.
+export const dynamic = "force-dynamic";
+
 type PrivateIndexPageProps = {
   searchParams?: Promise<{ asset?: string | string[] }>;
 };

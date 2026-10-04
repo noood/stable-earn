@@ -336,21 +336,22 @@ export function localPrivateHoldingsPreview(now = new Date()) {
 // Fixed source time makes repeated page reloads useful for timestamp regression
 // checks. These scenarios are available only behind the development preview.
 export function localSyncScenarioPreview(scenario: string | null, now = new Date()) {
-  if (!scenario || !["partial", "error", "success", "syncing", "initial-syncing", "initial-error"].includes(scenario)) return null;
+  if (!scenario || !["empty", "partial", "error", "success", "syncing", "initial-syncing", "initial-error"].includes(scenario)) return null;
   const initial = scenario.startsWith("initial-");
+  const empty = scenario === "empty";
   const sourceAt = "2026-09-05T00:56:15.064Z";
   const updatedAt = scenario === "error" ? sourceAt : now.toISOString();
   const ids = ["bg-usdc", "bn-g-usdc"];
-  const rates = initial ? [] : ids.map((id) => previewRate(id, [[0, 500, 6.2]], updatedAt, "本地模拟 API"));
+  const rates = initial || empty ? [] : ids.map((id) => previewRate(id, [[0, 500, 6.2]], updatedAt, "本地模拟 API"));
   const failedIds = scenario === "partial" ? ["bg-usdc"] : scenario === "error" ? ids : [];
   return {
     products: rates.map((rate) => previewProduct(rate.productId, rate)),
     rates,
     rateFallbacks: scenario === "error" ? Object.fromEntries(ids.map((id) => [id, sourceAt])) : {},
-    holdingUpdates: initial ? {} : { "bg-usdc": 299.64, "bn-g-usdc": 0 },
-    holdingSourceIds: initial ? [] : ids,
+    holdingUpdates: initial || empty ? {} : { "bg-usdc": 299.64, "bn-g-usdc": 0 },
+    holdingSourceIds: initial || empty ? [] : ids,
     holdingFallbacks: Object.fromEntries(failedIds.map((id) => [id, sourceAt])),
-    holdingSyncStates: Object.fromEntries(ids.map((id) => [id, failedIds.includes(id) ? "error" : "synced"])),
+    holdingSyncStates: empty ? {} : Object.fromEntries(ids.map((id) => [id, failedIds.includes(id) ? "error" : "synced"])),
     fetchedAt: initial ? null : updatedAt,
     partial: scenario === "partial",
     failures: scenario.endsWith("error") ? ["产品和持仓数据更新失败"] : scenario === "partial" ? ["Bitget（持仓接口未完整返回）"] : [],

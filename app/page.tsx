@@ -21,6 +21,10 @@ import { highestProductApr, maximumShortTermDays, meetsOpportunityApr, minimumOp
 import { buildManualChangeEvents, sameManualProduct } from "@/lib/product-change-events";
 import { userProductInputToProduct } from "@/lib/user-products";
 
+// The public landing page is the same for everyone; account state is loaded
+// client-side from the private session endpoint after hydration.
+export const dynamic = "force-static";
+
 type ApiResult = {
   dailyRefreshPending?: boolean;
   products?: Product[];
@@ -152,6 +156,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const [holdingPositions, setHoldingPositions] = useState<HoldingPosition[]>([]);
   const [changeEvents, setChangeEvents] = useState<ProductChangeEvent[]>([]);
   const [showApiSettings, setShowApiSettings] = useState(false);
+  const [apiSettingsMounted, setApiSettingsMounted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [hasSyncFailure, setHasSyncFailure] = useState(false);
   const [syncFailures, setSyncFailures] = useState<string[]>([]);
@@ -184,6 +189,11 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     router.push(`/private?asset=${encodeURIComponent(asset)}`);
   }
 
+  function openApiSettings() {
+    setApiSettingsMounted(true);
+    setShowApiSettings(true);
+  }
+
   function openPrivateApiSettings() {
     router.push(`/private?asset=${encodeURIComponent(asset)}&settings=api`);
   }
@@ -201,7 +211,10 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     if (url.searchParams.get("settings") !== "api") return;
     url.searchParams.delete("settings");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-    const openTimer = window.setTimeout(() => setShowApiSettings(true), 0);
+    const openTimer = window.setTimeout(() => {
+      setApiSettingsMounted(true);
+      setShowApiSettings(true);
+    }, 0);
     return () => window.clearTimeout(openTimer);
   }, [isDemo]);
 
@@ -709,7 +722,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             manualRefreshCooling={manualRefreshCooling}
             cooldownUntil={manualRefreshAvailableAt}
             onManualRefresh={() => holdingsReady ? void refreshRates(activeHoldings, { manual: true }) : void retryPersonalData()}
-            onApiSettings={isDemo ? openPrivateApiSettings : () => setShowApiSettings(true)}
+            onApiSettings={isDemo ? openPrivateApiSettings : openApiSettings}
           />
         </div>
       </nav>
@@ -741,7 +754,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
               <h2 className="type-title font-semibold tracking-[-0.02em]">{asset} 持仓</h2>
               <p className="table-toolbar-subtitle text-muted type-caption">
                 {editing
-                  ? <>展示手动产品和 API 产品，<ActionButton variant="text" className="table-toolbar-inline-action" onClick={isDemo ? openPrivateApiSettings : () => setShowApiSettings(true)}>配置 API</ActionButton></>
+                  ? <>展示手动产品和 API 产品，<ActionButton variant="text" className="table-toolbar-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置 API</ActionButton></>
                   : `仅展示已有持仓，或 APR ≥ ${minimumOpportunityApr}% 的活期及 ${maximumShortTermDays} 天内定期产品`}
               </p>
             </div>
@@ -773,7 +786,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         <footer className="site-footer text-muted type-caption"><p>数据仅用于监控与比较，不构成投资建议。实际到账以平台账户为准。</p><a className="github-footer-link" href="https://github.com/noood/stable-earn" target="_blank" rel="noreferrer" aria-label="GitHub 源码仓库" title="GitHub 源码仓库"><Image src="/GitHub_Lockup_Black_Clearspace.svg" width={448} height={127} alt="" aria-hidden="true" /></a></footer>
       </div>
 
-      {!isDemo && showApiSettings && <ApiSettings onClose={() => setShowApiSettings(false)} onCooldownChange={() => setManualRefreshAvailableAt(null)} onCredentialsRemoved={async () => { await loadPersonalData(); }} />}
+      {!isDemo && apiSettingsMounted && <ApiSettings open={showApiSettings} onClose={() => setShowApiSettings(false)} onCooldownChange={() => setManualRefreshAvailableAt(null)} onCredentialsRemoved={async () => { await loadPersonalData(); }} />}
       {showAssetSwitchWarning && <ModalFrame ariaLabel="请先完成编辑" title="请先完成编辑" onClose={() => { if (!savingHoldings) { setPendingAsset(null); setShowAssetSwitchWarning(false); } }}><p className="text-secondary type-body">请先完成当前编辑，再切换币种。</p><div className="mt-5 flex justify-end gap-2"><ActionButton variant="secondary" onClick={() => { if (savingHoldings) return; setPendingAsset(null); setShowAssetSwitchWarning(false); }} disabled={savingHoldings}>取消</ActionButton><ActionButton onClick={() => void saveAndLeaveAssetSwitch()} disabled={savingHoldings || !pendingAsset}>{savingHoldings ? "保存中…" : "保存并离开"}</ActionButton></div></ModalFrame>}
       {pendingDeleteProductId && (() => {
         const target = [...manualProducts, ...products].find((product) => product.id === pendingDeleteProductId);

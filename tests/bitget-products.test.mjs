@@ -68,6 +68,31 @@ test("Bitget keeps separate offers and assigns holdings by productId", async () 
   assert.equal(result.holdings["bitget-global:USDT:flexible:bg-usdt-vip-no-rate"], 7);
   assert.equal(result.sync.products, true);
   assert.equal(result.sync.holdings, true);
+  assert.equal(result.sync.productStatus, "complete");
+  assert.equal(result.sync.holdingStatus, "complete");
+});
+
+test("Bitget reports a failed product request separately from a successful empty holdings list", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => {
+        const parsed = new URL(url);
+        if (parsed.pathname.endsWith("/savings/product")) throw new Error("request failed");
+        return { ok: true, status: 200, headers: new Headers(), url, text: async () => "" };
+      },
+      readExchangeText: async () => JSON.stringify({ code: "00000", data: { resultList: [], endId: "" } }),
+      readExchangeJson: async () => ({ code: "00000", data: {} }),
+      logExchangePayload: () => {},
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { fetchBitgetSavingsSnapshot } = load("@/lib/integrations/bitget");
+  const result = await fetchBitgetSavingsSnapshot({ apiKey: "key", apiSecret: "secret", passphrase: "pass" }, ["USDT"]);
+
+  assert.equal(result.sync.productStatus, "error");
+  assert.equal(result.sync.holdingStatus, "complete");
+  assert.equal(result.sync.products, false);
+  assert.equal(result.sync.holdings, true);
 });
 
 test("Bitget follows assets endId pagination before treating an absent offer as zero", async () => {

@@ -1,6 +1,7 @@
 import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import { buildPlatformProductIdentity } from "@/lib/product-identity";
 import type { Product } from "@/lib/domain";
+import type { LiveRate } from "@/lib/live-rates";
 import { apiAssetsFor } from "@/lib/platform-capabilities";
 import { syncDiagnostic } from "@/lib/sync-diagnostics";
 
@@ -46,12 +47,15 @@ type BybitFixedPositionRow = {
 type BybitResponse<Row> = {
   retCode?: number;
   retMsg?: string;
-  result?: { list?: Row[] };
+  result?: { list?: Row[]; nextPageCursor?: string };
 };
+
+type BybitPageScan<Row> = { rows: Row[]; complete: boolean };
+const maxBybitPages = 50;
 
 type SupportedAsset = Product["asset"];
 
-type BybitFlexibleProductRow = {
+export type BybitFlexibleProductRow = {
   productId?: string;
   coin?: string;
   status?: string;
@@ -59,6 +63,8 @@ type BybitFlexibleProductRow = {
   estimateApy?: string | number;
   apr?: string | number;
   apy?: string | number;
+  bonusApr?: string | number;
+  extraApr?: string | number;
   minStakeAmount?: string | number;
   maxStakeAmount?: string | number;
   tierAprDetails?: Array<{
@@ -83,21 +89,38 @@ export async function fetchBybitFlexibleHoldings(
   ),
 ) {
   const holdings: Record<string, number> = {};
+  const holdingRows: Array<{ asset: SupportedAsset; externalProductId: string; amount: number }> = [];
   const results = await Promise.allSettled(assets.map(async (asset) => {
     const query = new URLSearchParams({ category: "FlexibleSaving", coin: asset });
-    const response = await signedGet<BybitPositionRow>("/v5/earn/position", query, credentials);
+    const pageScan = await fetchBybitPages(query, (pageQuery) => signedGet<BybitPositionRow>("/v5/earn/position", pageQuery, credentials));
     const accountId = account === "eu" ? "bybit-eu" : "bybit-global";
-    const rows = (response.result?.list ?? []).filter((row) => row.coin === asset);
+    const rawRows = pageScan.rows;
+    const listComplete = pageScan.complete;
+    const rows = rawRows.filter((row) => row.coin?.toUpperCase() === asset);
+    const scopeMismatchCount = rawRows.length - rows.length;
     const amounts = new Map<string, number>();
+    const normalizedRows: Array<{ asset: SupportedAsset; externalProductId: string; amount: number }> = [];
+    let missingIdentityCount = 0;
+    let invalidAmountCount = 0;
     for (const row of rows) {
-      const externalProductId = row.productId?.trim() || `flexible-${asset.toLowerCase()}`;
+      const externalProductId = row.productId?.trim();
+      if (!externalProductId) {
+        missingIdentityCount += 1;
+        continue;
+      }
       const identity = buildPlatformProductIdentity({
         accountId,
         asset,
         productType: "flexible",
         externalProductId,
       });
-      amounts.set(identity.identityKey, (amounts.get(identity.identityKey) ?? 0) + finiteNumber(row.amount));
+      const amount = strictFiniteNumber(row.amount);
+      if (amount === undefined || amount < 0) {
+        invalidAmountCount += 1;
+        continue;
+      }
+      amounts.set(identity.identityKey, (amounts.get(identity.identityKey) ?? 0) + amount);
+      normalizedRows.push({ asset, externalProductId, amount });
     }
     // The public product list is traced in live-rates.ts. Pair it with this
     // sanitized position trace so product IDs can be compared without logging
@@ -106,6 +129,10 @@ export async function fetchBybitFlexibleHoldings(
       account: account === "eu" ? "bybit-eu" : "bybit-global",
       asset,
       rowCount: rows.length,
+      listComplete,
+      scopeMismatchCount,
+      missingIdentityCount,
+      invalidAmountCount,
       rows: rows.map((row) => ({
         productId: row.productId?.trim() || null,
         coin: row.coin ?? null,
@@ -116,18 +143,53 @@ export async function fetchBybitFlexibleHoldings(
     // A successful empty position response is intentionally represented by no
     // update. The catalog's complete-account rule records zero for the known
     // product without borrowing an old holding from another product.
-    return [...amounts.entries()] as Array<readonly [string, number]>;
+    return {
+      values: [...amounts.entries()] as Array<readonly [string, number]>,
+      rows: normalizedRows,
+      complete: listComplete && scopeMismatchCount === 0 && missingIdentityCount === 0 && invalidAmountCount === 0,
+    };
   }));
 
-  results.forEach((result) => {
+  const partialAssets: SupportedAsset[] = [];
+  results.forEach((result, index) => {
     if (result.status === "fulfilled") {
-      for (const [productId, amount] of result.value) holdings[productId] = amount;
+      for (const [productId, amount] of result.value.values) holdings[productId] = amount;
+      holdingRows.push(...result.value.rows);
+      if (!result.value.complete) partialAssets.push(assets[index]);
     }
+  });
+
+  const fetchedAt = new Date().toISOString();
+  const fallbackRates: LiveRate[] = holdingRows.filter((row) => row.amount > 0).map((row) => {
+    const accountId = account === "eu" ? "bybit-eu" : "bybit-global";
+    const identity = buildPlatformProductIdentity({ accountId, asset: row.asset, productType: "flexible", externalProductId: row.externalProductId });
+    return {
+      productId: identity.identityKey,
+      ...identity,
+      productDataMode: "manual",
+      name: "Flexible Saving",
+      apr: 0,
+      tiers: [{ min: 0, max: null, apr: 0 }],
+      fetchedAt,
+      sourceLabel: "Bybit 活期持仓 API（产品资料待填写）",
+      rateCoverage: "unavailable",
+      catalog: {
+        accountId,
+        exchange: "bybit" as const,
+        region: account === "eu" ? "eu" as const : "global" as const,
+        asset: row.asset,
+        holdingDataMode: "api" as const,
+        apiAccess: "public" as const,
+      },
+    };
   });
   return {
     holdings,
+    holdingRows,
+    rates: fallbackRates,
     sync: {
-      successfulAssets: assets.filter((_, index) => results[index].status === "fulfilled"),
+      successfulAssets: assets.filter((_, index) => results[index].status === "fulfilled" && !partialAssets.includes(assets[index])),
+      partialAssets,
       failedAssets: assets.filter((_, index) => results[index].status === "rejected"),
     },
   };
@@ -135,10 +197,20 @@ export async function fetchBybitFlexibleHoldings(
 
 /** Public, read-only check for one Bybit flexible-earn asset outside routine sync. */
 export async function probeBybitFlexibleProducts(accountId: "bybit-global" | "bybit-eu", asset: Product["asset"]) {
+  return (await scanBybitFlexibleProducts(accountId, asset)).rows;
+}
+
+/** Shared raw public product fetch used by both routine APR sync and diagnostics. */
+export async function fetchBybitFlexibleProductRows(accountId: "bybit-global" | "bybit-eu", asset: Product["asset"]) {
   const baseUrls = accountId === "bybit-eu" ? ["https://api.bybit.eu"] : bybitGlobalApiBases;
   const query = new URLSearchParams({ category: "FlexibleSaving", coin: asset });
-  const response = await publicGet<BybitFlexibleProductRow>("/v5/earn/product", query, baseUrls);
-  return (response.result?.list ?? [])
+  return fetchBybitPages(query, (pageQuery) => publicGet<BybitFlexibleProductRow>("/v5/earn/product", pageQuery, baseUrls));
+}
+
+export async function scanBybitFlexibleProducts(accountId: "bybit-global" | "bybit-eu", asset: Product["asset"]) {
+  const pageScan = await fetchBybitFlexibleProductRows(accountId, asset);
+  const rawRows = pageScan.rows;
+  const rows = rawRows
     .filter((row) => !row.coin || row.coin.toUpperCase() === asset)
     .map((row) => {
       const tiers = (row.tierAprDetails ?? []).flatMap((tier) => {
@@ -164,17 +236,31 @@ export async function probeBybitFlexibleProducts(accountId: "bybit-global" | "by
         ...(probeAmountLimit(row.maxStakeAmount) !== undefined ? { maxAmount: probeAmountLimit(row.maxStakeAmount) } : {}),
       };
     });
+  return {
+    rows,
+    rowCount: rawRows.length,
+    complete: pageScan.complete && rawRows.every((row) => (
+      (!row.coin || row.coin.toUpperCase() === asset)
+      && Boolean(row.productId?.trim())
+      && rows.some((candidate) => candidate.productId === row.productId?.trim() && candidate.rateShape !== "no_rate")
+    )),
+  };
 }
 
 /** Public, read-only check for Bybit fixed-term product/APR rows by account region. */
 export async function probeBybitFixedProducts(accountId: "bybit-global" | "bybit-eu") {
+  return (await scanBybitFixedProducts(accountId)).rows;
+}
+
+export async function scanBybitFixedProducts(accountId: "bybit-global" | "bybit-eu") {
   const baseUrls = accountId === "bybit-eu" ? ["https://api.bybit.eu"] : bybitGlobalApiBases;
-  const response = await publicGet<BybitFixedProductRow>(
+  const pageScan = await fetchBybitPages(new URLSearchParams(), (query) => publicGet<BybitFixedProductRow>(
     "/v5/earn/fixed-term/product",
-    new URLSearchParams(),
+    query,
     baseUrls,
-  );
-  return (response.result?.list ?? [])
+  ));
+  const rawRows = pageScan.rows;
+  const rows = rawRows
     .filter((row) => supportedFixedAssets.has(row.coin?.toUpperCase() as Product["asset"]))
     .flatMap((row) => {
       const productId = row.productId?.trim();
@@ -197,16 +283,31 @@ export async function probeBybitFixedProducts(accountId: "bybit-global" | "bybit
         specialUserGroupRequired: Boolean(row.specialUserGroupRequired),
       }];
     });
+  const malformed = !pageScan.complete || rawRows.some((row) => {
+    const coin = row.coin?.toUpperCase() as Product["asset"];
+    if (!supportedFixedAssets.has(coin)) return !row.coin;
+    return !row.productId?.trim() || !normalizeBybitDuration(row.duration) || fixedProductTiers(row).length === 0;
+  });
+  return {
+    rows,
+    complete: pageScan.complete && !malformed,
+    rowCount: rawRows.filter((row) => supportedFixedAssets.has(row.coin?.toUpperCase() as Product["asset"])).length,
+  };
 }
 
 /** One-off, read-only check for product-scoped fixed-term holdings in either region. */
 export async function probeBybitFixedHoldings(credentials: BybitCredentials) {
-  const response = await signedGet<BybitFixedPositionRow>(
+  return (await scanBybitFixedHoldings(credentials)).rows;
+}
+
+export async function scanBybitFixedHoldings(credentials: BybitCredentials) {
+  const pageScan = await fetchBybitPages(new URLSearchParams(), (query) => signedGet<BybitFixedPositionRow>(
     "/v5/earn/fixed-term/position",
-    new URLSearchParams(),
+    query,
     credentials,
-  );
-  return (response.result?.list ?? [])
+  ));
+  const rawRows = pageScan.rows;
+  const rows = rawRows
     .filter((row) => supportedFixedAssets.has(row.coin?.toUpperCase() as Product["asset"]))
     .map((row) => ({
       productId: row.productId?.trim() || null,
@@ -215,44 +316,70 @@ export async function probeBybitFixedHoldings(credentials: BybitCredentials) {
       status: row.status ?? null,
       hasPositiveHolding: finiteNumber(row.amount) > 0,
     }));
+  return {
+    rows,
+    rowCount: rawRows.length,
+    complete: pageScan.complete && rawRows.every((row) => {
+      const coin = row.coin?.toUpperCase() as Product["asset"] | undefined;
+      if (!coin) return false;
+      if (!supportedFixedAssets.has(coin)) return true;
+      const amount = strictFiniteNumber(row.amount);
+      return Boolean(row.productId?.trim() && normalizeBybitDuration(row.duration))
+        && amount !== undefined
+        && amount >= 0;
+    }),
+  };
 }
 
 export async function fetchBybitShortFixedSnapshots(credentials: BybitCredentials) {
   const [productResult, positionResult] = await Promise.allSettled([
-    publicGet<BybitFixedProductRow>(
+    fetchBybitPages(new URLSearchParams(), (query) => publicGet<BybitFixedProductRow>(
       "/v5/earn/fixed-term/product",
-      new URLSearchParams(),
+      query,
       credentials.baseUrls,
-    ),
-    signedGet<BybitFixedPositionRow>(
+    )),
+    fetchBybitPages(new URLSearchParams(), (query) => signedGet<BybitFixedPositionRow>(
       "/v5/earn/fixed-term/position",
-      new URLSearchParams(),
+      query,
       credentials,
-    ),
+    )),
   ]);
-  const productRows = productResult.status === "fulfilled" ? productResult.value.result?.list ?? [] : [];
-  const rawPositionRows = positionResult.status === "fulfilled" ? positionResult.value.result?.list ?? [] : [];
-  const positions = rawPositionRows.filter((row) => (
-    Boolean(row.productId)
-    && supportedFixedAssets.has(row.coin as Product["asset"])
-  ));
-  const productIdentityIncomplete = productRows.some((row) => (
-    supportedFixedAssets.has(row.coin as Product["asset"])
-    && (!row.productId?.trim() || !normalizeBybitDuration(row.duration))
-  ));
-  const rates = productRows.flatMap((row) => {
+  const productRows = productResult.status === "fulfilled" ? productResult.value.rows : [];
+  const productListValid = productResult.status === "fulfilled" && productResult.value.complete;
+  const positionRows = positionResult.status === "fulfilled" ? positionResult.value.rows : [];
+  const positionListValid = positionResult.status === "fulfilled" && positionResult.value.complete;
+  const positions = positionRows.filter((row) => supportedFixedAssets.has(row.coin?.toUpperCase() as Product["asset"]));
+  const productIdentityIncomplete = productRows.some((row) => {
+    const asset = row.coin?.toUpperCase() as Product["asset"];
+    if (!supportedFixedAssets.has(asset)) return !row.coin;
+    return !row.productId?.trim() || !normalizeBybitDuration(row.duration) || fixedProductTiers(row).length === 0;
+  });
+  const rates: Array<LiveRate & { sourceProductId?: string }> = productRows.flatMap((row) => {
     const rate = fixedProductRate(row);
     return rate ? [rate] : [];
   });
   const resolvedPositions = positions.flatMap((row) => {
+    const amount = strictFiniteNumber(row.amount);
+    if (amount === undefined || amount < 0) return [];
     const externalProductId = resolveBybitFixedPositionId(row, rates);
     return externalProductId ? [{ row, externalProductId }] : [];
   });
-  const unresolvedPositionCount = rawPositionRows.filter((row) => (
-    supportedFixedAssets.has(row.coin as Product["asset"])
-  )).length - resolvedPositions.length;
+  const unresolvedPositionCount = positions.length - resolvedPositions.length;
+  const invalidPositionAmountCount = positions.filter((row) => {
+    const amount = strictFiniteNumber(row.amount);
+    return amount === undefined || amount < 0;
+  }).length;
+  const positionIdentityIncomplete = !positionListValid
+    || positionRows.some((row) => !row.coin)
+    || unresolvedPositionCount > 0
+    || invalidPositionAmountCount > 0;
+  for (const { row, externalProductId } of resolvedPositions) {
+    if (finiteNumber(row.amount) <= 0 || rates.some((rate) => rate.externalProductId === externalProductId && rate.catalog?.asset === row.coin?.toUpperCase())) continue;
+    const asset = row.coin?.toUpperCase() as Product["asset"];
+    if (supportedFixedAssets.has(asset)) rates.push(bybitFixedHoldingOnlyRate(row, asset, externalProductId));
+  }
   syncDiagnostic("bybit_fixed_rows", {
-    productApiStatus: productResult.status === "rejected" ? "error" : productIdentityIncomplete ? "partial" : "success",
+    productApiStatus: productResult.status === "rejected" ? "error" : !productListValid || productIdentityIncomplete ? "partial" : "success",
     productRowCount: productRows.length,
     productRows: productRows.flatMap((row) => {
       const coin = String(row.coin ?? "").toUpperCase();
@@ -270,9 +397,10 @@ export async function fetchBybitShortFixedSnapshots(credentials: BybitCredential
         tiers: fixedProductTiers(row),
       }];
     }),
-    holdingsApiStatus: positionResult.status === "rejected" ? "error" : unresolvedPositionCount > 0 ? "partial" : "success",
-    positionRowCount: rawPositionRows.length,
+    holdingsApiStatus: positionResult.status === "rejected" ? "error" : positionIdentityIncomplete ? "partial" : "success",
+    positionRowCount: positionRows.length,
     unresolvedPositionCount,
+    invalidPositionAmountCount,
     positionRows: positions.map((row) => ({
       productId: row.productId?.trim() || null,
       coin: row.coin ?? null,
@@ -285,14 +413,15 @@ export async function fetchBybitShortFixedSnapshots(credentials: BybitCredential
 
   if (positionResult.status === "fulfilled") {
     for (const rate of rates) {
-      const amount = resolvedPositions
-        .filter(({ row, externalProductId }) => externalProductId === rate.externalProductId && row.coin === rate.catalog?.asset)
-        .reduce((sum, { row }) => sum + finiteNumber(row.amount), 0);
-      holdings[rate.productId] = amount;
-      if (rate.externalProductId) holdings[rate.externalProductId] = amount;
+      const matches = resolvedPositions.filter(({ row, externalProductId }) => externalProductId === rate.externalProductId && row.coin?.toUpperCase() === rate.catalog?.asset);
+      if (matches.length > 0 || !positionIdentityIncomplete) {
+        const amount = matches.reduce((sum, { row }) => sum + (strictFiniteNumber(row.amount) ?? 0), 0);
+        holdings[rate.productId] = amount;
+        if (rate.externalProductId) holdings[rate.externalProductId] = amount;
+      }
     }
     for (const { row, externalProductId } of resolvedPositions) {
-      const matched = rates.some((rate) => rate.externalProductId === externalProductId && rate.catalog?.asset === row.coin);
+      const matched = rates.some((rate) => rate.externalProductId === externalProductId && rate.catalog?.asset === row.coin?.toUpperCase());
       if (!matched) holdings[externalProductId] = (holdings[externalProductId] ?? 0) + finiteNumber(row.amount);
     }
   }
@@ -301,8 +430,10 @@ export async function fetchBybitShortFixedSnapshots(credentials: BybitCredential
     rates,
     holdings,
     sync: {
-      products: productResult.status === "fulfilled" && !productIdentityIncomplete,
-      holdings: positionResult.status === "fulfilled" && unresolvedPositionCount === 0,
+      products: productResult.status === "fulfilled" && productListValid && !productIdentityIncomplete,
+      holdings: positionResult.status === "fulfilled" && !positionIdentityIncomplete,
+      productStatus: productResult.status === "rejected" ? "error" as const : productListValid && !productIdentityIncomplete ? "complete" as const : "partial" as const,
+      holdingStatus: positionResult.status === "rejected" ? "error" as const : !positionIdentityIncomplete ? "complete" as const : "partial" as const,
     },
   };
 }
@@ -331,6 +462,7 @@ function fixedProductRate(row: BybitFixedProductRow) {
     ...identity,
     sourceProductId,
     legacyIdentityKey: `bybit-global:${asset}:fixed:${sourceProductId}`,
+    ...(!tiers.length ? { productDataMode: "manual" as const } : {}),
     name: `Fixed Saving · ${formatDuration(row.duration)}`,
     apr: tiers[0]?.apr ?? 0,
     rateShape: (row.tieredApyList ?? []).some((tier) => Number.isFinite(parsePercent(tier.apy)))
@@ -338,7 +470,7 @@ function fixedProductRate(row: BybitFixedProductRow) {
       : tiers.length ? "single_rate" as const : "no_rate" as const,
     tiers,
     fetchedAt: new Date().toISOString(),
-    sourceLabel: "Bybit 官方固定期限产品与账户持仓 API",
+    sourceLabel: tiers.length ? "Bybit 官方固定期限产品与账户持仓 API" : "Bybit 定期产品资料缺少 APR；待手动填写",
     productType: "fixed" as const,
     termDays: termDays > 0 ? termDays : undefined,
     minimumAmount: finiteNumber(row.minStakeAmount),
@@ -360,7 +492,38 @@ function fixedProductRate(row: BybitFixedProductRow) {
   };
 }
 
-function resolveBybitFixedPositionId(position: BybitFixedPositionRow, rates: ReturnType<typeof fixedProductRate>[]) {
+function bybitFixedHoldingOnlyRate(row: BybitFixedPositionRow, asset: Product["asset"], externalProductId: string): LiveRate {
+  const identity = buildPlatformProductIdentity({
+    accountId: "bybit-global",
+    asset,
+    productType: "fixed",
+    externalProductId,
+  });
+  const termDays = row.duration ? parseDurationDays(row.duration) : 0;
+  return {
+    productId: identity.identityKey,
+    ...identity,
+    productDataMode: "manual",
+    name: `Fixed Saving · ${formatDuration(row.duration)}`,
+    apr: 0,
+    tiers: [{ min: 0, max: null, apr: 0 }],
+    fetchedAt: new Date().toISOString(),
+    sourceLabel: "Bybit 定期持仓 API（产品资料待填写）",
+    productType: "fixed",
+    ...(termDays > 0 ? { termDays } : {}),
+    rateCoverage: "unavailable",
+    catalog: {
+      accountId: "bybit-global",
+      exchange: "bybit",
+      region: "global",
+      asset,
+      holdingDataMode: "api",
+      apiAccess: "authenticated",
+    },
+  };
+}
+
+function resolveBybitFixedPositionId(position: BybitFixedPositionRow, rates: Array<LiveRate & { sourceProductId?: string }>) {
   const sourceProductId = position.productId?.trim();
   if (!sourceProductId) return undefined;
   const duration = normalizeBybitDuration(position.duration);
@@ -465,6 +628,34 @@ async function publicGet<Row>(path: string, query: URLSearchParams, baseUrls: re
   throw lastError ?? new Error("Bybit public API unavailable");
 }
 
+/** Follow any advertised Bybit cursor; a repeated cursor or failed later page is partial, never empty. */
+async function fetchBybitPages<Row>(
+  initialQuery: URLSearchParams,
+  request: (query: URLSearchParams) => Promise<BybitResponse<Row>>,
+): Promise<BybitPageScan<Row>> {
+  const rows: Row[] = [];
+  const seenCursors = new Set<string>();
+  let query = new URLSearchParams(initialQuery);
+  for (let page = 0; page < maxBybitPages; page += 1) {
+    let response: BybitResponse<Row>;
+    try {
+      response = await request(query);
+    } catch (error) {
+      if (page === 0) throw error;
+      return { rows, complete: false };
+    }
+    if (!Array.isArray(response.result?.list)) return { rows, complete: false };
+    rows.push(...response.result.list);
+    const cursor = response.result.nextPageCursor?.trim();
+    if (!cursor) return { rows, complete: true };
+    if (seenCursors.has(cursor)) return { rows, complete: false };
+    seenCursors.add(cursor);
+    query = new URLSearchParams(initialQuery);
+    query.set("cursor", cursor);
+  }
+  return { rows, complete: false };
+}
+
 async function signedGet<Row>(path: string, query: URLSearchParams, credentials: BybitCredentials) {
   const queryString = query.toString();
   let lastError: unknown;
@@ -523,4 +714,10 @@ async function hmacHex(payload: string, secret: string) {
 function finiteNumber(value: string | number | undefined) {
   const parsed = typeof value === "number" ? value : Number.parseFloat(value ?? "0");
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function strictFiniteNumber(value: string | number | undefined) {
+  if (typeof value === "string" && !value.trim()) return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }

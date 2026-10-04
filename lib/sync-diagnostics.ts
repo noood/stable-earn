@@ -45,15 +45,36 @@ export function withSyncPlatform<T>(platform: string, task: () => Promise<T>) {
   return current ? context.run({ ...current, platform }, task) : task();
 }
 
-// Callers pass only controlled status fields, never upstream messages or data.
+const privatePositionFieldsByEvent: Record<string, readonly string[]> = {
+  binance_flexible_rows: ["positionTotal", "positionRowCount", "positionScopeMismatchCount", "positionRows"],
+  binance_locked_rows: ["positionTotal", "positionRowCount", "positionRows"],
+  binance_catalog_decisions: ["decisions"],
+  bybit_flexible_position_rows: ["rowCount", "scopeMismatchCount", "missingIdentityCount", "invalidAmountCount", "rows", "productTotals"],
+  bybit_fixed_rows: ["positionRowCount", "unresolvedPositionCount", "invalidPositionAmountCount", "positionRows"],
+  bitget_assets_rows: ["requestedLimit", "pageCount", "rowCount", "pages", "rows"],
+  bitget_assets_pagination: ["requestedLimit", "pageCount", "rowCount", "pages"],
+  bitget_holdings_normalized: ["holdings"],
+  bitget_holding_mapping: ["adapterHoldings", "adapterToCatalog", "freshCatalogHoldings", "cachedCatalogHoldings", "finalCatalogHoldings", "finalFallbacks"],
+  bitget_fixed_rows: ["positionRowCount", "positionRows"],
+  bitget_capability_probe: ["holdingsApiRowCount", "holdingsApiPages"],
+};
+
+function safeRuntimeRecord(record: DiagnosticRecord) {
+  const hiddenFields = new Set(privatePositionFieldsByEvent[String(record.event)] ?? []);
+  return Object.fromEntries(Object.entries(record).filter(([key]) => !hiddenFields.has(key)));
+}
+
+// Adapter diagnostics may inspect detailed position rows in memory for a
+// one-off probe, but runtime logs must never contain account position data.
 export function syncDiagnostic(event: string, fields: Record<string, unknown> = {}, warning = false) {
   const current = context.getStore();
   if (!current) return;
   const record = { event, ...current, ...fields };
   current.captured?.push(record);
   if (current.suppressOutput) return;
-  if (warning) console.warn(record);
-  else console.info(record);
+  const safeRecord = safeRuntimeRecord(record);
+  if (warning) console.warn(safeRecord);
+  else console.info(safeRecord);
 }
 
 export function diagnosticErrorKind(error: unknown, aborted = false) {

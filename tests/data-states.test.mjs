@@ -139,6 +139,18 @@ test("repeated local preview requests keep the failed holding timestamp fixed", 
   assert.deepEqual(localSyncScenarioPreview("success").holdingFallbacks, {});
 });
 
+test("complete empty local sync preview has no products, holdings, or failure state", () => {
+  const empty = localSyncScenarioPreview("empty", new Date("2026-10-04T00:00:00Z"));
+  assert.deepEqual(empty.products, []);
+  assert.deepEqual(empty.rates, []);
+  assert.deepEqual(empty.holdingUpdates, {});
+  assert.deepEqual(empty.holdingSourceIds, []);
+  assert.equal(empty.partial, false);
+  assert.deepEqual(empty.failures, []);
+  assert.equal(empty.cache.state, "updated");
+  assert.equal(empty.cache.lastError, null);
+});
+
 const previousSnapshot = {
   state: "fresh", updatedAt: "2026-09-05T06:23:00Z",
   lastAttemptAt: "2026-09-05T06:23:00Z", lastError: null,

@@ -4,7 +4,51 @@ import { moduleLoader } from "./helpers/load-ts.mjs";
 import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
 const load = moduleLoader();
-const { archiveApiCatalogProducts, resolveCatalogProductIds } = load("@/lib/product-catalog");
+const { archiveApiCatalogProducts, prepareProductCatalogSync, resolveCatalogProductIds } = load("@/lib/product-catalog");
+
+test("a complete supported scope cannot zero or archive an unsupported sibling scope", async () => {
+  const { createProductTemplate } = load("@/lib/product-template");
+  const db = sqliteDb();
+  const now = "2026-10-03T00:00:00.000Z";
+  const unsupportedScopeProduct = {
+    ...createProductTemplate(
+      "bybit-usdgo-flexible-legacy",
+      "bybit-global",
+      "bybit",
+      "global",
+      "USDGO",
+      "Legacy flexible row",
+      [[0, null, 5]],
+      { kind: "live", label: "API", fetchedAt: now },
+      { productDataMode: "api", apiAccess: "authenticated", holdingDataMode: "api" },
+    ),
+    externalProductId: "legacy-product",
+  };
+  db.sqlite.prepare(`INSERT INTO product_catalog
+    (owner_id, product_id, canonical_product_id, identity_key, payload, status, first_seen_at, last_seen_at)
+    VALUES ('user', ?, ?, ?, ?, 'active', ?, ?)`)
+    .run(unsupportedScopeProduct.id, unsupportedScopeProduct.identityKey, unsupportedScopeProduct.identityKey,
+      JSON.stringify(unsupportedScopeProduct), now, now);
+  db.sqlite.prepare(`INSERT INTO holdings (user_id, product_id, amount, updated_at)
+    VALUES ('user', ?, 42, ?)`)
+    .run(unsupportedScopeProduct.id, now);
+
+  const { products, statements } = await prepareProductCatalogSync(
+    db,
+    "user",
+    [],
+    {},
+    [],
+    ["bybit-global:USDT:flexible"],
+  );
+
+  assert.deepEqual(products.map((product) => product.id), [unsupportedScopeProduct.id]);
+  assert.deepEqual(statements, []);
+  assert.equal(db.sqlite.prepare("SELECT status FROM product_catalog WHERE product_id = ?")
+    .get(unsupportedScopeProduct.id).status, "active");
+  assert.equal(db.sqlite.prepare("SELECT amount FROM holdings WHERE product_id = ?")
+    .get(unsupportedScopeProduct.id).amount, 42);
+});
 
 test("removing API credentials archives every account API product but preserves its data", async () => {
   const db = sqliteDb();

@@ -165,6 +165,7 @@ test("partial holding sync does not archive an active product after an APR drop"
 test("a positive Bitget holding creates a visible product row when APR is unavailable", async () => {
   const load = moduleLoader();
   const { prepareProductCatalogSync } = load("@/lib/product-catalog");
+  const { productInformationIssues, productParticipatesInInterest } = load("@/lib/product-status");
   const db = sqliteDb();
   const identityKey = "bitget-global:USDT:flexible:bg-usdt-vip-no-rate";
   const result = await prepareProductCatalogSync(db, "user", [{
@@ -175,6 +176,7 @@ test("a positive Bitget holding creates a visible product row when APR is unavai
     apr: 0,
     tiers: [],
     rateCoverage: "unavailable",
+    productDataMode: "manual",
     eligibilityRequired: true,
     eligibilityLabel: "Bitget VIP 专属产品，账号资格需确认",
     eligibilityStatus: "unknown",
@@ -186,7 +188,9 @@ test("a positive Bitget holding creates a visible product row when APR is unavai
   assert.equal(result.products.length, 1);
   assert.equal(result.products[0].externalProductId, "bg-usdt-vip-no-rate");
   assert.equal(result.products[0].rateCoverage, "unavailable");
+  assert.equal(result.products[0].productDataMode, "manual");
   assert.equal(result.products[0].eligibilityRequired, true);
   assert.equal(result.products[0].eligibilityStatus, "unknown");
-  assert.equal(result.products[0].tiers.length, 0);
+  assert.deepEqual(productInformationIssues(result.products[0]), ["APR 待填写", "首档额度待填写"]);
+  assert.equal(productParticipatesInInterest(result.products[0], 7), false);
 });

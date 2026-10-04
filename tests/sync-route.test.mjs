@@ -12,6 +12,7 @@ function fixture() {
   }
   let mode = "success";
   let pause = null;
+  const catalogCalls = [];
   const storage = sqliteDb();
   const record = () => storage.sqlite.prepare("SELECT * FROM sync_snapshots WHERE owner_id = 'test-user' AND cache_key = 'private-products'").get() ?? null;
   const db = {
@@ -31,40 +32,66 @@ function fixture() {
   };
   const products = ["bg-usdc", "bn-g-usdt"].map((id) => ({
     id, accountId: id === "bg-usdc" ? "bitget-global" : "binance-global",
+    asset: id === "bg-usdc" ? "USDC" : "USDT", productType: "flexible",
     holdingDataMode: "api", productDataMode: "api", source: { kind: "live" },
   }));
   const rate = (productId) => ({ productId, apr: 6, fetchedAt: new Clock().toISOString() });
   const load = moduleLoader({
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     "@/lib/db": { getDatabase: async () => db, getUserIdentity: async () => ({ userId: "test-user" }) },
-    "@/lib/credentials": { loadCredentials: async () => ({ "binance-global": {}, "bitget-global": { passphrase: "test" } }) },
+    "@/lib/credentials": { loadCredentials: async () => ({ "binance-global": {}, "bitget-global": { passphrase: "test" }, "okx-global": { apiKey: "key", apiSecret: "secret", passphrase: "pass" } }) },
     "@/lib/local-preview": { isLocalPreviewRequest: () => false },
     "@/lib/user-settings": { loadManualRefreshCooldown: async () => 30, manualRefreshCooldownMs: (minutes) => minutes * 60000 },
     "@/lib/live-rates": { fetchPublicRateSnapshot: async () => ({ rates: [], failures: [] }), summarizePublicFailures: (failures) => failures },
     "@/lib/integrations/binance": { fetchBinanceFlexibleSnapshot: async () => {
       if (pause) await pause;
       if (mode === "error") throw Error("timeout");
-      return { rates: mode === "rate-missing" ? [] : [rate("bn-g-usdt")], holdings: { "bn-g-usdt": 0 } };
+      return {
+        rates: mode === "rate-missing" ? [] : [rate("bn-g-usdt")],
+        holdings: { "bn-g-usdt": 0 },
+        productApiStatus: "complete", positionApiStatus: "complete",
+        productListsComplete: true, positionListsComplete: true,
+      };
     }, fetchBinanceLockedSnapshot: async () => {
       if (pause) await pause;
       if (mode === "error") throw Error("timeout");
-      return { rates: [], holdings: {} };
+      return { rates: [], holdings: {}, productApiStatus: "complete", positionApiStatus: "complete", productListComplete: true, positionListComplete: true };
     } },
     "@/lib/integrations/bitget": { fetchBitgetSavingsSnapshot: async () => {
       if (mode === "error") throw Error("timeout");
-      return { rates: [rate("bg-usdc")], holdings: ["partial", "sparse"].includes(mode) ? {} : { "bg-usdc": 299.64 }, sync: { products: true, holdings: mode !== "partial" } };
+      return {
+        rates: [rate("bg-usdc")],
+        holdings: ["partial", "sparse"].includes(mode) ? {} : { "bg-usdc": 299.64 },
+        sync: {
+          products: true,
+          holdings: mode !== "partial",
+          productStatus: "complete",
+          holdingStatus: mode === "partial" ? "partial" : "complete",
+        },
+      };
+    }, fetchBitgetFixedSnapshot: async () => {
+      if (mode === "error") throw Error("timeout");
+      return { rates: [], holdings: {}, sync: { products: true, holdings: true } };
     } },
-    "@/lib/integrations/bybit": {}, "@/lib/integrations/okx": {},
+    "@/lib/integrations/bybit": {},
+    "@/lib/integrations/okx": { fetchOkxSavingsHoldings: async () => {
+      if (mode === "error") throw Error("timeout");
+      return { holdings: { "okx-usdt": 0, "okx-usdc": 0, "okx-btc": 0 }, observedAssets: [] };
+    } },
     "@/lib/product-catalog": {
       loadCatalogProducts: async () => [],
-      prepareProductCatalogSync: async (_db, _id, rates) => ({ products, rates, productIds: {}, statements: [] }),
+      prepareProductCatalogSync: async (...args) => {
+        catalogCalls.push(args);
+        const rates = args[2];
+        return { products, rates, productIds: {}, statements: [] };
+      },
       resolveCatalogProductIds: async () => ({}),
       resolveCatalogProductAccounts: async () => ({}),
     },
   }, { Date: Clock, console: { info: (record) => logs.push(record), warn: (record) => logs.push(record) } });
   const route = load("@/app/private/api/products/route");
   return {
-    route, db, load, logs,
+    route, db, load, logs, catalogCalls,
     now: () => new Clock().toISOString(),
     step(nextMode) { time += 60000; mode = nextMode; },
     setTime(value) { time = Date.parse(value); },
@@ -82,7 +109,7 @@ test("sync logs preserve platform outcomes before total failure and correlate sc
   const statuses = f.logs.find((r) => r.event === "sync_platforms");
   assert.equal(statuses.binanceGlobal, "error");
   assert.equal(statuses.bitget, "error");
-  assert.equal(statuses.publicOutcome, "no_usable_rates");
+  assert.equal(statuses.publicOutcome, "empty");
   const end = f.logs.at(-1);
   assert.equal(end.event, "sync_finished");
   assert.equal(end.outcome, "error");
@@ -166,6 +193,17 @@ test("simultaneous opening and manual requests cannot overlap exchange work", as
   await first;
   assert.equal((await f.read("?visit=1")).dailyRefreshPending, false);
   assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 1);
+});
+
+test("OKX coin-level balance is not used as product-scoped zero or archive evidence", async () => {
+  const f = fixture();
+  await f.refresh();
+  const catalogCall = f.catalogCalls.at(-1);
+  assert.ok(catalogCall);
+  assert.equal(catalogCall[3]["okx-usdt"], 0);
+  assert.equal(catalogCall[3]["okx-usdc"], 0);
+  assert.equal(catalogCall[3]["okx-btc"], 0);
+  assert.equal(catalogCall[5].some((scope) => scope.startsWith("okx-global:")), false);
 });
 
 test("an expired request cannot replace a newer owner's saved result or failure state", async () => {

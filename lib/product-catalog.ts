@@ -6,6 +6,7 @@ import { resolveProductWithoutApiData } from "./product-status";
 import { catalogProductTemplates } from "./catalog-templates";
 import { syncDiagnostic } from "./sync-diagnostics";
 import { scopedExternalProductAlias } from "./product-identity";
+import { platformCapabilityScopeKey } from "./platform-capabilities";
 
 /**
  * The catalogue is user-scoped because authenticated APIs may expose a
@@ -58,6 +59,7 @@ export async function prepareProductCatalogSync(
   incomingRates: LiveRate[],
   freshHoldings: Record<string, number> = {},
   completeAccountIds: readonly string[] = [],
+  completeScopeKeys: readonly string[] = [],
 ): Promise<ProductCatalogSync> {
   const [rows, holdingResult, catalogColumns] = await Promise.all([
     loadCatalogRows(db, ownerId),
@@ -67,7 +69,7 @@ export async function prepareProductCatalogSync(
   const hasLegacyCanonicalColumn = catalogColumns.results.some((column) => column.name === "canonical_product_id");
   const overrideResult = await db.prepare("SELECT product_id, purchase_date FROM product_overrides WHERE user_id = ?").bind(ownerId).all<OverrideRow>();
   const now = new Date().toISOString();
-  const completeAccounts = new Set(completeAccountIds);
+  const completeScopes = new Set([...completeAccountIds, ...completeScopeKeys]);
   const persistedHoldings = new Map(holdingResult.results.map((row) => [row.product_id, Number(row.amount)]));
   const purchaseDates = new Map(overrideResult.results.map((row) => [row.product_id, row.purchase_date]));
   const byIdentity = new Map<string, CatalogRow[]>();
@@ -128,7 +130,7 @@ export async function prepareProductCatalogSync(
     if (!base) continue;
 
     const product = productFromRate(base, rate, id, identityKey);
-    const evidence = holdingEvidence(product, rate, id, freshHoldings, persistedHoldings, completeAccounts);
+    const evidence = holdingEvidence(product, rate, id, freshHoldings, persistedHoldings, completeScopes);
     const alreadyActive = selectedCurrent?.status === "active";
     const active = productShouldBeActive(product, evidence, alreadyActive);
     if (isBinanceLockedProduct(product)) {
@@ -146,7 +148,7 @@ export async function prepareProductCatalogSync(
         eligibilityStatus: product.eligibilityStatus ?? null,
         holdingKnown: evidence.known,
         holdingAmount: evidence.amount,
-        completeAccount: completeAccounts.has(product.accountId),
+        completeAccount: isCatalogScopeComplete(product, completeScopes),
         previousStatus: selectedCurrent?.status ?? null,
         active,
         reason: productActivityReason(product, evidence, alreadyActive, active),
@@ -193,13 +195,13 @@ export async function prepareProductCatalogSync(
           selectedProductId: selectedForIdentity.product_id,
           holdingKnown: persistedHoldings.has(row.product_id),
           holdingAmount: persistedHoldings.get(row.product_id) ?? 0,
-          completeAccount: completeAccounts.has(product.accountId),
+          completeAccount: isCatalogScopeComplete(product, completeScopes),
           active: false,
           reason: "duplicate_identity_zero_holding",
         });
         continue;
       }
-      const evidence = existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeAccounts);
+      const evidence = existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeScopes);
       if (!evidence.known || evidence.amount > 0) continue;
       planned.set(row.product_id, { product, status: "archived" });
       statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
@@ -208,7 +210,7 @@ export async function prepareProductCatalogSync(
         productId: row.product_id,
         holdingKnown: evidence.known,
         holdingAmount: evidence.amount,
-        completeAccount: completeAccounts.has(product.accountId),
+        completeAccount: isCatalogScopeComplete(product, completeScopes),
         active: false,
         reason: "omitted_identity_zero_holding",
       });
@@ -221,9 +223,9 @@ export async function prepareProductCatalogSync(
   // known to be zero. Partial/failed accounts and positive holdings remain.
   for (const row of rows.filter((candidate) => candidate.status === "active")) {
     const product = parseProduct(row.payload)[0];
-    if (!product || product.productDataMode !== "api" || !completeAccounts.has(product.accountId)) continue;
+    if (!product || product.productDataMode !== "api" || !isCatalogScopeComplete(product, completeScopes)) continue;
     if (incomingIdentityKeys.has(row.identity_key) || incomingCanonicalIds.has(row.identity_key)) continue;
-    const evidence = existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeAccounts);
+    const evidence = existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeScopes);
     if (!evidence.known || evidence.amount > 0) continue;
     planned.set(row.product_id, { product, status: "archived" });
     statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
@@ -232,7 +234,7 @@ export async function prepareProductCatalogSync(
       productId: row.product_id,
       holdingKnown: evidence.known,
       holdingAmount: evidence.amount,
-      completeAccount: true,
+      completeAccount: isCatalogScopeComplete(product, completeScopes),
       active: false,
       reason: "complete_account_absent_zero_holding",
     });
@@ -276,8 +278,8 @@ export async function prepareProductCatalogSync(
     .flatMap((entry) => entry.status === "active" && entry.product ? [resolveProductWithoutApiData(entry.product)] : [])
     .sort((left, right) => left.id.localeCompare(right.id));
   syncDiagnostic("binance_catalog_decisions", {
-    completeAccounts: [...completeAccounts].filter((accountId) => accountId.startsWith("binance-")),
-    decisions: binanceCatalogDecisions,
+    completeAccounts: [...completeScopes].filter((scope) => scope === "binance-global" || scope === "binance-bahrain"),
+    completeScopes: [...completeScopes].filter((scope) => scope.startsWith("binance-")),
   });
   return { products, rates: transformedRates, productIds, statements };
 }
@@ -351,14 +353,14 @@ function holdingEvidence(
   id: string,
   fresh: Record<string, number>,
   persisted: Map<string, number>,
-  completeAccounts: Set<string>,
+  completeScopes: Set<string>,
 ): HoldingEvidence {
   const scopedAlias = rate.catalog?.accountId && rate.catalog.asset && rate.externalProductId
     ? scopedExternalProductAlias(rate.catalog.accountId, rate.catalog.asset, rate.externalProductId)
     : undefined;
   const freshValue = firstHolding(fresh, [id, rate.productId, scopedAlias, rate.externalProductId, rate.identityKey]);
   if (freshValue !== undefined) return { known: true, amount: freshValue };
-  if (completeAccounts.has(product.accountId)) return { known: true, amount: 0 };
+  if (isCatalogScopeComplete(product, completeScopes)) return { known: true, amount: 0 };
   if (product.holdingDataMode === "manual") {
     const persistedValue = persisted.get(id);
     if (persistedValue !== undefined) return { known: true, amount: persistedValue };
@@ -375,17 +377,22 @@ function existingHoldingEvidence(
   row: CatalogRow,
   fresh: Record<string, number>,
   persisted: Map<string, number>,
-  completeAccounts: Set<string>,
+  completeScopes: Set<string>,
 ): HoldingEvidence {
   const freshValue = firstHolding(fresh, [row.product_id, row.identity_key, product.externalProductId]);
   if (freshValue !== undefined) return { known: true, amount: freshValue };
-  if (completeAccounts.has(product.accountId)) return { known: true, amount: 0 };
+  if (isCatalogScopeComplete(product, completeScopes)) return { known: true, amount: 0 };
   if (product.holdingDataMode === "manual") {
     const persistedValue = persisted.get(row.product_id);
     if (persistedValue !== undefined) return { known: true, amount: persistedValue };
     return { known: true, amount: 0 };
   }
   return { known: false, amount: 0 };
+}
+
+function isCatalogScopeComplete(product: Product, completeScopes: Set<string>) {
+  return completeScopes.has(product.accountId)
+    || completeScopes.has(platformCapabilityScopeKey(product.accountId, product.asset, product.productType));
 }
 
 function firstHolding(values: Record<string, number>, ids: Array<string | undefined>) {
@@ -480,7 +487,7 @@ function liveRateScore(rate: LiveRate) {
 }
 
 function rateHasKnownApr(rate: LiveRate) {
-  return rate.rateCoverage !== "unavailable" && Number.isFinite(rate.apr);
+  return rate.productDataMode !== "manual" && rate.rateCoverage !== "unavailable" && Number.isFinite(rate.apr);
 }
 
 function hasPositiveFreshHolding(rate: LiveRate, holdings: Record<string, number>) {
@@ -556,15 +563,25 @@ function reactivateCatalogStatement(db: D1Database, ownerId: string, productId: 
 }
 
 function productFromRate(base: Product, rate: LiveRate, id: string, identityKey: string): Product {
-  const normalizedBase: Product = rate.catalog
-    ? {
+  let normalizedBase = base;
+  if (rate.catalog && rate.productDataMode === "manual") {
+    const manualBase = Object.fromEntries(
+      Object.entries(base).filter(([key]) => key !== "apiAccess"),
+    ) as Product;
+    normalizedBase = {
+      ...manualBase,
+      productDataMode: "manual",
+      holdingDataMode: rate.catalog.holdingDataMode,
+    } as Product;
+  } else if (rate.catalog) {
+    normalizedBase = {
       ...base,
       productDataMode: "api",
       apiAccess: rate.catalog.apiAccess,
       holdingDataMode: rate.catalog.holdingDataMode,
-    } as Product
-    : base;
-  const tiers = rate.tiers
+    } as Product;
+  }
+  const tiers = rate.tiers?.length
     ? rate.tiers.map((tier, index) => {
       const previous = base.tiers[index];
       const preserveKnownCapacity = rate.capacitySource === "cache"
@@ -595,6 +612,7 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
     eligibilityRequired: rate.eligibilityRequired ?? base.eligibilityRequired,
     eligibilityLabel: rate.eligibilityLabel ?? base.eligibilityLabel,
     eligibilityStatus: rate.eligibilityStatus ?? base.eligibilityStatus,
+    manualFields: rate.manualFields ?? base.manualFields,
     externalProductId: rate.externalProductId ?? base.externalProductId,
     identityKey,
     identityFingerprint: rate.identityFingerprint ?? base.identityFingerprint,
@@ -607,15 +625,19 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
     // keep the product as base_only without claiming that a quota was cached.
     capacitySource,
     capacityFetchedAt: capacitySource === "cache" ? base.capacityFetchedAt ?? base.source.fetchedAt : rate.capacityFetchedAt,
-    source: { kind: "live", label: rate.sourceLabel, fetchedAt: rate.fetchedAt },
+    source: rate.productDataMode === "manual"
+      ? { kind: "manual", label: rate.sourceLabel }
+      : { kind: "live", label: rate.sourceLabel, fetchedAt: rate.fetchedAt },
   };
 }
 
 function productTemplateFromRate(rate: LiveRate, id: string, identityKey: string): Product | undefined {
   const catalog = rate.catalog;
   if (!catalog) return undefined;
-  const tiers = rate.tiers?.map((tier, index) => ({ ...tier, id: `${id}-tier-${index}` }))
-    ?? [{ id: `${id}-tier-0`, min: 0, max: null, apr: rate.apr }];
+  const manualProduct = rate.productDataMode === "manual";
+  const tiers = rate.tiers?.length
+    ? rate.tiers.map((tier, index) => ({ ...tier, id: `${id}-tier-${index}` }))
+    : [{ id: `${id}-tier-0`, min: 0, max: null, apr: manualProduct ? 0 : rate.apr }];
   return {
     id,
     accountId: catalog.accountId,
@@ -623,8 +645,8 @@ function productTemplateFromRate(rate: LiveRate, id: string, identityKey: string
     region: catalog.region,
     asset: catalog.asset,
     name: rate.name ?? "API 产品",
-    productDataMode: "api",
-    apiAccess: catalog.apiAccess,
+    productDataMode: manualProduct ? "manual" : "api",
+    ...(!manualProduct ? { apiAccess: catalog.apiAccess } : {}),
     holdingDataMode: catalog.holdingDataMode,
     productType: rate.productType ?? "flexible",
     termDays: rate.termDays,
@@ -635,15 +657,18 @@ function productTemplateFromRate(rate: LiveRate, id: string, identityKey: string
     eligibilityRequired: rate.eligibilityRequired,
     eligibilityLabel: rate.eligibilityLabel,
     eligibilityStatus: rate.eligibilityStatus,
+    manualFields: rate.manualFields,
     tiers,
-    source: { kind: "live", label: rate.sourceLabel, fetchedAt: rate.fetchedAt },
+    source: manualProduct
+      ? { kind: "manual", label: rate.sourceLabel }
+      : { kind: "live", label: rate.sourceLabel, fetchedAt: rate.fetchedAt },
     rateCoverage: rate.rateCoverage ?? (rate.tiers ? "complete" : "base_only"),
     capacitySource: rate.capacitySource ?? (rate.tiers?.some((tier) => tier.max !== null) ? "live" : undefined),
     capacityFetchedAt: rate.capacityFetchedAt,
     externalProductId: rate.externalProductId,
     identityKey,
     identityFingerprint: rate.identityFingerprint,
-  };
+  } as Product;
 }
 
 function parseProduct(payload: string) {
