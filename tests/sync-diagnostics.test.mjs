@@ -25,6 +25,53 @@ test("one-off capability checks capture adapter diagnostics without writing them
   assert.deepEqual(f.logs, []);
 });
 
+test("capability probe caps outbound requests and limits concurrency", async () => {
+  let active = 0;
+  let peakActive = 0;
+  let requests = 0;
+  const load = moduleLoader({}, {
+    fetch: async () => {
+      requests += 1;
+      active += 1;
+      peakActive = Math.max(peakActive, active);
+      await Promise.resolve();
+      active -= 1;
+      return Response.json({});
+    },
+  });
+  const { exchangeFetch, withCapabilityProbeRequestGuard } = load("@/lib/exchange-fetch");
+  const guarded = await withCapabilityProbeRequestGuard(() => Promise.allSettled(
+    Array.from({ length: 50 }, (_, index) => exchangeFetch(`https://api.bitget.com/test/${index}`)),
+  ));
+
+  assert.equal(requests, 40);
+  assert.equal(guarded.requestsStarted, 40);
+  assert.equal(guarded.requestLimit, 40);
+  assert.equal(peakActive <= guarded.concurrencyLimit, true);
+  assert.equal(peakActive, 3);
+  assert.equal(guarded.stopReason, "request_limit");
+  assert.equal(guarded.result.filter((result) => result.status === "rejected").length, 10);
+});
+
+test("a capability-probe 429 stops queued requests without retrying", async () => {
+  let requests = 0;
+  const load = moduleLoader({}, {
+    fetch: async () => {
+      requests += 1;
+      return new Response("{}", { status: 429, headers: { "Retry-After": "1" } });
+    },
+  });
+  const { exchangeFetch, withCapabilityProbeRequestGuard } = load("@/lib/exchange-fetch");
+  const guarded = await withCapabilityProbeRequestGuard(() => Promise.allSettled(
+    Array.from({ length: 10 }, () => exchangeFetch("https://api.bitget.com/test")),
+  ));
+
+  assert.equal(requests, 3);
+  assert.equal(guarded.requestsStarted, 3);
+  assert.equal(guarded.stopReason, "rate_limited");
+  assert.equal(guarded.result.filter((result) => result.status === "rejected").length, 7);
+});
+
 test("routine sync logs omit private position amounts, identities, and result counts", async () => {
   const f = fixture(async () => Response.json({}));
   await f.withSyncDiagnostics("user", { trigger: "scheduled", attempt: 1 }, async () => {

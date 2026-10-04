@@ -138,6 +138,7 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   assert.equal(result.checkedScopeCount, 56);
   assert.equal(result.checkedItemCount, 112);
   assert.equal(result.checks.length, 112);
+  assert.deepEqual(result.requestSafety, { requestsStarted: 0, requestLimit: 40, concurrencyLimit: 3, stopReason: null });
   assert.equal(result.checks.every((entry) => entry.platform && entry.region && entry.asset && entry.productType && entry.item && entry.apiSupport && entry.result && entry.api), true);
   assert.equal(json.includes("secret-key"), false);
   assert.equal(json.includes("secret-value"), false);

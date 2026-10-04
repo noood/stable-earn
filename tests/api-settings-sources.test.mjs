@@ -43,3 +43,20 @@ test("API check total failure does not expose a success state or a JSON download
   const failed = transitionApiCheckUiState(loading, { type: "failed", error: "报告生成失败" });
   assert.deepEqual(failed, { phase: "error", downloadable: false, error: "报告生成失败" });
 });
+
+test("partial API reports do not present success or expose a JSON download", () => {
+  const load = moduleLoader();
+  const { initialApiCheckUiState, transitionApiCheckUiState } = load("@/lib/api-check-ui-state");
+  const loading = transitionApiCheckUiState(initialApiCheckUiState, { type: "start" });
+  const limited = transitionApiCheckUiState(loading, { type: "partial_report" });
+
+  assert.deepEqual(limited, { phase: "idle", downloadable: false, error: null });
+});
+
+test("API retry-after accepts seconds and uses a safe fallback when absent or invalid", () => {
+  const load = moduleLoader();
+  const { parseRetryAfterSeconds } = load("@/lib/api-check-ui-state");
+  assert.equal(parseRetryAfterSeconds("292"), 292);
+  assert.equal(parseRetryAfterSeconds(null), 60);
+  assert.equal(parseRetryAfterSeconds("not a retry date"), 60);
+});

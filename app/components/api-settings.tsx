@@ -5,7 +5,7 @@ import { AccountBadge, ActionButton, ModalFrame, SectionIntro } from "@/app/comp
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
 import type { Account } from "@/lib/domain";
 import { accounts } from "@/lib/seed-data";
-import { apiCheckSuccessFeedbackMs, initialApiCheckUiState, transitionApiCheckUiState } from "@/lib/api-check-ui-state";
+import { apiCheckSuccessFeedbackMs, formatRetryWait, initialApiCheckUiState, parseRetryAfterSeconds, transitionApiCheckUiState } from "@/lib/api-check-ui-state";
 
 type ApiCredentialSource = {
   id: string;
@@ -23,10 +23,32 @@ type ManualDataSource = {
 type ApiConfigResult = { sources: ApiCredentialSource[]; manualSources: ManualDataSource[] };
 type ManualRefreshCooldownMinutes = 0 | 30;
 type PreferencesResult = { manualRefreshCooldownMinutes: ManualRefreshCooldownMinutes };
-type CapabilityReport = { generatedAt: string; dataChangesCommitted: false; includesHoldingAmounts: false; checkedScopeCount: number; checkedItemCount: number; checks: unknown[]; additionalProbes?: unknown[]; [key: string]: unknown };
+type CapabilityReport = {
+  generatedAt: string;
+  dataChangesCommitted: false;
+  includesHoldingAmounts: false;
+  checkedScopeCount: number;
+  checkedItemCount: number;
+  checks: unknown[];
+  additionalProbes?: unknown[];
+  requestSafety?: {
+    requestsStarted: number;
+    requestLimit: number;
+    concurrencyLimit: number;
+    stopReason: "request_limit" | "rate_limited" | null;
+    retryAfterSeconds?: number;
+  };
+  [key: string]: unknown;
+};
 
 let apiConfigSessionCache: ApiConfigResult | null = null;
 let cooldownSessionCache: ManualRefreshCooldownMinutes | null = null;
+
+function isLocalRateLimitDemoUrl() {
+  if (process.env.NODE_ENV === "production" || typeof window === "undefined") return false;
+  const localHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  return localHost && new URLSearchParams(window.location.search).get("apiCheckScenario") === "rate-limited";
+}
 
 function rememberApiConfig(result: ApiConfigResult) {
   apiConfigSessionCache = result;
@@ -50,6 +72,9 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
   const [savingCooldown, setSavingCooldown] = useState(false);
   const [apiCheckState, setApiCheckState] = useState(initialApiCheckUiState);
   const [capabilityReport, setCapabilityReport] = useState<CapabilityReport | null>(null);
+  const [rateLimitDetected, setRateLimitDetected] = useState(false);
+  const [retryWaitSeconds, setRetryWaitSeconds] = useState(0);
+  const [localRateLimitDemoEnabled, setLocalRateLimitDemoEnabled] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [statusError, setStatusError] = useState(false);
   const capabilityCompletionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -83,9 +108,19 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
       .catch(() => setCooldownMinutes(cooldownSessionCache ?? 30));
   }, []);
 
+  useEffect(() => {
+    setLocalRateLimitDemoEnabled(isLocalRateLimitDemoUrl());
+  }, []);
+
   useEffect(() => () => {
     if (capabilityCompletionTimer.current) clearTimeout(capabilityCompletionTimer.current);
   }, []);
+
+  useEffect(() => {
+    if (retryWaitSeconds <= 0) return;
+    const timer = setTimeout(() => setRetryWaitSeconds((remaining) => Math.max(0, remaining - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [retryWaitSeconds]);
 
   useEffect(() => {
     if (open) return;
@@ -167,32 +202,70 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
   }
 
   async function probeCapabilities() {
+    if (retryWaitSeconds > 0) return;
     if (capabilityCompletionTimer.current) clearTimeout(capabilityCompletionTimer.current);
     capabilityCompletionTimer.current = null;
+    let rateLimited = false;
     setApiCheckState((current) => transitionApiCheckUiState(current, { type: "start" }));
     setCapabilityReport(null);
+    setRateLimitDetected(false);
+    setRetryWaitSeconds(0);
     try {
-      const response = await fetch("/private/api/diagnostics/platform-capabilities", {
-        method: "POST",
-        cache: "no-store",
-      });
-      const result = await response.json() as CapabilityReport & { error?: string };
-      if (!response.ok) throw new Error(result.error || "检查失败，请稍后重试。");
+      let result: CapabilityReport;
+      if (localRateLimitDemoEnabled) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        result = {
+          generatedAt: new Date().toISOString(),
+          dataChangesCommitted: false,
+          includesHoldingAmounts: false,
+          checkedScopeCount: 56,
+          checkedItemCount: 112,
+          checks: [],
+          requestSafety: { requestsStarted: 8, requestLimit: 40, concurrencyLimit: 3, stopReason: "rate_limited", retryAfterSeconds: 292 },
+        };
+      } else {
+        const response = await fetch("/private/api/diagnostics/platform-capabilities", {
+          method: "POST",
+          cache: "no-store",
+        });
+        const responseBody = await response.json() as CapabilityReport & { error?: string };
+        if (response.status === 429) {
+          rateLimited = true;
+          setRateLimitDetected(true);
+          setRetryWaitSeconds(parseRetryAfterSeconds(response.headers.get("Retry-After")));
+          throw new Error("平台暂时限制了检查请求。");
+        }
+        if (!response.ok) throw new Error(responseBody.error || "检查失败，请稍后重试。");
+        result = responseBody;
+      }
       setCapabilityReport(result);
-      setApiCheckState((current) => transitionApiCheckUiState(current, { type: "report_generated" }));
-      capabilityCompletionTimer.current = setTimeout(() => {
-        setApiCheckState((current) => transitionApiCheckUiState(current, { type: "feedback_elapsed" }));
-        capabilityCompletionTimer.current = null;
-      }, apiCheckSuccessFeedbackMs);
+      if (result.requestSafety?.stopReason === "rate_limited") {
+        setRateLimitDetected(true);
+        setRetryWaitSeconds(Math.max(0, result.requestSafety.retryAfterSeconds ?? 60));
+      }
+      const partialReport = result.requestSafety?.stopReason != null;
+      setApiCheckState((current) => transitionApiCheckUiState(current, { type: partialReport ? "partial_report" : "report_generated" }));
+      if (!partialReport) {
+        capabilityCompletionTimer.current = setTimeout(() => {
+          setApiCheckState((current) => transitionApiCheckUiState(current, { type: "feedback_elapsed" }));
+          capabilityCompletionTimer.current = null;
+        }, apiCheckSuccessFeedbackMs);
+      }
     } catch (error) {
       setCapabilityReport(null);
-      setApiCheckState((current) => transitionApiCheckUiState(current, {
-        type: "failed",
-        error: error instanceof Error ? error.message : "检查失败，请稍后重试。",
-      }));
+      if (rateLimited) {
+        setApiCheckState((current) => transitionApiCheckUiState(current, { type: "rate_limited" }));
+      } else {
+        setApiCheckState((current) => transitionApiCheckUiState(current, {
+          type: "failed",
+          error: error instanceof Error ? error.message : "检查失败，请稍后重试。",
+        }));
+      }
     } finally {
       setApiCheckState((current) => current.phase === "checking"
-        ? transitionApiCheckUiState(current, { type: "failed", error: "检查流程未能生成报告。" })
+        ? transitionApiCheckUiState(current, rateLimited
+          ? { type: "rate_limited" }
+          : { type: "failed", error: "检查流程未能生成报告。" })
         : current);
     }
   }
@@ -210,6 +283,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
 
   const probingCapabilities = apiCheckState.phase === "checking";
   const modalBusy = busy || savingCooldown || probingCapabilities;
+  const retryWaitLabel = formatRetryWait(retryWaitSeconds);
 
   if (!open) return null;
 
@@ -225,7 +299,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
   );
 
   return (
-    <ModalFrame ariaLabel="API 设置" title="API 设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-6">
+    <ModalFrame ariaLabel="API 设置" title="API 设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-8">
       <section>
         <div className="api-settings-split-row">
           <SectionIntro title="手动刷新频率" description="仅限制手动刷新；不影响每日 07:00 更新和当天首次打开时的刷新。设置同步至此邮箱所有设备。" />
@@ -256,7 +330,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
 
             return (
               <div key={source.id} className={`api-connection-row ${index ? "api-connection-row-divided" : ""}`}>
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center justify-between gap-6">
                   <SourceSummary account={account} label={source.label} statusLabel={statusLabel} statusClass={statusClass} description={source.syncDescription} />
                   <div className="flex shrink-0 items-center gap-1.5">
                     {!source.configured && <ActionButton variant="secondary" disabled={modalBusy} onClick={openEditor}>添加</ActionButton>}
@@ -281,21 +355,36 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
             <ActionButton
               variant="secondary"
               className="api-check-button"
-              aria-label={probingCapabilities ? "正在检测 API" : apiCheckState.phase === "complete" ? "检测完成" : "检测 API"}
-              disabled={modalBusy}
+              aria-label={probingCapabilities ? "正在检测 API" : retryWaitSeconds > 0 ? `等待 ${retryWaitLabel} 后可检测` : apiCheckState.phase === "complete" ? "检测完成" : "检测 API"}
+              disabled={modalBusy || retryWaitSeconds > 0}
               onClick={() => void probeCapabilities()}
             >
               {probingCapabilities
                 ? <span className="api-check-spinner" aria-hidden="true" />
+                : retryWaitSeconds > 0
+                  ? retryWaitLabel
                 : apiCheckState.phase === "complete"
                   ? <svg className="api-check-success-icon" viewBox="0 0 14 14" aria-hidden="true"><path d="m2.5 7.25 2.8 2.8 6.2-6.1" /></svg>
                   : "检测 API"}
             </ActionButton>
-            {capabilityReport && apiCheckState.downloadable && <>
+            {capabilityReport
+              && apiCheckState.downloadable
+              && !rateLimitDetected
+              && capabilityReport.requestSafety?.stopReason == null && <>
               <ActionButton variant="text" size="small" onClick={downloadCapabilityReport}>下载 JSON（{new Date(capabilityReport.generatedAt).toLocaleDateString("zh-CN")}）</ActionButton>
             </>}
           </div>
         </div>
+        {rateLimitDetected && <p className="error-panel type-caption mt-3 px-3 py-2.5" role="status">
+          {capabilityReport?.requestSafety
+            ? `已发出 ${capabilityReport.requestSafety.requestsStarted} 次请求，平台限制了检查请求，已停止后续探测，本报告没有完整生成。`
+            : "平台限制了检查请求，已停止后续探测，本次检查没有完整生成。"}{retryWaitSeconds > 0 ? "请等冷却时间结束后再次检测。" : "冷却时间已结束，可以重新检测。"}
+        </p>}
+        {!rateLimitDetected && capabilityReport?.requestSafety && <p className="type-caption text-muted mt-3" role="status">
+          {capabilityReport.requestSafety.stopReason === "request_limit"
+            ? `已达到单次 ${capabilityReport.requestSafety.requestLimit} 次请求的保护上限，后续探测已停止；本报告可能不完整。`
+            : `本次最多同时发出 ${capabilityReport.requestSafety.concurrencyLimit} 次只读请求，共发出 ${capabilityReport.requestSafety.requestsStarted} 次。`}
+        </p>}
         {apiCheckState.error && <p className="error-panel type-caption mt-3 px-3 py-2" role="alert">{apiCheckState.error}</p>}
       </section>
     </ModalFrame>

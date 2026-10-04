@@ -87,7 +87,14 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ generatedAt: "2026-10-04T00:00:00.000Z", dataChangesCommitted: false, includesHoldingAmounts: false, checkedItemCount: 112, checks: [] }),
+      body: JSON.stringify({
+        generatedAt: "2026-10-04T00:00:00.000Z",
+        dataChangesCommitted: false,
+        includesHoldingAmounts: false,
+        checkedItemCount: 112,
+        requestSafety: { requestsStarted: 38, requestLimit: 40, concurrencyLimit: 3, stopReason: null },
+        checks: [],
+      }),
     });
   });
 
@@ -95,6 +102,11 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await page.goto("/private?settings=api");
     const dialog = page.getByRole("dialog", { name: "API 设置" });
     await expect(dialog).toBeVisible();
+    const closeButton = dialog.getByRole("button", { name: "关闭" });
+    await expect(closeButton).toHaveCSS("width", "32px");
+    await expect(closeButton).toHaveCSS("height", "32px");
+    await expect(closeButton.locator("svg")).toHaveCSS("width", "20px");
+    await expect.poll(() => closeButton.locator("svg path").evaluate((path) => path.getBBox().width)).toBe(12);
     await expect(dialog.getByRole("heading", { name: "手动刷新频率" })).toBeVisible();
     const cooldownOptions = dialog.getByRole("radiogroup", { name: "手动刷新冷却时间" });
     await expect(cooldownOptions).toHaveCSS("width", "160px");
@@ -103,10 +115,12 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(dialog.getByText("仅限制手动刷新；不影响每日 07:00 更新和当天首次打开时的刷新。设置同步至此邮箱所有设备。")).toBeVisible();
 
     await expect(dialog.getByRole("heading", { name: "配置 API" })).toBeVisible();
+    await expect(dialog.locator(".api-settings-body > section").first()).toHaveCSS("margin-block-end", "32px");
     await expect(dialog.getByText("Key 和 Secret 由服务器加密保存；完整密钥不会返回浏览器。")).toBeVisible();
     const connectionList = dialog.locator(".api-connection-list");
     await expect(connectionList).toBeVisible();
     await expect(connectionList.locator(":scope > .api-connection-row")).toHaveCount(8);
+    await expect(connectionList.locator(".api-connection-row").first().locator(":scope > div")).toHaveCSS("column-gap", "24px");
     const euRow = connectionList.locator(".api-connection-row").filter({ hasText: "Bybit EU" });
     await expect(euRow).toContainText("手动维护");
     await expect(euRow).toContainText("产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）");
@@ -133,22 +147,18 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(loadingButton).toHaveCSS("height", checkButtonHeight);
     const spinner = dialog.locator(".api-check-spinner");
     await expect(spinner).toBeVisible();
-    const spinnerWidth = await spinner.evaluate((icon) => getComputedStyle(icon).width);
 
     releaseReport();
-    const completeButton = dialog.getByRole("button", { name: "检测完成" });
-    await expect(completeButton).toBeVisible();
-    await expect(completeButton).toHaveText("");
-    await expect(completeButton).toHaveCSS("width", checkButtonWidth);
-    await expect(completeButton).toHaveCSS("height", checkButtonHeight);
+    const completeCheckButton = dialog.getByRole("button", { name: "检测完成" });
+    await expect(completeCheckButton).toBeVisible();
+    await expect(completeCheckButton).toHaveCSS("width", checkButtonWidth);
+    await expect(completeCheckButton).toHaveCSS("height", checkButtonHeight);
     const downloadButton = dialog.getByRole("button", { name: /下载 JSON（\d{4}\/\d{1,2}\/\d{1,2}）/ });
     await expect(downloadButton).toBeVisible();
+    await expect(dialog.getByRole("status")).toContainText("共发出 38 次");
     await downloadButton.hover();
     await expect(downloadButton).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    const successIcon = completeButton.locator(".api-check-success-icon");
-    await expect(successIcon).toBeVisible();
-    await expect(successIcon).toHaveAttribute("viewBox", "0 0 14 14");
-    await expect(successIcon).toHaveCSS("width", spinnerWidth);
+    await expect(completeCheckButton.locator(".api-check-success-icon")).toBeVisible();
     await expect(dialog.getByText(/最近检查 · .* · 112 项/)).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: "检测 API" })).toBeVisible({ timeout: 5_000 });
     await expect(downloadButton).toBeVisible();
@@ -157,6 +167,7 @@ test("API settings modal keeps its three sections, truthful account copy, and re
       await page.setViewportSize({ width, height: 832 });
       for (const rowIndex of [0, 1]) {
         const row = dialog.locator(".api-settings-split-row").nth(rowIndex);
+        await expect(row).toHaveCSS("column-gap", width <= 639 ? "16px" : "32px");
         await row.scrollIntoViewIfNeeded();
         const left = await row.locator(":scope > :first-child").boundingBox();
         const right = await row.locator(":scope > :last-child").boundingBox();
@@ -181,6 +192,108 @@ test("API settings modal keeps its three sections, truthful account copy, and re
   } finally {
     releaseReport();
   }
+});
+
+test("rate-limited API report explains partial results and shows a retry countdown", async ({ page }) => {
+  await page.route("**/private/api/credentials", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ sources: [], manualSources: [] }) });
+  });
+  await page.route("**/private/api/preferences", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ manualRefreshCooldownMinutes: 30 }) });
+  });
+  await page.route("**/private/api/diagnostics/platform-capabilities", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        generatedAt: "2026-10-04T00:00:00.000Z",
+        dataChangesCommitted: false,
+        includesHoldingAmounts: false,
+        checkedScopeCount: 56,
+        checkedItemCount: 112,
+        requestSafety: { requestsStarted: 8, requestLimit: 40, concurrencyLimit: 3, stopReason: "rate_limited", retryAfterSeconds: 292 },
+        checks: [],
+      }),
+    });
+  });
+
+  await page.goto("/private?settings=api");
+  const dialog = page.getByRole("dialog", { name: "API 设置" });
+  const checkButton = dialog.getByRole("button", { name: "检测 API" });
+  await checkButton.click();
+
+  const status = dialog.getByRole("status");
+  await expect(status).toHaveText("已发出 8 次请求，平台限制了检查请求，已停止后续探测，本报告没有完整生成。请等冷却时间结束后再次检测。");
+  await expect(status).toHaveClass(/error-panel/);
+  await expect(dialog.getByRole("button", { name: /下载 JSON/ })).toHaveCount(0);
+  const waitingButton = dialog.getByRole("button", { name: "等待 04:52 后可检测" });
+  await expect(waitingButton).toBeDisabled();
+  await expect(waitingButton).toHaveText("04:52");
+
+  if (process.env.API_RATE_LIMIT_PREVIEW_PATH) {
+    await dialog.locator(".api-settings-body > section").last().screenshot({ path: process.env.API_RATE_LIMIT_PREVIEW_PATH });
+  }
+});
+
+test("a rate-limited check removes a JSON download from the previous complete report", async ({ page }) => {
+  await page.route("**/private/api/credentials", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ sources: [], manualSources: [] }) });
+  });
+  await page.route("**/private/api/preferences", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ manualRefreshCooldownMinutes: 30 }) });
+  });
+
+  let probeCount = 0;
+  await page.route("**/private/api/diagnostics/platform-capabilities", async (route) => {
+    probeCount += 1;
+    const limited = probeCount === 2;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        generatedAt: "2026-10-04T00:00:00.000Z",
+        dataChangesCommitted: false,
+        includesHoldingAmounts: false,
+        checkedScopeCount: 56,
+        checkedItemCount: limited ? 56 : 112,
+        requestSafety: {
+          requestsStarted: limited ? 8 : 38,
+          requestLimit: 40,
+          concurrencyLimit: 3,
+          stopReason: limited ? "rate_limited" : null,
+          ...(limited ? { retryAfterSeconds: 292 } : {}),
+        },
+        checks: [],
+      }),
+    });
+  });
+
+  await page.goto("/private?settings=api");
+  const dialog = page.getByRole("dialog", { name: "API 设置" });
+  await dialog.getByRole("button", { name: "检测 API" }).click();
+  const downloadButton = dialog.getByRole("button", { name: /下载 JSON/ });
+  await expect(downloadButton).toBeVisible();
+
+  await expect(dialog.getByRole("button", { name: "检测 API" })).toBeVisible({ timeout: 5_000 });
+  await dialog.getByRole("button", { name: "检测 API" }).click();
+  await expect(dialog.getByRole("status")).toContainText("本报告没有完整生成");
+  await expect(dialog.getByRole("button", { name: /下载 JSON/ })).toHaveCount(0);
+});
+
+test("localhost rate-limit demo uses mock data without calling the diagnostics API", async ({ page }) => {
+  let diagnosticsRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/private/api/diagnostics/platform-capabilities")) diagnosticsRequests += 1;
+  });
+
+  await page.goto("/private?settings=api&apiCheckScenario=rate-limited");
+  const dialog = page.getByRole("dialog", { name: "API 设置" });
+  await expect(dialog.getByText("本地演示模式：点击后显示模拟限流结果，不会连接交易所或修改数据。")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "检测 API" }).click();
+  await expect(dialog.getByRole("status")).toContainText("请等冷却时间结束后再次检测");
+  await expect(dialog.getByRole("button", { name: "等待 04:52 后可检测" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: /下载 JSON/ })).toHaveCount(0);
+  expect(diagnosticsRequests).toBe(0);
 });
 
 test("table skeleton stays visible while the initial holdings read is pending", async ({ page }) => {

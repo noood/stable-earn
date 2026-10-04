@@ -2,6 +2,7 @@ import { fetchBinanceFlexibleSnapshot, fetchBinanceLockedSnapshot } from "@/lib/
 import { probeBitgetAssets } from "@/lib/integrations/bitget";
 import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, scanBybitFixedHoldings, scanBybitFixedProducts, scanBybitFlexibleProducts } from "@/lib/integrations/bybit";
 import { fetchOkxOnchainOffers, fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
+import { withCapabilityProbeRequestGuard } from "@/lib/exchange-fetch";
 import type { LiveRate } from "@/lib/live-rates";
 import { apiAssetsFor, availableApiAssetsFor, capabilityApiReference, monitoredAssets, platformCapabilities, type CapabilityProductType, type PlatformApiMode } from "@/lib/platform-capabilities";
 import { collectSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
@@ -137,7 +138,7 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
     for (const field of fields) setResult(accountId, asset, productType, field, { status: "error", complete: false });
   };
 
-  const { captured } = await collectSyncDiagnostics(async () => {
+  const guardedProbe = await withCapabilityProbeRequestGuard(() => collectSyncDiagnostics(async () => {
     const jobs: Promise<void>[] = [];
 
     // Probe every monitored coin through the public Bybit endpoint without
@@ -427,7 +428,8 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
     }
 
     await Promise.all(jobs);
-  });
+  }));
+  const { captured } = guardedProbe.result;
 
   for (const record of captured) applyCapturedRecord(record, setResult);
   const checks = buildCapabilityChecks(scopes);
@@ -437,6 +439,12 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
     includesHoldingAmounts: false,
     checkedScopeCount: checks.length / 2,
     checkedItemCount: checks.length,
+    requestSafety: {
+      requestsStarted: guardedProbe.requestsStarted,
+      requestLimit: guardedProbe.requestLimit,
+      concurrencyLimit: guardedProbe.concurrencyLimit,
+      stopReason: guardedProbe.stopReason,
+    },
     checks,
     additionalProbes: supplementalProbes,
     apiFailureSummary: summarizePlatformApiFailures(captured),

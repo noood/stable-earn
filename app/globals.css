@@ -690,21 +690,21 @@ input:focus-visible,
 }
 .modal-header { display: flex; align-items: center; justify-content: space-between; border-bottom: var(--hairline) solid var(--border); padding: var(--space-4) var(--space-5); background: var(--surface); }
 .modal-close {
-  width: 1.75rem;
-  height: 1.75rem;
-  padding: .3rem;
+  width: 2rem;
+  height: 2rem;
+  padding: .25rem;
   color: var(--text-muted);
 }
 .modal-close:hover:not(:disabled) { color: var(--text-primary); }
 .modal-close:disabled { cursor: not-allowed; opacity: .5; }
-.modal-close svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.7; }
+.modal-close svg { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.7; }
 .modal-body { max-height: calc(90vh - 5rem); overflow-y: auto; padding: var(--space-5); }
 .api-settings-body { height: min(40rem, calc(90vh - 5rem)); }
 .api-settings-split-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
-  gap: 1.5rem;
+  gap: var(--space-8);
 }
 .api-settings-split-row > :first-child { margin-bottom: 0; }
 .api-connection-list {
@@ -805,7 +805,7 @@ input:focus-visible,
 
 @media (max-width: 639px) {
   .metrics-panel .metric-item:nth-child(n + 2)::after { content: ""; }
-  .api-settings-split-row { gap: .75rem; }
+  .api-settings-split-row { gap: var(--space-4); }
 }
 
 @media (max-width: 359px) {

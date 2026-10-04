@@ -1,18 +1,86 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { accessFailureReason, diagnosticErrorKind, syncDiagnostic } from "./sync-diagnostics";
 
 const DEFAULT_RETRY_DELAY_MS = 800;
 const responses = new WeakMap<Response, { requestId: string; startedAt: number }>();
+const capabilityProbeRequestLimit = 40;
+const capabilityProbeConcurrencyLimit = 3;
+
+type ProbeRequestStopReason = "request_limit" | "rate_limited";
+type ProbeRequestGuard = {
+  requestsStarted: number;
+  activeRequests: number;
+  waiters: Array<() => void>;
+  stopReason: ProbeRequestStopReason | null;
+};
+const probeRequestContext = new AsyncLocalStorage<ProbeRequestGuard>();
+
+/** Run one capability scan with bounded outbound requests and no automatic retries. */
+export async function withCapabilityProbeRequestGuard<T>(task: () => Promise<T>) {
+  const guard: ProbeRequestGuard = {
+    requestsStarted: 0,
+    activeRequests: 0,
+    waiters: [],
+    stopReason: null,
+  };
+  const result = await probeRequestContext.run(guard, task);
+  return {
+    result,
+    requestsStarted: guard.requestsStarted,
+    requestLimit: capabilityProbeRequestLimit,
+    concurrencyLimit: capabilityProbeConcurrencyLimit,
+    stopReason: guard.stopReason,
+  };
+}
 
 export async function exchangeFetch(input: string, init?: RequestInit, options: { retry?: boolean } = {}) {
-  let response = await fetchWithDiagnostics(input, init, 1);
+  const probeGuard = probeRequestContext.getStore();
+  let response = await guardedFetch(input, init, 1, probeGuard);
+  // Capability reports are best-effort diagnostics: do not amplify rate limits
+  // or server errors with automatic retries.
+  if (probeGuard) return response;
   if (options.retry === false) return response;
   if (!isRetryableStatus(response.status)) return response;
 
   const delayMs = retryDelay(response.headers.get("Retry-After"));
   await response.body?.cancel().catch(() => undefined);
   await delay(delayMs);
-  response = await fetchWithDiagnostics(input, init, 2);
+  response = await guardedFetch(input, init, 2, probeGuard);
   return response;
+}
+
+async function guardedFetch(input: string, init: RequestInit | undefined, requestAttempt: number, guard?: ProbeRequestGuard) {
+  if (!guard) return fetchWithDiagnostics(input, init, requestAttempt);
+  await acquireProbeRequestSlot(guard);
+  try {
+    const response = await fetchWithDiagnostics(input, init, requestAttempt);
+    if (response.status === 429) stopProbeRequests(guard, "rate_limited");
+    return response;
+  } finally {
+    guard.activeRequests -= 1;
+    guard.waiters.shift()?.();
+  }
+}
+
+async function acquireProbeRequestSlot(guard: ProbeRequestGuard) {
+  while (true) {
+    if (guard.stopReason) throw new Error(`capability_probe_stopped:${guard.stopReason}`);
+    if (guard.requestsStarted >= capabilityProbeRequestLimit) {
+      stopProbeRequests(guard, "request_limit");
+      throw new Error("capability_probe_stopped:request_limit");
+    }
+    if (guard.activeRequests < capabilityProbeConcurrencyLimit) {
+      guard.activeRequests += 1;
+      guard.requestsStarted += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => guard.waiters.push(resolve));
+  }
+}
+
+function stopProbeRequests(guard: ProbeRequestGuard, reason: ProbeRequestStopReason) {
+  guard.stopReason ??= reason;
+  for (const wake of guard.waiters.splice(0)) wake();
 }
 
 const knownHosts = new Set(["api-gcp.binance.com", "api.binance.com", "api.bybit.com", "api.bytick.com", "api.bybit.eu", "api.bitget.com", "openapi.okx.com", "www.okx.com"]);
