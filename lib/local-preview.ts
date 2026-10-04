@@ -444,7 +444,7 @@ function previewRate(
   return {
     productId,
     apr: tiers[0]?.[2] ?? 0,
-    tiers: tiers.map(([min, max, apr]) => ({ min, max, apr })),
+    tiers: tiers.map(([min, max, apr]) => ({ min, max, apr, ...(max === null ? { maxStatus: "unlimited" as const } : {}) })),
     fetchedAt,
     sourceLabel,
     ...facts,

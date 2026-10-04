@@ -15,7 +15,7 @@ export type LiveRate = {
   /** Shape of the rate data returned by the product API, for diagnostics. */
   rateShape?: "single_rate" | "tiered_rate" | "no_rate";
   tierAprs?: number[];
-  tiers?: Array<{ min: number; max: number | null; apr: number }>;
+  tiers?: Array<{ min: number; max: number | null; apr: number; maxStatus?: "unlimited" }>;
   fetchedAt: string;
   sourceLabel: string;
   productType?: "flexible" | "fixed";
@@ -114,7 +114,7 @@ async function fetchBybitEuFixedRates(): Promise<{ rates: LiveRate[]; partial: b
       productType: "fixed",
       externalProductId: row.externalProductId,
     });
-    const tiers = (row.tiers ?? []).map((tier) => ({ min: tier.min, max: tier.max, apr: tier.apy }));
+    const tiers = (row.tiers ?? []).map((tier) => ({ min: tier.min, max: tier.max, apr: tier.apy, ...(tier.maxStatus ? { maxStatus: tier.maxStatus } : {}) }));
     const termDays = bybitDurationDays(row.duration);
     const eligibilityRequired = Boolean(row.isVip || row.specialUserGroupRequired);
     return {
@@ -284,7 +284,8 @@ function parseBybitTiers(details: BybitFlexibleRow["tierAprDetails"]) {
     const max = rawMax === -1 ? null : rawMax;
     const apr = parsePercentValue(detail.estimateApr ?? detail.apr);
     if (!Number.isFinite(min) || !Number.isFinite(apr)) return [];
-    return [{ min, max: max !== null && Number.isFinite(max) && max > min ? max : null, apr }];
+    return [{ min, max: max !== null && Number.isFinite(max) && max > min ? max : null, apr,
+      ...(rawMax === -1 ? { maxStatus: "unlimited" as const } : {}) }];
   }).sort((left, right) => left.min - right.min);
 }
 

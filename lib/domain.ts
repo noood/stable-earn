@@ -17,6 +17,8 @@ type Tier = {
   min: number;
   max: number | null;
   apr: number;
+  /** An API must explicitly report unlimited capacity; null alone is unknown. */
+  maxStatus?: "unlimited";
 };
 
 type RateSource = {
@@ -117,12 +119,19 @@ export function effectiveApr(product: Product, holding: number) {
   return earned / holding;
 }
 
-export function remainingHighYield(product: Product, holding: number) {
-  const firstTier = product.tiers[0];
-  if (product.rateCoverage !== "complete" || !firstTier || firstTier.max === null) return 0;
-  const capacity = Math.max(0, firstTier.max - firstTier.min);
-  const used = Math.max(0, Math.min(capacity, holding - firstTier.min));
-  return Math.max(0, capacity - used);
+export function productHasUnknownTierCapacity(product: Product) {
+  return product.tiers.some((tier) => tier.max == null && tier.maxStatus !== "unlimited");
+}
+
+export function remainingHighYield(product: Product, holding: number, minimumApr = 6) {
+  if (product.rateCoverage !== "complete" || productHasUnknownTierCapacity(product)) return 0;
+  return product.tiers.reduce((sum, tier) => {
+    if (!Number.isFinite(tier.apr) || tier.apr < minimumApr) return sum;
+    if (tier.max === null && tier.maxStatus !== "unlimited") return sum;
+    const capacity = tier.max === null ? Number.POSITIVE_INFINITY : Math.max(0, tier.max - tier.min);
+    const used = Math.max(0, Math.min(capacity, holding - tier.min));
+    return sum + Math.max(0, capacity - used);
+  }, 0);
 }
 
 export function formatAmount(value: number) {

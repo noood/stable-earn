@@ -30,6 +30,11 @@ test("Bybit public flexible APR keeps all product IDs and each complete tier lad
                   { min: "0", max: "200", estimateApr: "5.44%" },
                   { min: "200", max: "-1", estimateApr: "2.44%" },
                 ],
+              }, {
+                productId: "unknown-cap",
+                coin,
+                status: "Available",
+                tierAprDetails: [{ min: "0", estimateApr: "7%" }],
               }]
               : [
                 {
@@ -68,8 +73,10 @@ test("Bybit public flexible APR keeps all product IDs and each complete tier lad
   assert.equal(rate.apr, 5.44);
   assert.deepEqual(rate.tiers, [
     { min: 0, max: 200, apr: 5.44 },
-    { min: 200, max: null, apr: 2.44 },
+    { min: 200, max: null, apr: 2.44, maxStatus: "unlimited" },
   ]);
+  const unknown = result.rates.find((item) => item.externalProductId === "unknown-cap");
+  assert.deepEqual(unknown?.tiers, [{ min: 0, max: null, apr: 7 }]);
   assert.equal(rate.capacitySource, "live");
   assert.ok(rate.capacityFetchedAt);
   assert.ok(result.rates.find((item) => item.identityKey === "bybit-eu:USDT:flexible:eu-usdt"));
@@ -105,6 +112,7 @@ test("Bybit EU fixed product probe checks the public endpoint once and distingui
   assert.equal(rows[0].tierCount, 1);
   assert.equal(rows[0].apy, 7);
   assert.deepEqual(rows[0].tiers, [{ min: 0, max: 100, apy: 7 }]);
+  assert.deepEqual(rows[1].tiers, [{ min: 0, max: null, apy: 4, maxStatus: "unlimited" }]);
   assert.equal(JSON.stringify(rows).includes("7%"), false);
 });
 

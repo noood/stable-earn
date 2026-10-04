@@ -276,7 +276,7 @@ export async function scanBybitFixedProducts(accountId: "bybit-global" | "bybit-
         status: row.status ?? null,
         tierCount: row.tieredApyList?.length ?? 0,
         rateShape: hasTieredRate ? "tiered_rate" as const : tiers.length ? "single_rate" as const : "no_rate" as const,
-        ...(tiers.length ? { apy: tiers[0].apr, tiers: tiers.map((tier) => ({ min: tier.min, max: tier.max, apy: tier.apr })) } : {}),
+        ...(tiers.length ? { apy: tiers[0].apr, tiers: tiers.map((tier) => ({ min: tier.min, max: tier.max, apy: tier.apr, ...(tier.maxStatus ? { maxStatus: tier.maxStatus } : {}) })) } : {}),
         ...(probeNumber(row.minStakeAmount) !== undefined ? { minAmount: probeNumber(row.minStakeAmount) } : {}),
         ...(probeAmountLimit(row.maxStakeAmount) !== undefined ? { maxAmount: probeAmountLimit(row.maxStakeAmount) } : {}),
         isVip: Boolean(row.isVip),
@@ -572,7 +572,7 @@ function fixedProductTiers(row: BybitFixedProductRow) {
     const rawMax = finiteNumber(tier.max);
     const apr = parsePercent(tier.apy);
     const max = tier.max === "-1" ? null : rawMax > min ? rawMax : null;
-    return Number.isFinite(apr) ? [{ min, max, apr }] : [];
+    return Number.isFinite(apr) ? [{ min, max, apr, ...(tier.max === "-1" ? { maxStatus: "unlimited" as const } : {}) }] : [];
   }).sort((left, right) => left.min - right.min);
   if (tiered.length > 0) return tiered;
 
@@ -582,7 +582,8 @@ function fixedProductTiers(row: BybitFixedProductRow) {
   }, 0);
   const max = finiteNumber(row.maxStakeAmount);
   if (apr <= 0) return [];
-  return [{ min: 0, max: row.maxStakeAmount === "-1" ? null : max > 0 ? max : null, apr }];
+  return [{ min: 0, max: row.maxStakeAmount === "-1" ? null : max > 0 ? max : null, apr,
+    ...(row.maxStakeAmount === "-1" ? { maxStatus: "unlimited" as const } : {}) }];
 }
 
 function probeNumber(value: string | number | undefined) {

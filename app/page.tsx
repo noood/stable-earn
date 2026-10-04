@@ -9,7 +9,7 @@ import { useDismissibleDetails } from "@/app/components/use-dismissible-details"
 import { useDismissiblePopover } from "@/app/components/use-dismissible-popover";
 import { ProductHistory, type ProductHistoryPage } from "@/app/components/product-history";
 import { AccountBadge, ActionButton, HoldingSummary, Metric, MetricSkeleton, ModalFrame, TableCell } from "@/app/components/ui";
-import { effectiveApr, formatAmount, remainingHighYield, type Account, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent } from "@/lib/domain";
+import { effectiveApr, formatAmount, type Account, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent } from "@/lib/domain";
 import { applyProductOverride, dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { holdingSyncNote, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
 import { apiFieldCapability } from "@/lib/api-capabilities";
@@ -17,7 +17,7 @@ import { freshHoldingIdsForSave } from "@/lib/holding-cache";
 import { dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
 import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
 import { accounts } from "@/lib/seed-data";
-import { highestProductApr, maximumShortTermDays, meetsOpportunityApr, minimumOpportunityApr, productHasComparableApr, productHasKnownCapacity } from "@/lib/opportunity-policy";
+import { bestAvailableFirstTierProduct, maximumShortTermDays, minimumOpportunityApr, productHasKnownCapacity, totalHighYieldRemaining } from "@/lib/opportunity-policy";
 import { buildManualChangeEvents, sameManualProduct } from "@/lib/product-change-events";
 import { userProductInputToProduct } from "@/lib/user-products";
 
@@ -667,15 +667,11 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   ), [holdingPositions]);
   const totalHolding = assetProducts.reduce((sum, product) => holdingIsKnown(product) ? sum + (activeHoldings[product.id] ?? 0) : sum, 0);
   const calculableProducts = assetProducts.filter((product) => holdingIsKnown(product) && productParticipatesInInterest(product, activeHoldings[product.id] ?? 0, activeOverrides[product.id], Boolean(holdingPositionByProduct.get(product.id))));
-  const comparableOpportunityProducts = assetProducts.filter(productHasComparableApr);
-  const highYieldCapacityProducts = assetProducts.filter((product) => holdingIsKnown(product)
-    && productHasKnownCapacity(product)
-    && meetsOpportunityApr(highestProductApr(product)));
   const calculableHolding = calculableProducts.reduce((sum, product) => sum + (activeHoldings[product.id] ?? 0), 0);
   const annualEarn = calculableProducts.reduce((sum, product) => sum + (activeHoldings[product.id] ?? 0) * effectiveApr(product, activeHoldings[product.id] ?? 0) / 100, 0);
   const portfolioApr = calculableHolding ? annualEarn / calculableHolding * 100 : 0;
-  const bestProduct = comparableOpportunityProducts.reduce<Product | null>((best, product) => !best || highestProductApr(product) > highestProductApr(best) ? product : best, null);
-  const highYieldLeft = highYieldCapacityProducts.reduce((sum, product) => sum + remainingHighYield(product, activeHoldings[product.id] ?? 0), 0);
+  const bestProduct = bestAvailableFirstTierProduct(assetProducts, activeHoldings, holdingIsKnown, clock);
+  const highYieldLeft = totalHighYieldRemaining(assetProducts, activeHoldings, holdingIsKnown, clock);
   const tierOneOverflow = assetProducts.reduce((sum, product) => holdingIsKnown(product) && productHasKnownCapacity(product)
     ? sum + overflowFromFirstTier(product, activeHoldings[product.id] ?? 0)
     : sum, 0);
@@ -742,8 +738,8 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             <Metric highlight label={`总持仓 · ${asset}`} value={dataBlocked ? "—" : formatAmount(totalHolding)} note={dataBlocked ? "— 个持仓产品" : `${holdingProductCount} 个持仓产品`} />
             <Metric label="组合有效 APR" value={dataBlocked ? "—" : `${portfolioApr.toFixed(2)}%`} note="按各阶梯实际占用加权" />
             <Metric label={`预计每日收益 · ${asset}`} value={dataBlocked ? "—" : formatAmount(annualEarn / 365)} note="含活期、定期" />
-            <Metric label={!dataBlocked && bestProduct?.rateCoverage === "max_only" ? "最高公开 APR" : "最佳首档 APR"} value={!dataBlocked && bestProduct ? `${highestProductApr(bestProduct).toFixed(2)}%` : "—"} note={dataBlocked ? "—" : bestProduct ? `${accountName(bestProduct.accountId)}${bestProduct.rateCoverage === "max_only" ? " · 阶梯待确认" : ""}` : "暂无产品"} />
-            <Metric label="高息剩余额度" value={dataBlocked ? "—" : formatAmount(highYieldLeft)} note="APR ≥ 6% 的已知额度" />
+            <Metric label="最佳首档 APR" value={!dataBlocked && bestProduct ? `${bestProduct.tiers[0]!.apr.toFixed(2)}%` : "—"} note={dataBlocked ? "—" : bestProduct ? accountName(bestProduct.accountId) : "暂无可确认的首档"} />
+            <Metric label="高息剩余额度" value={dataBlocked ? "—" : highYieldLeft === Number.POSITIVE_INFINITY ? "不限" : formatAmount(highYieldLeft)} note="APR ≥ 6% 各档已知剩余额度" />
             <Metric label="超出首档" value={dataBlocked ? "—" : formatAmount(tierOneOverflow)} valueTone={!dataBlocked && tierOneOverflow > 0 ? "danger" : "default"} note={dataBlocked ? "—" : tierOneOverflow > 0 ? "已进入次档" : "未超出首档"} />
           </>}
         </section>
@@ -955,7 +951,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
     {!editing && manualTerm && <ProductFact label="活动期限" value={durationDays ? formatTerm(durationDays) : "待填写"} />}
     {sourceText && <ProductMeta text={sourceText} danger={Boolean(rateFallbackAt || product.capacitySource === "cache")} />}
-    {incompleteText && <ProductMeta text={incompleteText} danger={holding > 0} />}
+    {incompleteText && <ProductMeta text={incompleteText} danger={holding > 0 || (apiManaged && productInfoIssues.some((issue) => issue === "首档额度待确认" || issue === "阶梯额度待确认"))} />}
     {editing && (manualApr || manualLimit || manualTerm || manualProductTerm || (productNeedsPurchaseDate(product) && Boolean(durationDays))) && <div className="manual-fields">
       {manualLimit && <ManualLimitInput value={manualSettings?.firstTierLimit ?? null} asset={product.asset} disabled={saving} onChange={(firstTierLimitValue) => onOverrideChange({ firstTierLimit: firstTierLimitValue })} />}
       {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
@@ -1004,7 +1000,7 @@ function rateHeadlineFor(product: Product, apiManaged: boolean) {
   if (product.rateCoverage === "max_only") {
     return { label: "官网最高", value: `最高 ${firstTier?.apr.toFixed(2) ?? "0.00"}%` };
   }
-  if (product.rateCoverage === "base_only") {
+  if (product.rateCoverage === "base_only" || (apiManaged && firstTier?.max === null && firstTier.maxStatus !== "unlimited")) {
     return { label: apiManaged ? `${capacityName} · 上限待确认` : `${capacityName}额度待填写`, value: `${firstTier?.apr.toFixed(2) ?? "0.00"}%` };
   }
   return {

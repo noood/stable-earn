@@ -1,4 +1,4 @@
-import type { HoldingSyncState, Product } from "./domain";
+import { productHasUnknownTierCapacity, type HoldingSyncState, type Product } from "./domain";
 import { apiFieldCapability } from "./api-capabilities";
 import {
   productNeedsManualLimit,
@@ -15,6 +15,7 @@ export type ProductInformationIssue =
   | "阶梯结构待确认"
   | "首档额度待填写"
   | "首档额度待确认"
+  | "阶梯额度待确认"
   | "活动期限待填写"
   | "活动期限待获取"
   | "锁定期限待填写"
@@ -38,6 +39,9 @@ export function productInformationIssues(
   if (product.rateCoverage === "unavailable") issues.push("APR 待填写");
   if (product.rateCoverage === "max_only") issues.push("阶梯结构待确认");
   if (apiManaged && product.rateCoverage === "base_only") issues.push("首档额度待确认");
+  if (apiManaged && product.rateCoverage === "complete" && productHasUnknownTierCapacity(product)) {
+    issues.push(product.tiers[0]?.max == null && product.tiers[0].maxStatus !== "unlimited" ? "首档额度待确认" : "阶梯额度待确认");
+  }
   if (productNeedsManualLimit(product) && (override?.firstTierLimit === null || override?.firstTierLimit === undefined)) issues.push("首档额度待填写");
 
   const durationRequired = product.productType === "fixed" || product.manualKind === "limited" || productNeedsManualTerm(product);

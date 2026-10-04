@@ -431,6 +431,7 @@ function preferredCatalogRow(
 function restoreCachedCapacity(base: Product | undefined, candidates: CatalogRow[]) {
   if (!base) return undefined;
   const currentMax = base.tiers[0]?.max;
+  if (base.tiers[0]?.maxStatus === "unlimited") return base;
   if (currentMax !== null && currentMax !== undefined && Number.isFinite(currentMax)) return base;
   const cached = candidates
     .map((row) => parseProduct(row.payload)[0])
@@ -586,6 +587,7 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
       const previous = base.tiers[index];
       const preserveKnownCapacity = rate.capacitySource === "cache"
         && tier.max === null
+        && tier.maxStatus !== "unlimited"
         && previous?.max !== null
         && previous?.max !== undefined;
       return { ...tier, max: preserveKnownCapacity ? previous.max : tier.max, id: `${id}-tier-${index}` };

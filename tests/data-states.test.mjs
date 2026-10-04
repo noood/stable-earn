@@ -4,7 +4,8 @@ import { moduleLoader } from "./helpers/load-ts.mjs";
 
 const load = moduleLoader();
 const { productInformationIssues, productParticipatesInInterest, holdingSyncNote } = load("@/lib/product-status");
-const { productHasComparableApr, productHasKnownCapacity, productShouldBeActive } = load("@/lib/opportunity-policy");
+const { bestAvailableFirstTierProduct, productHasComparableApr, productHasKnownCapacity, productKnownNotSubscribable, productShouldBeActive, totalHighYieldRemaining } = load("@/lib/opportunity-policy");
+const { remainingHighYield } = load("@/lib/domain");
 const { applyProductOverride, productTermStatus } = load("@/lib/product-overrides");
 const { syncFailureSummary, sanitizeSyncFailure, nextScheduledRefreshAt, scheduledRefreshPending } = load("@/lib/sync-notice");
 const { scheduledRefreshMetadata } = load("@/lib/sync-cache");
@@ -21,6 +22,72 @@ test("product completeness and holdings remain independent", () => {
   }
   assert.equal(productParticipatesInInterest(base, 100), true);
   assert.equal(productParticipatesInInterest(base, 0), false);
+});
+
+test("best APR metric compares only first tiers with remaining or unlimited quota", () => {
+  const exhausted = { ...base, id: "exhausted", rateCoverage: "complete", tiers: [{ min: 0, max: 100, apr: 18 }] };
+  const laterTierHigh = { ...base, id: "later-tier-high", rateCoverage: "complete", tiers: [{ min: 0, max: 100, apr: 8 }, { min: 100, max: 500, apr: 25 }] };
+  const firstTierBest = { ...base, id: "first-tier-best", rateCoverage: "complete", tiers: [{ min: 0, max: 200, apr: 10 }, { min: 200, max: 500, apr: 3 }] };
+  const unlimited = { ...base, id: "unlimited", rateCoverage: "complete", tiers: [{ min: 0, max: null, apr: 6, maxStatus: "unlimited" }] };
+  const unknownQuota = { ...base, id: "unknown-quota", rateCoverage: "complete", tiers: [{ min: 0, max: null, apr: 30 }] };
+  const unknownHolding = { ...base, id: "unknown-holding", rateCoverage: "complete", tiers: [{ min: 0, max: 100, apr: 30 }] };
+  const incomplete = { ...base, id: "incomplete", rateCoverage: "base_only", tiers: [{ min: 0, max: 100, apr: 40 }] };
+  const products = [exhausted, laterTierHigh, firstTierBest, unlimited, unknownHolding, unknownQuota, incomplete];
+  const best = bestAvailableFirstTierProduct(
+    products,
+    { exhausted: 100, "later-tier-high": 0, "first-tier-best": 0, "unknown-holding": 0 },
+    (product) => product.id !== "unknown-holding",
+  );
+
+  assert.equal(best, firstTierBest);
+  assert.equal(bestAvailableFirstTierProduct([unlimited], {}, () => false), unlimited);
+  assert.equal(bestAvailableFirstTierProduct([unknownQuota], {}, () => true), null);
+});
+
+test("confirmed unavailable products are excluded but pending eligibility remains comparable", () => {
+  const now = Date.parse("2026-10-04T00:00:00Z");
+  const pending = { ...base, id: "pending", rateCoverage: "complete", eligibilityRequired: true, eligibilityStatus: "unknown", tiers: [{ min: 0, max: 100, apr: 555 }] };
+  const unavailable = { ...pending, id: "unavailable", availability: "unavailable", tiers: [{ min: 0, max: 100, apr: 600 }] };
+  const ineligible = { ...pending, id: "ineligible", eligibilityStatus: "ineligible", tiers: [{ min: 0, max: 100, apr: 700 }] };
+  const expired = { ...pending, id: "expired", subscriptionEndsAt: "2026-10-03T00:00:00Z", tiers: [{ min: 0, max: 100, apr: 800 }] };
+  assert.equal(productKnownNotSubscribable(pending, now), false);
+  assert.equal(productKnownNotSubscribable(unavailable, now), true);
+  assert.equal(productKnownNotSubscribable(ineligible, now), true);
+  assert.equal(productKnownNotSubscribable(expired, now), true);
+  assert.equal(bestAvailableFirstTierProduct([unavailable, ineligible, expired, pending], {}, () => true, now), pending);
+  assert.equal(totalHighYieldRemaining([unavailable, ineligible, expired, pending], {}, () => true, now), 100);
+});
+
+test("high-yield remaining sums unused capacity from every APR-qualified tier", () => {
+  const product = {
+    ...base,
+    rateCoverage: "complete",
+    tiers: [
+      { min: 0, max: 100, apr: 10 },
+      { min: 100, max: 300, apr: 8 },
+      { min: 300, max: 500, apr: 5 },
+    ],
+  };
+  assert.equal(remainingHighYield(product, 150), 150);
+  assert.equal(remainingHighYield(product, 300), 0);
+  assert.equal(remainingHighYield({ ...product, rateCoverage: "base_only" }, 150), 0);
+  assert.equal(remainingHighYield({ ...product, tiers: [{ min: 0, max: null, apr: 6 }] }, 150), 0);
+  assert.equal(remainingHighYield({ ...product, tiers: [{ min: 0, max: null, apr: 6, maxStatus: "unlimited" }] }, 150), Number.POSITIVE_INFINITY);
+  assert.deepEqual(productInformationIssues({ ...product, tiers: [{ min: 0, max: null, apr: 6 }] }), ["首档额度待确认"]);
+  assert.equal(productParticipatesInInterest({ ...product, tiers: [{ min: 0, max: null, apr: 6 }] }, 150), false);
+  assert.deepEqual(productInformationIssues({ ...product, tiers: [{ min: 0, max: null, apr: 6, maxStatus: "unlimited" }] }), []);
+  const unknownLaterTier = { ...product, tiers: [{ min: 0, max: 100, apr: 10 }, { min: 100, max: null, apr: 8 }] };
+  assert.deepEqual(productInformationIssues(unknownLaterTier), ["阶梯额度待确认"]);
+  assert.equal(productParticipatesInInterest(unknownLaterTier, 150), false);
+  assert.equal(remainingHighYield(unknownLaterTier, 50), 0);
+  assert.equal(totalHighYieldRemaining([unknownLaterTier], { [unknownLaterTier.id]: 50 }, () => true), 0);
+  assert.equal(bestAvailableFirstTierProduct([unknownLaterTier], { [unknownLaterTier.id]: 50 }, () => true), null);
+  const unknown = { ...product, id: "unknown", tiers: [{ min: 0, max: null, apr: 10 }] };
+  const finite = { ...product, id: "finite", tiers: [{ min: 0, max: 100, apr: 8 }] };
+  const unlimited = { ...product, id: "unlimited", tiers: [{ min: 0, max: null, apr: 7, maxStatus: "unlimited" }] };
+  assert.equal(totalHighYieldRemaining([unknown, finite], { finite: 40 }, () => true), 60);
+  assert.equal(totalHighYieldRemaining([unknown, finite], { finite: 40 }, (item) => item.id !== "finite"), 0);
+  assert.equal(totalHighYieldRemaining([unknown, unlimited], {}, () => false), Number.POSITIVE_INFINITY);
 });
 
 test("maturity history uses one resolved date instead of a before/after pair", () => {

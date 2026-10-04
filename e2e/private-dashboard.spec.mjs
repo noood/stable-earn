@@ -43,6 +43,26 @@ test("private dashboard reaches a settled table state and switches assets", asyn
   expect(pageErrors).toEqual([]);
 });
 
+test("an unknown API quota shows a red warning instead of unlimited capacity", async ({ page }) => {
+  await page.route("**/private/api/products**", async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== "GET" || url.searchParams.get("preview") !== "1") return route.continue();
+    const response = await route.fetch();
+    const payload = await response.json();
+    const product = payload.products.find((item) => item.id === "preview-apr-six");
+    product.tiers[0].max = null;
+    delete product.tiers[0].maxStatus;
+    await route.fulfill({ response, json: payload });
+  });
+
+  await page.goto("/private");
+  const row = page.locator("tr.product-row").filter({ hasText: "首档额度待确认" });
+  await expect(row).toBeVisible();
+  await expect(row.locator(".product-meta-danger")).toContainText("首档额度待确认，不参与收益计算");
+  await expect(row).toContainText("申购额度 · 上限待确认");
+  await expect(row).not.toContainText("不限额");
+});
+
 test("complete empty sync preview shows an ordinary empty directory without an API error", async ({ page }) => {
   await page.goto("/private?syncScenario=empty");
   const table = page.getByRole("table");

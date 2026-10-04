@@ -26,7 +26,7 @@ function render(part, overrides = {}) {
   const props = {
     ...ui, dataBlocked: true, initialLoading: false, isDemo: false, asset: "USDT", serverReadFailureMessage,
     totalHolding: 100, holdingProductCount: 1, portfolioApr: 8, annualEarn: 8,
-    bestProduct: { accountId: "test", rateCoverage: "max_only" }, highYieldLeft: 50, tierOneOverflow: 20,
+    bestProduct: { accountId: "test", rateCoverage: "complete", tiers: [{ min: 0, max: 100, apr: 10 }] }, highYieldLeft: 50, tierOneOverflow: 20,
     formatAmount: (value) => value.toFixed(2), highestProductApr: () => 10, accountName: () => "Test Exchange",
     tableProducts: [], ProductTableSkeleton: () => null,
     ...overrides,
