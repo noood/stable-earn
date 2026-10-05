@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
+import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
 function routeWithMocks({ identity = { userId: "owner" }, credentials = { "bitget-global": { apiKey: "secret-key", apiSecret: "secret", passphrase: "pass" } }, report = { dataChangesCommitted: false, includesHoldingAmounts: false, checkedScopeCount: 56, checkedItemCount: 112, checks: [] }, probeImpl } = {}) {
   const calls = { database: 0, credentials: [], probe: [] };
+  const db = sqliteDb();
   const load = moduleLoader({
     "next/server": {
       NextResponse: {
@@ -14,7 +16,7 @@ function routeWithMocks({ identity = { userId: "owner" }, credentials = { "bitge
       },
     },
     "@/lib/db": {
-      getDatabase: async () => { calls.database += 1; return { readonly: true }; },
+      getDatabase: async () => { calls.database += 1; return db; },
       getUserIdentity: async () => identity,
     },
     "@/lib/credentials": {
@@ -31,7 +33,7 @@ function routeWithMocks({ identity = { userId: "owner" }, credentials = { "bitge
       privateResponseHeaders: { "Cache-Control": "private, no-store" },
     },
   });
-  return { post: load("@/app/private/api/diagnostics/platform-capabilities/route").POST, calls };
+  return { post: load("@/app/private/api/diagnostics/platform-capabilities/route").POST, calls, db };
 }
 
 function request(origin = "https://app.example") {

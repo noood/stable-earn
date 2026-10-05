@@ -16,18 +16,19 @@ visit(source);
 assert.equal(functions.length, 3);
 const code = ts.transpileModule(functions.join("\n"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 
-test("page resumes a deferred daily opening, then returns to cache-only polling", async () => {
-  const urls = [];
+test("daily opening and manual refresh use POST; ordinary cache polling stays GET", async () => {
+  const requests = [], methods = [];
   const deps = {
     productsEndpoint: "/products", isDemo: false,
     dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false },
     hiddenProductIdsRef: { current: [] },
-    fetch: async (url) => {
-      urls.push(url);
+    fetch: async (url, options) => {
+      requests.push(url);
+      methods.push(options?.method ?? "GET");
       return { ok: true, json: async () => ({
-        dailyRefreshPending: urls.length === 1,
+        dailyRefreshPending: requests.length === 1,
         products: [], rates: [], holdingUpdates: {},
-        cache: { state: urls.length === 1 ? "syncing" : "fresh" },
+        cache: { state: requests.length === 1 ? "syncing" : "fresh" },
       }) };
     },
   };
@@ -36,7 +37,9 @@ test("page resumes a deferred daily opening, then returns to cache-only polling"
   await refresh({});
   await refresh({}, { silent: true });
   await refresh({}, { silent: true });
-  assert.deepEqual(urls, ["/products?visit=1", "/products?visit=1", "/products"]);
+  await refresh({}, { manual: true });
+  assert.deepEqual(requests, ["/products?visit=1", "/products?visit=1", "/products", "/products?refresh=1"]);
+  assert.deepEqual(methods, ["POST", "POST", "GET", "POST"]);
   assert.equal(deps.dailyRefreshPendingRef.current, false);
 });
 

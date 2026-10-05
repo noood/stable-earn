@@ -7,7 +7,7 @@ import { fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
 import { loadCredentials } from "@/lib/credentials";
 import { getDatabase, getUserIdentity, isScheduledSyncEnabled } from "@/lib/db";
 import { fetchPublicRateSnapshot, summarizePublicFailures, type LiveRate } from "@/lib/live-rates";
-import { privateResponseHeaders } from "@/lib/request-security";
+import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
 import { mergeRates } from "@/lib/rate-cache";
 import { loadManualRefreshCooldown, manualRefreshCooldownMs } from "@/lib/user-settings";
 import { isLocalPreviewRequest, localPrivateProductsPreview, localSyncScenarioPreview } from "@/lib/local-preview";
@@ -92,7 +92,36 @@ type RefreshOptions = {
 const privateCacheKey = "private-products";
 
 export async function GET(request: Request) {
+  const params = new URL(request.url).searchParams;
+  if (params.has("refresh") || params.has("visit")) {
+    return NextResponse.json({ error: "刷新请求必须使用 POST。" }, {
+      status: 405,
+      headers: { ...privateResponseHeaders, Allow: "POST" },
+    });
+  }
+  return handleProductsRequest(request, false);
+}
+
+export async function POST(request: Request) {
   const identity = await getUserIdentity(request);
+  if (!identity) return NextResponse.json({ error: "请先登录。" }, { status: 401, headers: privateResponseHeaders });
+  if (!isSameOriginMutation(request)) return NextResponse.json({ error: "请求来源无效。" }, { status: 403, headers: privateResponseHeaders });
+
+  const params = new URL(request.url).searchParams;
+  const refresh = params.get("refresh");
+  const visit = params.get("visit");
+  const validValues = (refresh === null || refresh === "1") && (visit === null || visit === "1");
+  if (!validValues || (refresh === "1") === (visit === "1")) {
+    return NextResponse.json({ error: "请指定一种有效的刷新方式。" }, {
+      status: 400,
+      headers: { ...privateResponseHeaders, Allow: "GET, POST" },
+    });
+  }
+  return handleProductsRequest(request, true, identity);
+}
+
+async function handleProductsRequest(request: Request, refreshAllowed: boolean, knownIdentity?: Awaited<ReturnType<typeof getUserIdentity>>) {
+  const identity = knownIdentity ?? await getUserIdentity(request);
   if (!identity) return NextResponse.json({ error: "请先登录。" }, { status: 401, headers: privateResponseHeaders });
   const ownerId = identity.userId;
   const scheduledSyncEnabled = isScheduledSyncEnabled();
@@ -110,8 +139,8 @@ export async function GET(request: Request) {
 
   const db = await getDatabase();
   const params = new URL(request.url).searchParams;
-  const manual = params.get("refresh") === "1";
-  const daily = !manual && params.get("visit") === "1";
+  const manual = refreshAllowed && params.get("refresh") === "1";
+  const daily = refreshAllowed && !manual && params.get("visit") === "1";
   const manualCooldownDuration = manualRefreshCooldownMs(await loadManualRefreshCooldown(db, identity.userId));
   let pending = false;
   async function reply(response: Response) {

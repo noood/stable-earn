@@ -180,8 +180,10 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const holdingsEndpoint = `/private/api/holdings${previewQuery}`;
   const productsEndpoint = `/private/api/products${previewQuery}`;
   function refreshEndpoint(manual = false) {
-    const flag = manual ? "refresh=1" : dailyRefreshPendingRef.current ? "visit=1" : "";
-    return flag ? `${productsEndpoint}${productsEndpoint.includes("?") ? "&" : "?"}${flag}` : productsEndpoint;
+    const daily = !manual && dailyRefreshPendingRef.current;
+    const flag = manual ? "refresh=1" : daily ? "visit=1" : "";
+    const url = flag ? `${productsEndpoint}${productsEndpoint.includes("?") ? "&" : "?"}${flag}` : productsEndpoint;
+    return { url, method: manual || daily ? "POST" as const : "GET" as const };
   }
 
   function openPrivateDashboard() {
@@ -330,8 +332,8 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     if (!options?.silent) setLoading(true);
     if (options?.manual || refreshingDaily) setRefreshingExchange(true);
     try {
-      const endpoint = options?.cacheOnly ? productsEndpoint : refreshEndpoint(options?.manual);
-      const response = await (options?.response ?? fetch(endpoint, { cache: "no-store" }));
+      const endpoint = options?.cacheOnly ? { url: productsEndpoint, method: "GET" as const } : refreshEndpoint(options?.manual);
+      const response = await (options?.response ?? fetch(endpoint.url, { method: endpoint.method, cache: "no-store" }));
       if (!response.ok) {
         const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending"> | null;
         if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = errorData?.dailyRefreshPending === true;

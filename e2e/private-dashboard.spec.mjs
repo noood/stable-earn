@@ -116,7 +116,14 @@ test("a sync failure has a separate brand-colored manual refresh action", async 
     expect(Math.abs((bounds.copy.y + bounds.copy.height / 2) - (bounds.notice.y + bounds.notice.height / 2))).toBeLessThanOrEqual(1);
     expect(Math.abs(bounds.icon.y - bounds.firstLine.y)).toBeLessThanOrEqual(1);
     expect(Math.abs(bounds.icon.height - bounds.firstLine.height)).toBeLessThanOrEqual(1);
+    const refreshRequestPromise = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return url.pathname === "/private/api/products" && url.searchParams.get("refresh") === "1";
+    });
     await refreshButton.click();
+    const refreshRequest = await refreshRequestPromise;
+    expect(refreshRequest.method()).toBe("POST");
+    expect(refreshRequest.headers().origin).toBe(new URL(refreshRequest.url()).origin);
     await expect(refreshButton).toBeVisible();
   }
 });

@@ -444,6 +444,7 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
       requestLimit: guardedProbe.requestLimit,
       concurrencyLimit: guardedProbe.concurrencyLimit,
       stopReason: guardedProbe.stopReason,
+      ...(guardedProbe.retryAfterSeconds !== undefined ? { retryAfterSeconds: guardedProbe.retryAfterSeconds } : {}),
     },
     checks,
     additionalProbes: supplementalProbes,

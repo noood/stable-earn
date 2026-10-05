@@ -24,7 +24,7 @@ function payload(state = "fresh", failures = [], updatedAt = oldTime) {
 }
 
 async function open({ personalFailure = false, cacheFailure = false, dailyFailure = false, daily = true, result = payload("updated") } = {}) {
-  const requests = [], writes = [], phases = [];
+  const requests = [], methods = [], writes = [], phases = [];
   const state = { setOpeningLoading: true, setHoldingsReady: false, setSyncFailures: [] };
   const deps = {
     isDemo: false, holdingsEndpoint: "/holdings", productsEndpoint: "/products", emptyHoldings: {},
@@ -34,6 +34,7 @@ async function open({ personalFailure = false, cacheFailure = false, dailyFailur
     freshHoldingIdsForSave, manualProductPayload: product => product,
     fetch: async (url, options) => {
       requests.push(url);
+      methods.push(options?.method ?? "GET");
       if (options?.method === "PUT") {
         writes.push(JSON.parse(options.body));
         return { ok: true, json: async () => ({}) };
@@ -54,7 +55,7 @@ async function open({ personalFailure = false, cacheFailure = false, dailyFailur
   for (const [, name] of code.matchAll(/\b(set[A-Z]\w*)\(/g)) deps[name] = value => { state[name] = value; phases.push(view()); };
   const initialize = new Function(...Object.keys(deps), code + "; return initialize;")(...Object.values(deps));
   await initialize();
-  return { requests, writes, phases, state, view: view() };
+  return { requests, methods, writes, phases, state, view: view() };
 }
 
 for (const personalFailure of [false, true]) for (const cacheFailure of [false, true]) {
@@ -63,6 +64,7 @@ for (const personalFailure of [false, true]) for (const cacheFailure of [false, 
     assert.equal(run.requests.filter(url => url === "/products").length, 1);
     assert.equal(run.requests.filter(url => url === "/holdings").length - run.writes.length, 1);
     assert.equal(run.requests.filter(url => url === "/products?visit=1").length, 1);
+    assert.equal(run.methods[run.requests.indexOf("/products?visit=1")], "POST");
     assert.ok(run.phases.slice(0, -1).every(phase => phase.updating));
     assert.equal(run.view.updating, false);
     assert.equal(run.view.dataBlocked, personalFailure);

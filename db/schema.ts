@@ -94,6 +94,10 @@ export const schemaStatements = [
       CHECK (manual_refresh_cooldown_minutes IN (0, 30)),
     updated_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS capability_probe_cooldowns (
+    user_id TEXT PRIMARY KEY,
+    cooldown_until INTEGER NOT NULL DEFAULT 0
+  )`,
   `CREATE TABLE IF NOT EXISTS rate_snapshots (
     product_id TEXT PRIMARY KEY,
     payload TEXT NOT NULL,

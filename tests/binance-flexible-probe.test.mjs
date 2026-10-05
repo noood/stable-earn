@@ -170,3 +170,85 @@ test("a positive Binance holding without APR becomes an editable manual informat
   assert.equal(result.rates[0].rateCoverage, "unavailable");
   assert.equal(result.holdings[result.rates[0].productId], 0.25);
 });
+
+test("Binance USDC tier diagnosis reads one product-list page only and redacts identifiers", async () => {
+  const requests = [];
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => {
+        const parsed = new URL(url);
+        requests.push(parsed);
+        return { ok: true, status: 200, headers: new Headers(), url };
+      },
+      readExchangeJson: async () => ({
+        total: 1,
+        rows: [{
+          asset: "USDC",
+          productId: "private-product-id",
+          latestAnnualPercentageRate: "0.02152679",
+          tierAnnualPercentageRate: { "0-10000USDC": "0.02152679", "10000-50000USDC": "0.018" },
+        }],
+      }),
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { diagnoseBinanceFlexibleTiers } = load("@/lib/integrations/binance");
+  const result = await diagnoseBinanceFlexibleTiers({ apiKey: "secret-key", apiSecret: "secret" }, "global", "USDC");
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].pathname, "/sapi/v1/simple-earn/flexible/list");
+  assert.equal(requests[0].searchParams.get("asset"), "USDC");
+  assert.equal(requests[0].searchParams.has("signature"), true);
+  assert.equal(result.status, "returned");
+  assert.equal(result.rows[0].tierFieldState, "object");
+  assert.equal(result.rows[0].tierScheduleIssue, "complete");
+  assert.deepEqual(result.rows[0].tiers.map(({ rangeLabel, min, max, aprPercent }) => ({ rangeLabel, min, max, aprPercent })), [
+    { rangeLabel: "0-10000USDC", min: 0, max: 10000, aprPercent: 2.152679 },
+    { rangeLabel: "10000-50000USDC", min: 10000, max: 50000, aprPercent: 1.8 },
+  ]);
+  assert.doesNotMatch(JSON.stringify(result), /private-product-id|secret-key|secret/);
+});
+
+test("Binance USDC tier diagnosis distinguishes a missing field from malformed tiers", async () => {
+  const response = { total: 3, rows: [
+    { asset: "USDC", productId: "id-one", latestAnnualPercentageRate: "0.02" },
+    { asset: "USDC", productId: "id-two", latestAnnualPercentageRate: "0.02", tierAnnualPercentageRate: { "unknown": "bad" } },
+    { asset: "USDC", productId: "id-three", latestAnnualPercentageRate: "0.02", tierAnnualPercentageRate: "not-an-object" },
+  ] };
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url }),
+      readExchangeJson: async () => response,
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { diagnoseBinanceFlexibleTiers } = load("@/lib/integrations/binance");
+  const result = await diagnoseBinanceFlexibleTiers({ apiKey: "key", apiSecret: "secret" }, "bahrain", "USDC");
+
+  assert.equal(result.rows[0].tierFieldState, "missing");
+  assert.equal(result.rows[0].tierScheduleIssue, "none_reported");
+  assert.equal(result.rows[1].tierFieldState, "object");
+  assert.equal(result.rows[1].tierScheduleIssue, "unrecognized_entry");
+  assert.equal(result.rows[1].tiers[0].rangeLabel, "<unrecognized>");
+  assert.equal(result.rows[2].tierFieldState, "string");
+  assert.equal(result.rows[2].tierScheduleIssue, "unrecognized_entry");
+  assert.equal(JSON.stringify(result).includes("id-one"), false);
+});
+
+test("malformed Binance tier container makes product data partial instead of implying a single rate", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), path: new URL(url).pathname }),
+      readExchangeJson: async (response) => response.path.endsWith("/flexible/list")
+        ? { total: 1, rows: [{ asset: "USDC", productId: "product", latestAnnualPercentageRate: "0.02", tierAnnualPercentageRate: "not-an-object" }] }
+        : { total: 0, rows: [] },
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { fetchBinanceFlexibleSnapshot } = load("@/lib/integrations/binance");
+  const result = await fetchBinanceFlexibleSnapshot({ apiKey: "key", apiSecret: "secret" }, "global", ["USDC"]);
+
+  assert.equal(result.productApiStatus, "partial");
+  assert.equal(result.rates[0].rateShape, "tiered_rate");
+  assert.equal(result.rates[0].rateCoverage, "base_only");
+});

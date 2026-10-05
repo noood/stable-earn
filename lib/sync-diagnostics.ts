@@ -97,6 +97,6 @@ export function accessFailureReason(status: number, text: string) {
   if (/restricted location|country.{0,40}(?:block(?:ed)?|restricted)|(?:block(?:ed)?|restricted).{0,40}country|region.{0,30}not supported/i.test(sample)) return "region_restricted";
   if (/access too frequent|too many requests|rate limit (?:exceeded|breached)|request (?:frequency|rate).{0,20}exceeded/i.test(sample)) return "rate_limited";
   if (/(?:ip|address).{0,40}(?:not (?:in|on).{0,10}whitelist|not whitelisted)|unmatched ip|ip.{0,20}(?:mismatch|not allowed)/i.test(sample)) return "ip_not_allowed";
-  if (status === 429) return "rate_limited";
+  if (status === 418 || status === 429) return "rate_limited";
   return "access_denied_unknown";
 }

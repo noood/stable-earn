@@ -101,10 +101,32 @@ function fixture({ scheduledEnabled = true } = {}) {
     setTime(value) { time = Date.parse(value); },
     pause() { let resume; pause = new Promise((resolve) => { resume = resolve; }); return () => { pause = null; resume(); }; },
     refresh: (options) => route.refreshPrivateProductsCache(db, "test-user", options),
-    async read(query = "") { return (await route.GET(new Request(`http://test/private/api/products${query}`))).json(); },
+    async read(query = "") {
+      const requestUrl = `http://test/private/api/products${query}`;
+      const params = new URL(requestUrl).searchParams;
+      const mutating = params.has("refresh") || params.has("visit");
+      const method = mutating ? "POST" : "GET";
+      const request = new Request(requestUrl, {
+        method,
+        ...(mutating ? { headers: { origin: new URL(requestUrl).origin } } : {}),
+      });
+      return (await route[method](request)).json();
+    },
     record,
   };
 }
+
+test("refresh triggers require same-origin POST; GET links cannot start a refresh", async () => {
+  const f = fixture();
+  const legacyGet = await f.route.GET(new Request("http://test/private/api/products?refresh=1"));
+  assert.equal(legacyGet.status, 405);
+  const crossOriginPost = await f.route.POST(new Request("http://test/private/api/products?refresh=1", {
+    method: "POST",
+    headers: { origin: "https://attacker.example" },
+  }));
+  assert.equal(crossOriginPost.status, 403);
+  assert.equal(f.logs.filter((entry) => entry.event === "sync_started").length, 0);
+});
 
 test("sync logs preserve platform outcomes before total failure and correlate scheduled retries", async () => {
   const f = fixture();

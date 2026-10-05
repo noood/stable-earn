@@ -2,7 +2,7 @@ import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import { buildPlatformProductIdentity, scopedExternalProductAlias } from "@/lib/product-identity";
 import type { LiveRate } from "@/lib/live-rates";
 import type { HoldingPosition, Product } from "@/lib/domain";
-import { syncDiagnostic } from "@/lib/sync-diagnostics";
+import { diagnosticErrorKind, syncDiagnostic } from "@/lib/sync-diagnostics";
 import { apiAssetsFor } from "@/lib/platform-capabilities";
 
 type Credentials = {
@@ -14,7 +14,7 @@ type Credentials = {
 type FlexibleProductRow = {
   asset?: string;
   latestAnnualPercentageRate?: string | number;
-  tierAnnualPercentageRate?: Record<string, number | string>;
+  tierAnnualPercentageRate?: unknown;
   productId?: string;
 };
 
@@ -83,6 +83,36 @@ export type BinanceFlexibleSnapshot = {
   positionListsComplete: boolean;
   productApiStatus: "complete" | "partial" | "error";
   positionApiStatus: "complete" | "partial" | "error";
+};
+
+export type BinanceFlexibleTierDiagnostic = {
+  account: "binance-global" | "binance-bahrain";
+  asset: string;
+  endpoint: "/sapi/v1/simple-earn/flexible/list";
+  status: "returned" | "empty" | "partial" | "error";
+  responseComplete: boolean;
+  pageSize: number;
+  rowCount: number | null;
+  reportedTotal: number | null;
+  failureKind?: string;
+  rows: Array<{
+    asset: string | null;
+    productIdPresent: boolean;
+    latestAprPresent: boolean;
+    latestAprPercent: number | null;
+    tierFieldState: "missing" | "null" | "object" | "array" | "string" | "number" | "boolean";
+    tierEntryCount: number;
+    tiers: Array<{
+      rangeLabel: string;
+      rangeParsed: boolean;
+      min?: number;
+      max?: number;
+      aprParsed: boolean;
+      aprPercent: number | null;
+    }>;
+    tierScheduleComplete: boolean;
+    tierScheduleIssue: "none_reported" | "empty_object" | "unrecognized_entry" | "range_gap_or_overlap" | "complete";
+  }>;
 };
 
 export type BinanceLockedSnapshot = {
@@ -302,6 +332,102 @@ export async function fetchBinanceFlexibleSnapshot(
     positionListsComplete: results.every((result) => result.positionListComplete),
     productApiStatus: aggregateSnapshotStatus(results.map((result) => result.productApiStatus)),
     positionApiStatus: aggregateSnapshotStatus(results.map((result) => result.positionApiStatus)),
+  };
+}
+
+/**
+ * One-page, read-only diagnosis of Binance flexible product APR metadata.
+ * It intentionally does not call the holdings endpoint, follow pagination,
+ * or return product IDs, credentials, raw payloads, or account positions.
+ */
+export async function diagnoseBinanceFlexibleTiers(
+  credentials: Credentials,
+  account: BinanceAccount,
+  asset = "USDC",
+): Promise<BinanceFlexibleTierDiagnostic> {
+  const accountId = account === "global" ? "binance-global" : "binance-bahrain";
+  const pageSize = 100;
+  try {
+    const page = await signedGet<PageResponse<FlexibleProductRow>>(
+      "/sapi/v1/simple-earn/flexible/list",
+      { asset, current: 1, size: pageSize },
+      credentials,
+    );
+    const pageRows = Array.isArray(page.rows) ? page.rows : [];
+    const matchingRows = pageRows.filter((row) => row && row.asset?.toUpperCase() === asset.toUpperCase());
+    const reportedTotal = finiteOptional(page.total) ?? null;
+    const responseComplete = Array.isArray(page.rows)
+      && (reportedTotal === null ? pageRows.length < pageSize : pageRows.length === reportedTotal);
+
+    return {
+      account: accountId,
+      asset,
+      endpoint: "/sapi/v1/simple-earn/flexible/list",
+      status: !responseComplete ? "partial" : matchingRows.length ? "returned" : "empty",
+      responseComplete,
+      pageSize,
+      rowCount: matchingRows.length,
+      reportedTotal,
+      rows: matchingRows.slice(0, 50).map((row) => describeFlexibleTierRow(row, asset)),
+    };
+  } catch (error) {
+    return {
+      account: accountId,
+      asset,
+      endpoint: "/sapi/v1/simple-earn/flexible/list",
+      status: "error",
+      responseComplete: false,
+      pageSize,
+      rowCount: null,
+      reportedTotal: null,
+      failureKind: diagnosticErrorKind(error),
+      rows: [],
+    };
+  }
+}
+
+function describeFlexibleTierRow(row: FlexibleProductRow, asset: string): BinanceFlexibleTierDiagnostic["rows"][number] {
+  const rawTiers = row.tierAnnualPercentageRate;
+  const tierFieldState = rawTiers === undefined ? "missing"
+    : rawTiers === null ? "null"
+      : Array.isArray(rawTiers) ? "array"
+        : typeof rawTiers === "object" ? "object"
+          : typeof rawTiers === "string" ? "string"
+            : typeof rawTiers === "number" ? "number"
+              : typeof rawTiers === "boolean" ? "boolean" : "string";
+  const entries = rawTiers && typeof rawTiers === "object" && !Array.isArray(rawTiers)
+    ? Object.entries(rawTiers as Record<string, unknown>)
+    : [];
+  const parsedEntries = entries.map(([label, rawApr]) => {
+    const bounds = parseTierBounds(label, asset);
+    const aprCandidate = typeof rawApr === "string" || typeof rawApr === "number" ? rawApr : undefined;
+    const parsedApr = parseBinanceApr(aprCandidate);
+    return {
+      rangeLabel: bounds ? `${bounds.min}-${bounds.max}${asset}` : "<unrecognized>",
+      rangeParsed: Boolean(bounds),
+      ...(bounds ?? {}),
+      aprParsed: Number.isFinite(parsedApr),
+      aprPercent: Number.isFinite(parsedApr) ? Number(parsedApr.toFixed(8)) : null,
+    };
+  });
+  const schedule = parseBinanceTiers(asset, row.latestAnnualPercentageRate, rawTiers);
+  const tierScheduleIssue = entries.length === 0
+    ? tierFieldState === "object" ? "empty_object" as const
+      : tierFieldState === "missing" || tierFieldState === "null" ? "none_reported" as const : "unrecognized_entry" as const
+    : parsedEntries.length !== entries.length || parsedEntries.some((entry) => !entry.rangeParsed || !entry.aprParsed)
+      ? "unrecognized_entry" as const
+      : !schedule.complete ? "range_gap_or_overlap" as const : "complete" as const;
+  const latestApr = parseBinanceApr(row.latestAnnualPercentageRate);
+  return {
+    asset: typeof row.asset === "string" ? row.asset : null,
+    productIdPresent: Boolean(row.productId?.trim()),
+    latestAprPresent: Number.isFinite(latestApr),
+    latestAprPercent: Number.isFinite(latestApr) ? Number(latestApr.toFixed(8)) : null,
+    tierFieldState,
+    tierEntryCount: entries.length,
+    tiers: parsedEntries,
+    tierScheduleComplete: entries.length > 0 && schedule.complete,
+    tierScheduleIssue,
   };
 }
 
@@ -594,13 +720,22 @@ function lockedRate(
 function parseBinanceTiers(
   asset: string,
   rawBaseApr: string | number | undefined,
-  rawTiers: Record<string, number | string> | undefined,
+  rawTiers: unknown,
 ): BinanceTierSchedule {
   const baseApr = parseBinanceApr(rawBaseApr);
-  const entries = Object.entries(rawTiers ?? {});
+  const baseOnlyTier = { min: 0, max: null, apr: baseApr };
+  if (rawTiers === undefined || rawTiers === null) {
+    return { tiers: [baseOnlyTier], hasReportedTiers: false, complete: true };
+  }
+  if (typeof rawTiers !== "object" || Array.isArray(rawTiers)) {
+    return { tiers: [baseOnlyTier], hasReportedTiers: true, complete: false };
+  }
+  const entries = rawTiers && typeof rawTiers === "object" && !Array.isArray(rawTiers)
+    ? Object.entries(rawTiers as Record<string, number | string>)
+    : [];
   if (entries.length === 0) {
     return {
-      tiers: [{ min: 0, max: null, apr: baseApr }],
+      tiers: [baseOnlyTier],
       hasReportedTiers: false,
       complete: true,
     };

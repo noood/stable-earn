@@ -12,6 +12,7 @@ type ProbeRequestGuard = {
   activeRequests: number;
   waiters: Array<() => void>;
   stopReason: ProbeRequestStopReason | null;
+  retryAfterSeconds?: number;
 };
 const probeRequestContext = new AsyncLocalStorage<ProbeRequestGuard>();
 
@@ -30,6 +31,7 @@ export async function withCapabilityProbeRequestGuard<T>(task: () => Promise<T>)
     requestLimit: capabilityProbeRequestLimit,
     concurrencyLimit: capabilityProbeConcurrencyLimit,
     stopReason: guard.stopReason,
+    ...(guard.retryAfterSeconds !== undefined ? { retryAfterSeconds: guard.retryAfterSeconds } : {}),
   };
 }
 
@@ -54,7 +56,9 @@ async function guardedFetch(input: string, init: RequestInit | undefined, reques
   await acquireProbeRequestSlot(guard);
   try {
     const response = await fetchWithDiagnostics(input, init, requestAttempt);
-    if (response.status === 429) stopProbeRequests(guard, "rate_limited");
+    if (response.status === 418 || response.status === 429) {
+      stopProbeRequests(guard, "rate_limited", retryAfterSeconds(response.headers.get("Retry-After")));
+    }
     return response;
   } finally {
     guard.activeRequests -= 1;
@@ -78,9 +82,22 @@ async function acquireProbeRequestSlot(guard: ProbeRequestGuard) {
   }
 }
 
-function stopProbeRequests(guard: ProbeRequestGuard, reason: ProbeRequestStopReason) {
-  guard.stopReason ??= reason;
+function stopProbeRequests(guard: ProbeRequestGuard, reason: ProbeRequestStopReason, retryAfter?: number) {
+  if (reason === "rate_limited" || guard.stopReason === null) guard.stopReason = reason;
+  if (retryAfter !== undefined) {
+    guard.retryAfterSeconds = Math.max(guard.retryAfterSeconds ?? 0, retryAfter);
+  }
   for (const wake of guard.waiters.splice(0)) wake();
+}
+
+function retryAfterSeconds(value: string | null, now = Date.now()) {
+  const candidate = value?.trim();
+  if (!candidate) return undefined;
+  const seconds = Number(candidate);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds);
+  const timestamp = Date.parse(candidate);
+  if (!Number.isFinite(timestamp)) return undefined;
+  return Math.ceil(Math.max(0, timestamp - now) / 1000);
 }
 
 const knownHosts = new Set(["api-gcp.binance.com", "api.binance.com", "api.bybit.com", "api.bytick.com", "api.bybit.eu", "api.bitget.com", "openapi.okx.com", "www.okx.com"]);
