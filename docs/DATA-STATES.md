@@ -10,9 +10,16 @@
 
 产品与持仓分别判断。持仓的正数、明确零、未知不能混用；只有完整持仓快照才能把未出现的产品判为零。产品字段缺失不抹掉已知持仓，持仓失败不抹掉有效产品数据。
 
-## Binance 活期阶梯 APR
+## APR 与额度必须分开判定
 
-Binance Simple Earn 活期产品接口的 `tierAnnualPercentageRate` 是金额区间对应的 APR 值，直接作为该档 APR 使用；不能再与 `latestAnnualPercentageRate` 相加。只按接口实际返回且能完整解析的金额区间生成档位，不在最后一个区间后合成一个“基础 APR、无限额度”档。没有阶梯字段时只保留基础 APR，额度未知；档位标签缺失、无法解析或区间不连续时按部分资料处理，不推断不限额。[官方活期产品列表示例](https://developers.binance.com/legacy-docs/simple_earn/flexible-locked/account/Get-Simple-Earn-Flexible-Product-List)同时列出了 `latestAnnualPercentageRate` 和各区间的 `tierAnnualPercentageRate`。
+不同平台对“单一利率”和“按金额分档”的表达不同。缺少梯度本身不等于 API 失败；APR 是否能用于收益计算、金额上限是否已知，是两个独立问题。平台字段含义、证据来源、代码现状和待验证项统一记在 [平台 APR 与额度规则台账](API-APR-CAPACITY-RULES.md)。
+
+统一原则：
+
+- 只有平台明确表示该产品是单一利率，或官方接口明确提供适用于该产品的 APR 时，才能把无梯度按单一 APR 处理；不能凭空从缺失值造利率。
+- 单一 APR 可用于已知持仓收益估算，但不代表申购不限额；余额/额度指标只有在上限规则有证据时才计算。
+- 明确是阶梯产品时，必须先验证所有档位的金额边界和 APR。只解析出一档，不足以证明整段规则完整；缺口、重叠、坏字段或末档后去向不明时，不外推利率，也不把缺失上限当成不限额。
+- 只有平台字段或产品说明明确表达不限额时才记为不限额。API 的 `max: null`、没有梯度字段、或某个额度档到此为止，都不单独构成不限额证据。
 
 ## 目录与身份
 

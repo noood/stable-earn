@@ -12,6 +12,7 @@ type BitgetCredentials = {
 };
 
 type BitgetApyRow = {
+  rateLevel?: string;
   minStepVal?: string;
   maxStepVal?: string;
   currentApy?: string;
@@ -157,6 +158,166 @@ export async function probeBitgetAssets(
     flexibleAssetsResult,
     fixedAssetsResult,
   ));
+}
+
+/**
+ * Read-only product/API-shape evidence for APR and capacity rules.
+ * This deliberately does not call the savings-assets/holdings endpoints.
+ */
+export async function probeBitgetProductEvidence(credentials: BitgetCredentials) {
+  const assets: SupportedAsset[] = ["USDT", "USDC", "BTC", "USDGO"];
+  const products: Array<{
+    asset: SupportedAsset;
+    status: "returned" | "empty" | "invalid_shape" | "error";
+    rowCount: number;
+    rows: BitgetProductEvidenceRow[];
+    diagnostic?: string;
+  }> = [];
+  const representatives = new Map<string, BitgetProductEvidenceRow>();
+  let requestsStarted = 0;
+
+  for (const asset of assets) {
+    requestsStarted += 1;
+    try {
+      const response = await signedGet<BitgetProductRow[]>(
+        "/api/v2/earn/savings/product",
+        new URLSearchParams({ coin: asset, filter: "available_and_held" }),
+        credentials,
+      );
+      if (!Array.isArray(response.data)) {
+        products.push({ asset, status: "invalid_shape", rowCount: 0, rows: [] });
+        continue;
+      }
+
+      const scopedRows = response.data.filter((row) => row.coin?.toUpperCase() === asset);
+      const rows = scopedRows.map(sanitizeBitgetProductEvidenceRow);
+      products.push({ asset, status: rows.length ? "returned" : "empty", rowCount: rows.length, rows });
+
+      for (const row of rows) {
+        if (!row.productId || (row.periodType !== "flexible" && row.periodType !== "fixed")) continue;
+        const shape = row.apyType || "unknown";
+        const key = `${row.periodType}:${shape}`;
+        if (!representatives.has(key) && representatives.size < 4) representatives.set(key, row);
+      }
+    } catch (error) {
+      products.push({ asset, status: "error", rowCount: 0, rows: [], diagnostic: bitgetEvidenceErrorKind(error) });
+    }
+  }
+
+  const subscriptionDetails: Array<{
+    asset: SupportedAsset;
+    periodType: "flexible" | "fixed";
+    productId: string;
+    apyType: string | null;
+    status: "returned" | "invalid_shape" | "error";
+    data?: BitgetSubscriptionEvidence;
+    diagnostic?: string;
+  }> = [];
+  for (const row of representatives.values()) {
+    if (requestsStarted >= 8) break;
+    requestsStarted += 1;
+    const periodType = row.periodType as "flexible" | "fixed";
+    try {
+      const response = await signedGet<BitgetSubscriptionEvidence>(
+        "/api/v2/earn/savings/subscribe-info",
+        new URLSearchParams({ productId: row.productId!, periodType }),
+        credentials,
+      );
+      if (!response.data || typeof response.data !== "object" || Array.isArray(response.data)) {
+        subscriptionDetails.push({
+          asset: row.asset as SupportedAsset,
+          periodType,
+          productId: row.productId!,
+          apyType: row.apyType,
+          status: "invalid_shape",
+        });
+        continue;
+      }
+      subscriptionDetails.push({
+        asset: row.asset as SupportedAsset,
+        periodType,
+        productId: row.productId!,
+        apyType: row.apyType,
+        status: "returned",
+        data: sanitizeBitgetSubscriptionEvidence(response.data),
+      });
+    } catch (error) {
+      subscriptionDetails.push({
+        asset: row.asset as SupportedAsset,
+        periodType,
+        productId: row.productId!,
+        apyType: row.apyType,
+        status: "error",
+        diagnostic: bitgetEvidenceErrorKind(error),
+      });
+    }
+  }
+
+  return {
+    scope: "Bitget Savings product APR and subscription capacity fields",
+    dataChangesCommitted: false,
+    includesHoldingAmounts: false,
+    requestLimit: 8,
+    requestsStarted,
+    products,
+    subscriptionDetails,
+  };
+}
+
+type BitgetProductEvidenceRow = {
+  asset: string;
+  productId: string | null;
+  periodType: string | null;
+  period: string | null;
+  apyType: string | null;
+  apyList: Array<{ rateLevel: string | null; minStepVal: string | null; maxStepVal: string | null; currentApy: string | null }>;
+  status: string | null;
+  productLevel: string | null;
+};
+
+type BitgetSubscriptionEvidence = {
+  singleMinAmount?: string;
+  singleMaxAmount?: string;
+  remainingAmount?: string;
+  apyList?: BitgetApyRow[];
+};
+
+function sanitizeBitgetProductEvidenceRow(row: BitgetProductRow): BitgetProductEvidenceRow {
+  return {
+    asset: row.coin?.toUpperCase() ?? "",
+    productId: row.productId?.trim() || null,
+    periodType: row.periodType ?? null,
+    period: row.period ?? null,
+    apyType: row.apyType ?? null,
+    apyList: Array.isArray(row.apyList) ? row.apyList.map((tier) => ({
+      rateLevel: tier.rateLevel ?? null,
+      minStepVal: tier.minStepVal ?? null,
+      maxStepVal: tier.maxStepVal ?? null,
+      currentApy: tier.currentApy ?? null,
+    })) : [],
+    status: row.status ?? null,
+    productLevel: row.productLevel ?? null,
+  };
+}
+
+function sanitizeBitgetSubscriptionEvidence(data: BitgetSubscriptionEvidence): BitgetSubscriptionEvidence {
+  return {
+    singleMinAmount: data.singleMinAmount,
+    singleMaxAmount: data.singleMaxAmount,
+    remainingAmount: data.remainingAmount,
+    apyList: Array.isArray(data.apyList) ? data.apyList.map((tier) => ({
+      rateLevel: tier.rateLevel,
+      minStepVal: tier.minStepVal,
+      maxStepVal: tier.maxStepVal,
+      currentApy: tier.currentApy,
+    })) : [],
+  };
+}
+
+function bitgetEvidenceErrorKind(error: unknown) {
+  if (error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name)) return "timeout";
+  const match = error instanceof Error ? error.message.match(/\((\d{3}\/[^)]+)\)/) : null;
+  return match?.[1] ?? "request_failed";
 }
 
 function fetchBitgetCapabilityProducts(credentials: BitgetCredentials, asset: SupportedAsset) {
