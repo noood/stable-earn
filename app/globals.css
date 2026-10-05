@@ -49,6 +49,13 @@
   /* Layout spacing is limited to 4 / 8 / 12 / 16 / 20 / 24 / 32px.
      Keep 10px only for compact control/component internals via --space-control. */
   --control-height: 2.5rem;
+  --button-default-height: var(--control-height);
+  --button-default-padding-x: var(--space-4);
+  --button-default-padding-y: .5rem;
+  --button-small-height: 2rem;
+  --button-small-padding-x: var(--space-3);
+  --button-small-padding-y: .375rem;
+  --button-small-radius: .5rem;
   --table-row-min-height: 7rem;
   --table-cell-x: 1.75rem;
   --table-middle-x: 2.25rem;
@@ -99,11 +106,11 @@ input:focus-visible,
 
 .button {
   display: inline-flex;
-  min-height: var(--control-height);
+  min-height: var(--button-default-height);
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-control);
-  padding: var(--space-control) var(--space-4);
+  padding: var(--button-default-padding-y) var(--button-default-padding-x);
   font-size: var(--type-body);
   font-weight: 600;
   line-height: var(--leading-body);
@@ -111,9 +118,9 @@ input:focus-visible,
   transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, opacity 160ms ease;
 }
 .button-small {
-  min-height: 2rem;
-  border-radius: var(--radius-sm);
-  padding: .375rem .75rem;
+  min-height: var(--button-small-height);
+  border-radius: var(--button-small-radius);
+  padding: var(--button-small-padding-y) var(--button-small-padding-x);
   font-size: var(--type-caption);
   line-height: var(--leading-caption);
 }
@@ -131,11 +138,9 @@ input:focus-visible,
   padding: .35rem .25rem;
   background: transparent;
   color: var(--brand);
-  text-decoration: underline;
-  text-decoration-color: var(--brand-line);
-  text-underline-offset: 4px;
+  text-decoration: none;
 }
-.button-text:hover:not(:disabled) { background: transparent; color: var(--brand-hover); text-decoration-color: currentColor; }
+.button-text:hover:not(:disabled) { background: transparent; color: var(--brand-hover); text-decoration: none; }
 .inline-action { vertical-align: baseline; }
 
 .top-nav { border-bottom: var(--hairline) solid var(--border); background: var(--surface-nav); }
@@ -175,7 +180,8 @@ input:focus-visible,
 .menu-account-value { overflow: hidden; margin-top: .125rem; color: var(--text-secondary); font-size: var(--type-caption); line-height: var(--leading-caption); text-overflow: ellipsis; white-space: nowrap; }
 .menu-account + .menu-item { margin-top: var(--space-1); }
 .menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
   border: 0;
   border-radius: var(--radius-sm);
@@ -231,6 +237,7 @@ input:focus-visible,
   stroke-linejoin: round;
   stroke-width: 1.7;
 }
+.sync-notice-message { overflow-wrap: anywhere; }
 .text-secondary { color: var(--text-secondary); }
 .text-muted { color: var(--text-secondary); }
 .text-subtle { color: var(--text-subtle); }
@@ -718,9 +725,9 @@ input:focus-visible,
 .api-check-actions { display: grid; justify-items: end; gap: .25rem; }
 .api-check-button {
   width: 6rem;
-  height: calc(var(--leading-body) + 2 * var(--space-control) + 2px);
-  min-height: calc(var(--leading-body) + 2 * var(--space-control) + 2px);
-  padding-inline: var(--space-3);
+  height: var(--button-default-height);
+  min-height: var(--button-default-height);
+  padding-inline: var(--button-default-padding-x);
 }
 .api-check-spinner {
   display: inline-block;
@@ -761,7 +768,7 @@ input:focus-visible,
 .cooldown-options {
   display: grid;
   width: 10rem;
-  height: calc(var(--leading-body) + 2 * var(--space-control) + 2px);
+  height: var(--button-default-height);
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: .25rem;
   border: var(--hairline) solid var(--border-strong);
@@ -778,8 +785,9 @@ input:focus-visible,
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: var(--type-caption);
+  font-size: var(--type-body);
   font-weight: 600;
+  line-height: var(--leading-body);
 }
 .cooldown-option:not([aria-checked="true"]):hover:not(:disabled) { background: var(--surface-subtle); color: var(--text-primary); }
 .cooldown-option[aria-checked="true"] {

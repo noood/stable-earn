@@ -14,7 +14,7 @@ import { applyProductOverride, dateOnlyFromTimestamp, formatShortDate, productNe
 import { holdingSyncNote, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
 import { apiFieldCapability } from "@/lib/api-capabilities";
 import { freshHoldingIdsForSave } from "@/lib/holding-cache";
-import { dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
+import { completedDataSummary, dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
 import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
 import { accounts } from "@/lib/seed-data";
 import { bestAvailableFirstTierProduct, maximumShortTermDays, minimumOpportunityApr, productHasKnownCapacity, totalHighYieldRemaining } from "@/lib/opportunity-policy";
@@ -50,7 +50,6 @@ type ApiResult = {
     capacityFetchedAt?: string;
     externalProductId?: string;
     identityKey?: string;
-    identityFingerprint?: string;
   }>;
   rateFallbacks?: Record<string, string>;
   holdingUpdates?: HoldingMap;
@@ -73,7 +72,7 @@ type ApiResult = {
     lastAttemptAt: string | null;
     lastError: string | null;
     scheduledAt?: string | null;
-    scheduledState?: "scheduled" | "syncing" | "overdue";
+    scheduledState?: "scheduled" | "syncing" | "overdue" | "disabled";
   };
 };
 type HoldingsApiResult = { products?: Product[]; holdings: HoldingMap; overrides: ProductOverrideMap; manualProducts: Product[]; hiddenProductIds?: string[]; found: boolean };
@@ -685,6 +684,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     productReady: productSnapshotReady, productReadFailed: pageReadFailed, lastUpdated,
   });
   const scheduledState = syncCache?.scheduledState ?? (updating ? "syncing" : "scheduled");
+  const scheduledSyncDisabled = scheduledState === "disabled";
   const automaticRefreshSummary = updating || scheduledState !== "scheduled" || !syncCache?.scheduledAt
     ? null
     : formatSyncDateTime(syncCache.scheduledAt);
@@ -696,14 +696,20 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     ? ""
     : localPreview
       ? lastUpdated
-        ? `本地测试数据截至 ${formatSyncDateTime(lastUpdated)}；不会写入数据库。`
-        : "暂无成功测试数据。"
+        ? completedDataSummary(formatSyncDateTime(lastUpdated), { scheduledRefreshFailed, scheduledSyncDisabled, nextRefresh: automaticRefreshSummary, hasSyncFailure })
+        : hasSyncFailure ? "暂无成功测试数据，" : "暂无成功测试数据。"
     : isDemo
       ? "以下均为演示数据。"
       : lastUpdated
-        ? `当前数据截至 ${formatSyncDateTime(lastUpdated)}${scheduledRefreshFailed ? "；" : automaticRefreshSummary ? `，预计 ${automaticRefreshSummary} 自动更新` : ""}${scheduledRefreshFailed ? "" : "。"}`
-        : scheduledRefreshFailed ? "" : "暂无成功数据。";
+        ? completedDataSummary(formatSyncDateTime(lastUpdated), { scheduledRefreshFailed, scheduledSyncDisabled, nextRefresh: automaticRefreshSummary, hasSyncFailure })
+        : scheduledRefreshFailed ? "" : hasSyncFailure ? "暂无成功数据，" : "暂无成功数据。";
   const failureSummary = syncFailureSummary(syncFailures);
+  const showSyncFailureRefresh = !dataBlocked && !isDemo && !updating && !scheduledRefreshFailed && hasSyncFailure;
+
+  function handleManualRefresh() {
+    if (holdingsReady) void refreshRates(activeHoldings, { manual: true });
+    else void retryPersonalData();
+  }
 
   return (
     <main className="min-h-screen">
@@ -717,7 +723,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             loading={openingLoading || loading || personalDataLoading}
             manualRefreshCooling={manualRefreshCooling}
             cooldownUntil={manualRefreshAvailableAt}
-            onManualRefresh={() => holdingsReady ? void refreshRates(activeHoldings, { manual: true }) : void retryPersonalData()}
+            onManualRefresh={handleManualRefresh}
             onApiSettings={isDemo ? openPrivateApiSettings : openApiSettings}
           />
         </div>
@@ -725,12 +731,13 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
 
       <div className="mx-auto max-w-[1500px] px-5 py-5 lg:px-10 lg:py-6">
         <div className="card type-caption mb-4 flex items-center justify-between gap-4 px-5 py-4" aria-live="polite">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="sync-notice-copy flex min-w-0 flex-1 items-start gap-2">
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
             {dataBlocked
               ? <p className="text-danger font-semibold">{serverReadFailureMessage}</p>
-            : <p className="text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-secondary font-normal">数据正在更新中，请稍候。</span>}{typeof scheduledRefreshFailed !== "undefined" && scheduledRefreshFailed && <span className="text-danger font-semibold">{scheduledFailureLabel}</span>}{!isDemo && !updating && !(typeof scheduledRefreshFailed !== "undefined" && scheduledRefreshFailed) && hasSyncFailure && <span className="text-danger font-semibold"> {failureSummary}</span>}</p>}
+            : <p className="sync-notice-message min-w-0 flex-1 text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-secondary font-normal">数据正在更新中，请稍候。</span>}{scheduledRefreshFailed && <span className="text-danger font-semibold">{scheduledFailureLabel}</span>}{!scheduledRefreshFailed && hasSyncFailure && <span className="text-danger font-semibold">{failureSummary}</span>}</p>}
           </div>
+          {showSyncFailureRefresh && <ActionButton size="small" className="shrink-0 sync-notice-refresh" disabled={openingLoading || loading || refreshingExchange || manualRefreshCooling} onClick={handleManualRefresh}>手动刷新</ActionButton>}
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
         </div>
         <section className="metrics-panel card mb-4 grid overflow-hidden sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6" aria-busy={initialLoading}>

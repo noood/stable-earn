@@ -31,6 +31,10 @@ function render(part, overrides = {}) {
     tableProducts: [], ProductTableSkeleton: () => null,
     ...overrides,
   };
+  props.scheduledRefreshFailed ??= false;
+  props.hasSyncFailure ??= false;
+  props.showSyncFailureRefresh ??= !props.dataBlocked && !props.isDemo && !props.updating
+    && !props.scheduledRefreshFailed && props.hasSyncFailure;
   const code = ts.transpileModule(`${parts.empty}\nreturn (${parts[part]});`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React },
   }).outputText;
@@ -91,11 +95,19 @@ test("page read errors override exchange warnings and dates", () => {
   for (const dataBlocked of [true, false]) {
     const html = render("notice", {
       dataBlocked, updating: false, loading: false, hasSyncFailure: true,
-      currentDataSummary: "当前数据截至 09/08 11:09。", failureSummary: "Bitget API 暂不可用；下次更新将重试。",
+      currentDataSummary: "当前数据截至 09/08 11:09，", failureSummary: "Bitget API 暂不可用",
+      openingLoading: false, refreshingExchange: false, manualRefreshCooling: false, handleManualRefresh() {},
     });
     assert.ok(html.includes("text-danger font-semibold"));
     if (dataBlocked) assert.doesNotMatch(html, /当前数据截至|Bitget/);
-    else assert.match(html, /Bitget API 暂不可用/);
+    else {
+      assert.match(html, /Bitget API 暂不可用/);
+      assert.match(html, /当前数据截至 09\/08 11:09，/);
+      assert.match(html, /<span class="text-danger font-semibold">Bitget API 暂不可用<\/span>/);
+      assert.match(html, /<button[^>]*class="[^"]*button button-primary button-small[^"]*sync-notice-refresh[^"]*"[^>]*>手动刷新<\/button>/);
+      assert.doesNotMatch(html, /，请|button-text/);
+      assert.doesNotMatch(html, /下次更新将重试/);
+    }
   }
 });
 

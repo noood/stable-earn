@@ -36,7 +36,6 @@ export type LiveRate = {
   /** Prior identity key used only to reuse an existing row during identity repair. */
   legacyIdentityKey?: string;
   identityKey?: string;
-  identityFingerprint?: string;
   /** Required when an adapter can return a product absent from the compatibility templates. */
   catalog?: {
     accountId: string;

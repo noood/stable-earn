@@ -1,7 +1,11 @@
 import handler from "vinext/server/fetch-handler";
 import { enqueueScheduledRefresh, consumeScheduledRefresh, type ScheduledSyncJob } from "@/lib/scheduled-sync";
 
-type WorkerEnv = Cloudflare.Env & { SYNC_QUEUE: Queue<ScheduledSyncJob> };
+type WorkerEnv = Cloudflare.Env & { SYNC_QUEUE: Queue<ScheduledSyncJob>; SCHEDULED_SYNC_ENABLED?: string };
+
+function scheduledSyncEnabled(env: WorkerEnv) {
+  return env.SCHEDULED_SYNC_ENABLED?.trim().toLowerCase() !== "false";
+}
 
 const securityHeaders = {
   "Referrer-Policy": "no-referrer",
@@ -18,9 +22,14 @@ export default {
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   },
   scheduled(controller: ScheduledController, env: WorkerEnv, context: ExecutionContext) {
+    if (!scheduledSyncEnabled(env)) return;
     context.waitUntil(enqueueScheduledRefresh(env.SYNC_QUEUE, controller.scheduledTime));
   },
-  queue(batch: MessageBatch<ScheduledSyncJob>) {
+  queue(batch: MessageBatch<ScheduledSyncJob>, env: WorkerEnv) {
+    if (!scheduledSyncEnabled(env)) {
+      for (const message of batch.messages) message.ack();
+      return;
+    }
     return consumeScheduledRefresh(batch);
   },
 } satisfies ExportedHandler<WorkerEnv, ScheduledSyncJob>;

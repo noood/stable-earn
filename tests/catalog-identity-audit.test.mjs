@@ -9,16 +9,16 @@ test("catalog identity audit reports duplicate identities and orphaned reference
   const db = sqliteDb();
   const now = "2026-10-02T00:00:00.000Z";
   const insertCatalog = db.sqlite.prepare(`INSERT INTO product_catalog
-    (owner_id, product_id, canonical_product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    (owner_id, product_id, canonical_product_id, identity_key, payload, status, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
   const payload = (id, accountId = "bitget-global") => JSON.stringify({
     id,
     accountId,
     productDataMode: "api",
     identityKey: "same-family",
   });
-  insertCatalog.run("user", "bg-current", "bg-usdt-simple", "same-family", "fingerprint-a", payload("bg-current"), "active", now, now);
-  insertCatalog.run("user", "api-bg-legacy", "bg-usdt-simple", "same-family", "fingerprint-b", payload("api-bg-legacy"), "active", now, now);
+  insertCatalog.run("user", "bg-current", "bg-usdt-simple", "same-family", payload("bg-current"), "active", now, now);
+  insertCatalog.run("user", "api-bg-legacy", "bg-usdt-simple", "same-family", payload("api-bg-legacy"), "active", now, now);
   db.sqlite.prepare("INSERT INTO holdings (user_id, product_id, amount, updated_at) VALUES (?, ?, ?, ?)")
     .run("user", "missing-product", 12, now);
   db.sqlite.prepare(`INSERT INTO user_products

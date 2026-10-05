@@ -302,7 +302,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
     <ModalFrame ariaLabel="API 设置" title="API 设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-8">
       <section>
         <div className="api-settings-split-row">
-          <SectionIntro title="手动刷新频率" description="仅限制手动刷新；不影响每日 07:00 更新和当天首次打开时的刷新。设置同步至此邮箱所有设备。" />
+          <SectionIntro title="手动刷新频率" description="仅限制手动刷新；当天首次打开页面时仍会自动更新。设置同步至此邮箱所有设备。" />
           <div className="cooldown-options" role="radiogroup" aria-label="手动刷新冷却时间" aria-busy={cooldownMinutes === null || savingCooldown}>
             {([{ value: 0, label: "无" }, { value: 30, label: "30 分钟" }] as const).map((option) => (
               <button key={option.value} type="button" role="radio" aria-checked={cooldownMinutes === option.value} className="cooldown-option" disabled={cooldownMinutes === null || savingCooldown} onClick={() => void updateCooldown(option.value)}>

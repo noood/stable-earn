@@ -30,12 +30,16 @@ test("private preview still contains the long-history and manual-field scenarios
   assert.ok(holdingsPreview.manualProducts.some((product) => product.id === "manual-preview-fixed"));
 });
 
-test("private route remains account-scoped and does not fall back to global seeds", () => {
+test("private route serves a static shell and keeps account data client-loaded", () => {
   const privatePage = readFileSync(new URL("../app/private/page.tsx", import.meta.url), "utf8");
+  const privateClient = readFileSync(new URL("../app/private/private-dashboard-client.tsx", import.meta.url), "utf8");
   const dashboard = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
   const history = readFileSync(new URL("../app/components/product-history.tsx", import.meta.url), "utf8");
-  assert.match(privatePage, /<Dashboard mode="private"/);
-  assert.match(privatePage, /localPreview=\{process\.env\.NODE_ENV === "development"\}/);
+  assert.match(privatePage, /dynamic = "force-static"/);
+  assert.match(privatePage, /<PrivateDashboardClient \/>/);
+  assert.doesNotMatch(privatePage, /searchParams|<Dashboard/);
+  assert.match(privateClient, /ssr: false/);
+  assert.match(privateClient, /localPreview=\{process\.env\.NODE_ENV === "development"\}/);
   assert.match(dashboard, /useState\(\(\) => isDemo \? publicDemoProducts : \[\]\)/);
   assert.match(dashboard, /loadHistoryPage=\{isDemo \|\| localPreview \? undefined/);
   assert.match(history, /product-history-loading/);

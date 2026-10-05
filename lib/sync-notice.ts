@@ -4,6 +4,15 @@ export { nextScheduledRefreshAt } from "./sync-cache";
 
 export const serverReadFailureMessage = "服务器读取失败，数据无法显示，请刷新页面。";
 
+export function completedDataSummary(
+  timestamp: string,
+  options: { scheduledRefreshFailed: boolean; scheduledSyncDisabled: boolean; nextRefresh: string | null; hasSyncFailure: boolean },
+) {
+  if (options.scheduledRefreshFailed || options.hasSyncFailure) return `当前数据截至 ${timestamp}，`;
+  if (options.scheduledSyncDisabled) return `当前数据截至 ${timestamp}，每日首次打开自动更新。`;
+  return `当前数据截至 ${timestamp}${options.nextRefresh ? `，预计 ${options.nextRefresh} 自动更新` : ""}。`;
+}
+
 /**
  * Product IDs are useful in Events while investigating an upstream mismatch,
  * but they are not actionable dashboard copy. Older cached snapshots may still
@@ -33,10 +42,10 @@ export function dashboardReadState(input: {
 export function syncFailureSummary(failures: string[]): string {
   failures = failures.map(sanitizeSyncFailure);
   if (failures.includes("页面数据读取失败")) return serverReadFailureMessage;
-  const incomplete = failures.filter((value) => value.includes("未返回"));
-  const actualFailures = failures.filter((value) => !value.includes("未返回"));
+  const incomplete = failures.filter(isIncompleteFailure);
+  const actualFailures = failures.filter((value) => !isIncompleteFailure(value));
   if (failures.some((value) => value === "公开交易所" || value.includes("数据更新失败"))) {
-    return "本次产品和持仓数据更新失败；下次更新将重试。";
+    return "本次产品和持仓数据更新失败";
   }
   const messages = [
     incomplete.length ? incomplete.map(formatIncompleteFailure).join("、") : "",
@@ -44,12 +53,16 @@ export function syncFailureSummary(failures: string[]): string {
       ? ([...new Set(actualFailures.map(failureTarget).filter(Boolean))].map((target) => `${target} API 暂不可用`).join("、") || "交易所 API 暂不可用")
       : "",
   ].filter(Boolean);
-  return `${messages.join("；")}；下次更新将重试。`;
+  return messages.join("，");
 }
 
 function formatIncompleteFailure(value: string) {
   const bitget = value.match(/^Bitget（(.+)）$/);
-  return bitget ? `Bitget ${bitget[1]}` : value;
+  return bitget ? `Bitget ${bitget[1].replace("接口未完整返回", "数据未完整返回")}` : value;
+}
+
+function isIncompleteFailure(value: string) {
+  return value.includes("未返回") || value.includes("未完整返回");
 }
 
 function failureTarget(value: string) {
@@ -68,11 +81,12 @@ type RefreshStatus = {
   lastAttemptAt: string | null;
   lastError: string | null;
   scheduledAt?: string | null;
-  scheduledState?: ScheduledRefreshState;
+  scheduledState?: ScheduledRefreshState | "disabled";
 };
 
 /** Bridge the gap between a scheduled slot and the next cache poll. */
 export function scheduledRefreshPending(now: number, cache?: RefreshStatus | null) {
+  if (cache?.scheduledState === "disabled") return false;
   const slot = Date.parse(nextScheduledRefreshAt(now)) - 24 * 60 * 60 * 1000;
   const attemptedAt = Date.parse(cache?.lastAttemptAt ?? "");
   if (cache?.state === "syncing" && attemptedAt >= slot) {

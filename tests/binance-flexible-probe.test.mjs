@@ -35,6 +35,61 @@ test("Binance flexible complete empty responses remain a successful empty result
   assert.equal(routineResult.positionListsComplete, true);
 });
 
+test("Binance tier APR fields are final rates with only the API-reported quota ranges", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), path: new URL(url).pathname }),
+      readExchangeJson: async (response) => response.path.endsWith("/flexible/list")
+        ? {
+          total: 1,
+          rows: [{
+            asset: "BTC",
+            productId: "BTC001",
+            latestAnnualPercentageRate: "0.05000000",
+            tierAnnualPercentageRate: { "0-5BTC": 0.05, "5-10BTC": 0.03 },
+          }],
+        }
+        : { total: 0, rows: [] },
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { fetchBinanceFlexibleSnapshot } = load("@/lib/integrations/binance");
+  const { effectiveApr, productHasUnknownTierCapacity } = load("@/lib/domain");
+  const { productInformationIssues, productParticipatesInInterest } = load("@/lib/product-status");
+
+  const result = await fetchBinanceFlexibleSnapshot({ apiKey: "key", apiSecret: "secret" }, "global", ["BTC"]);
+  const rate = result.rates[0];
+
+  assert.equal(result.productApiStatus, "complete");
+  assert.equal(result.positionApiStatus, "complete");
+  assert.equal(rate.apr, 5);
+  assert.deepEqual(rate.tiers, [
+    { min: 0, max: 5, apr: 5 },
+    { min: 5, max: 10, apr: 3 },
+  ]);
+  assert.equal(rate.rateCoverage, "complete");
+  assert.equal(productHasUnknownTierCapacity({ tiers: rate.tiers }), false);
+  assert.ok(Math.abs(effectiveApr({ tiers: rate.tiers }, 7) - (31 / 7)) < 1e-9);
+  const product = {
+    id: rate.productId,
+    accountId: "binance-global",
+    exchange: "binance",
+    region: "global",
+    asset: "BTC",
+    name: "Simple Earn Flexible",
+    productDataMode: "api",
+    apiAccess: "authenticated",
+    holdingDataMode: "api",
+    productType: "flexible",
+    tiers: rate.tiers.map((tier, index) => ({ ...tier, id: `${rate.productId}-${index}` })),
+    source: { kind: "live", label: "Binance", fetchedAt: rate.fetchedAt },
+    rateCoverage: rate.rateCoverage,
+    identityKey: rate.identityKey,
+  };
+  assert.deepEqual(productInformationIssues(product), []);
+  assert.equal(productParticipatesInInterest(product, 7), true);
+});
+
 test("Binance distinguishes a failed endpoint from a complete empty response", async () => {
   const load = moduleLoader({
     "@/lib/exchange-fetch": {

@@ -20,7 +20,6 @@ type CatalogRow = {
   owner_id: string;
   product_id: string;
   identity_key: string;
-  identity_fingerprint: string | null;
   payload: string;
   status: "active" | "archived";
   first_seen_at: string;
@@ -43,7 +42,7 @@ export type ProductCatalogSync = {
 
 export async function loadCatalogRows(db: D1Database, ownerId: string) {
   const result = await db.prepare(`SELECT owner_id, product_id, identity_key,
-      identity_fingerprint, payload, status, first_seen_at, last_seen_at, archived_at
+      payload, status, first_seen_at, last_seen_at, archived_at
       FROM product_catalog WHERE owner_id = ? ORDER BY first_seen_at, product_id`).bind(ownerId).all<CatalogRow>();
   return result.results;
 }
@@ -102,10 +101,7 @@ export async function prepareProductCatalogSync(
     || hasPositiveFreshHolding(candidate, freshHoldings))) {
     const identityKey = rate.identityKey ?? rate.canonicalProductId ?? rate.productId;
     const canonicalProductId = identityKey;
-    const fingerprint = normalizeFingerprint(rate.identityFingerprint);
     const seed = catalogProductTemplates.find((product) => product.id === canonicalProductId);
-    // Fingerprints are retained for diagnostics, but are not product identity.
-    // Product-list and position endpoints may omit different mutable fields.
     const selectedForIdentity = selectedByIdentity.get(identityKey) ?? new Set<string>();
     const currentIdentityCandidates = (byIdentity.get(identityKey) ?? [])
       .filter((row) => !selectedForIdentity.has(row.product_id));
@@ -119,11 +115,8 @@ export async function prepareProductCatalogSync(
     ).values()];
     const current = preferredCatalogRow(identityCandidates, persistedHoldings, purchaseDates)
       ?? (seed && !selectedForIdentity.has(seed.id) ? rows.find((row) => row.product_id === seed.id && row.identity_key === seed.identityKey) : undefined);
-    const baseline = !current && seed && !selectedForIdentity.has(seed.id)
-      ? rows.find((row) => row.product_id === seed.id && row.identity_key === seed.identityKey && !normalizeFingerprint(row.identity_fingerprint))
-      : undefined;
-    const selectedCurrent = current ?? baseline;
-    const id = selectedCurrent?.product_id ?? catalogProductId(canonicalProductId, identityKey, fingerprint);
+    const selectedCurrent = current;
+    const id = selectedCurrent?.product_id ?? catalogProductId(canonicalProductId, identityKey);
     if (selectedCurrent && selectedCurrent.identity_key !== identityKey) selectedLegacyRows.add(selectedCurrent.product_id);
     const selectedBase = seed ?? (selectedCurrent ? parseProduct(selectedCurrent.payload)[0] : undefined);
     const base = restoreCachedCapacity(selectedBase, identityCandidates) ?? productTemplateFromRate(rate, id, identityKey);
@@ -183,7 +176,7 @@ export async function prepareProductCatalogSync(
         ? row
         : preferredCatalogRow(byIdentity.get(row.identity_key) ?? [], persistedHoldings, purchaseDates);
       // Once a stable identity has a selected active row, duplicate active
-      // rows created by an older fingerprint must not remain visible.
+      // duplicate rows from older identity schemes must not remain visible.
       if (selectedForIdentity && selectedForIdentity.product_id !== row.product_id
         && selectedForIdentity.status === "active"
         && (persistedHoldings.get(row.product_id) ?? 0) <= 0) {
@@ -513,13 +506,13 @@ function updateCatalogStatement(
   hasLegacyCanonicalColumn: boolean,
 ) {
   const query = hasLegacyCanonicalColumn
-    ? `UPDATE product_catalog SET canonical_product_id = ?, identity_key = ?, identity_fingerprint = ?, payload = ?,
+    ? `UPDATE product_catalog SET canonical_product_id = ?, identity_key = ?, payload = ?,
         status = ?, last_seen_at = ?, archived_at = ? WHERE owner_id = ? AND product_id = ?`
-    : `UPDATE product_catalog SET identity_key = ?, identity_fingerprint = ?, payload = ?,
+    : `UPDATE product_catalog SET identity_key = ?, payload = ?,
         status = ?, last_seen_at = ?, archived_at = ? WHERE owner_id = ? AND product_id = ?`;
   const values = hasLegacyCanonicalColumn
-    ? [product.identityKey, product.identityKey, normalizeFingerprint(product.identityFingerprint), JSON.stringify(product), active ? "active" : "archived", now, active ? null : now, ownerId, row.product_id]
-    : [product.identityKey, normalizeFingerprint(product.identityFingerprint), JSON.stringify(product), active ? "active" : "archived", now, active ? null : now, ownerId, row.product_id];
+    ? [product.identityKey, product.identityKey, JSON.stringify(product), active ? "active" : "archived", now, active ? null : now, ownerId, row.product_id]
+    : [product.identityKey, JSON.stringify(product), active ? "active" : "archived", now, active ? null : now, ownerId, row.product_id];
   return db.prepare(query).bind(...values);
 }
 
@@ -534,22 +527,21 @@ function insertCatalogStatement(
 ) {
   const query = hasLegacyCanonicalColumn
     ? `INSERT INTO product_catalog
-        (owner_id, product_id, canonical_product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at, archived_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)
-      ON CONFLICT(owner_id, product_id) DO UPDATE SET
-        canonical_product_id = excluded.canonical_product_id, identity_key = excluded.identity_key,
-        identity_fingerprint = excluded.identity_fingerprint, payload = excluded.payload,
-        last_seen_at = excluded.last_seen_at, status = 'active', archived_at = NULL`
-    : `INSERT INTO product_catalog
-        (owner_id, product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at, archived_at)
+        (owner_id, product_id, canonical_product_id, identity_key, payload, status, first_seen_at, last_seen_at, archived_at)
       VALUES (?, ?, ?, ?, ?, 'active', ?, ?, NULL)
       ON CONFLICT(owner_id, product_id) DO UPDATE SET
-        identity_key = excluded.identity_key, identity_fingerprint = excluded.identity_fingerprint,
-        payload = excluded.payload, last_seen_at = excluded.last_seen_at,
+        canonical_product_id = excluded.canonical_product_id, identity_key = excluded.identity_key,
+        payload = excluded.payload,
+        last_seen_at = excluded.last_seen_at, status = 'active', archived_at = NULL`
+    : `INSERT INTO product_catalog
+        (owner_id, product_id, identity_key, payload, status, first_seen_at, last_seen_at, archived_at)
+      VALUES (?, ?, ?, ?, 'active', ?, ?, NULL)
+      ON CONFLICT(owner_id, product_id) DO UPDATE SET
+        identity_key = excluded.identity_key, payload = excluded.payload, last_seen_at = excluded.last_seen_at,
         status = 'active', archived_at = NULL`;
   const values = hasLegacyCanonicalColumn
-    ? [ownerId, product.id, identityKey, identityKey, normalizeFingerprint(product.identityFingerprint), JSON.stringify(product), now, now]
-    : [ownerId, product.id, identityKey, normalizeFingerprint(product.identityFingerprint), JSON.stringify(product), now, now];
+    ? [ownerId, product.id, identityKey, identityKey, JSON.stringify(product), now, now]
+    : [ownerId, product.id, identityKey, JSON.stringify(product), now, now];
   return db.prepare(query).bind(...values);
 }
 
@@ -617,7 +609,6 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
     manualFields: rate.manualFields ?? base.manualFields,
     externalProductId: rate.externalProductId ?? base.externalProductId,
     identityKey,
-    identityFingerprint: rate.identityFingerprint ?? base.identityFingerprint,
     tiers,
     rateCoverage: rate.rateCoverage === "base_only" && capacityKnown
       ? "complete"
@@ -669,7 +660,6 @@ function productTemplateFromRate(rate: LiveRate, id: string, identityKey: string
     capacityFetchedAt: rate.capacityFetchedAt,
     externalProductId: rate.externalProductId,
     identityKey,
-    identityFingerprint: rate.identityFingerprint,
   } as Product;
 }
 
@@ -677,6 +667,7 @@ function parseProduct(payload: string) {
   try {
     const raw = JSON.parse(payload) as Record<string, unknown>;
     if (!raw || typeof raw.id !== "string" || typeof raw.identityKey !== "string") return [];
+    delete raw.identityFingerprint;
     const value = raw as unknown as Product;
     if (raw.productDataMode === "api" || raw.productDataMode === "manual") return [value];
     // Rows created before productDataMode was introduced were system catalog
@@ -736,8 +727,10 @@ function recordBinanceCatalogDecision(
   });
 }
 
-function catalogProductId(canonicalProductId: string, identityKey: string, fingerprint: string | null) {
-  const value = `${canonicalProductId}|${identityKey}|${fingerprint ?? ""}`;
+function catalogProductId(canonicalProductId: string, identityKey: string) {
+  // Preserve the prior null-fingerprint hash input so new IDs remain stable
+  // across removal of the unused optional fingerprint field.
+  const value = `${canonicalProductId}|${identityKey}|`;
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
     hash ^= value.charCodeAt(index);
@@ -745,8 +738,4 @@ function catalogProductId(canonicalProductId: string, identityKey: string, finge
   }
   const slug = canonicalProductId.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 40);
   return `api-${slug}-${(hash >>> 0).toString(36)}`;
-}
-
-function normalizeFingerprint(value: string | null | undefined) {
-  return value?.trim() || null;
 }

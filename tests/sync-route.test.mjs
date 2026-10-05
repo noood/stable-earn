@@ -3,7 +3,7 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
-function fixture() {
+function fixture({ scheduledEnabled = true } = {}) {
   const logs = [];
   let time = Date.parse("2026-09-05T00:56:15.064Z");
   class Clock extends Date {
@@ -38,7 +38,11 @@ function fixture() {
   const rate = (productId) => ({ productId, apr: 6, fetchedAt: new Clock().toISOString() });
   const load = moduleLoader({
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
-    "@/lib/db": { getDatabase: async () => db, getUserIdentity: async () => ({ userId: "test-user" }) },
+    "@/lib/db": {
+      getDatabase: async () => db,
+      getUserIdentity: async () => ({ userId: "test-user" }),
+      isScheduledSyncEnabled: () => scheduledEnabled,
+    },
     "@/lib/credentials": { loadCredentials: async () => ({ "binance-global": {}, "bitget-global": { passphrase: "test" }, "okx-global": { apiKey: "key", apiSecret: "secret", passphrase: "pass" } }) },
     "@/lib/local-preview": { isLocalPreviewRequest: () => false },
     "@/lib/user-settings": { loadManualRefreshCooldown: async () => 30, manualRefreshCooldownMs: (minutes) => minutes * 60000 },
@@ -176,6 +180,17 @@ test("daily opening waits for the scheduled retry window, then refreshes once af
     assert.equal(result.cache.state, "updated");
     assert.equal(f.logs.filter((r) => r.event === "sync_started" && r.trigger === "daily").length, 1);
   }
+});
+
+test("paused scheduled sync does not block daily opening and hides its schedule metadata", async () => {
+  const f = fixture({ scheduledEnabled: false });
+  f.setTime("2026-09-04T23:01:00Z");
+  const result = await f.read("?visit=1");
+  assert.equal(result.cache.state, "updated");
+  assert.equal(result.cache.scheduledAt, null);
+  assert.equal(result.cache.scheduledState, "disabled");
+  assert.equal(result.dailyRefreshPending, false);
+  assert.equal(f.logs.filter((entry) => entry.event === "sync_started" && entry.trigger === "daily").length, 1);
 });
 
 test("simultaneous opening and manual requests cannot overlap exchange work", async () => {

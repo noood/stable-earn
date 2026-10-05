@@ -116,8 +116,8 @@ test("Binance upstream aliases retain account scope when two accounts reuse one 
   const db = sqliteDb();
   const now = "2026-10-03T00:00:00.000Z";
   const insert = db.sqlite.prepare(`INSERT INTO product_catalog
-    (owner_id, product_id, canonical_product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at)
-    VALUES ('user', ?, ?, ?, 'fixed:7', ?, 'active', ?, ?)`);
+    (owner_id, product_id, canonical_product_id, identity_key, payload, status, first_seen_at, last_seen_at)
+    VALUES ('user', ?, ?, ?, ?, 'active', ?, ?)`);
   for (const [id, accountId, region] of [
     ["global-row", "binance-global", "global"],
     ["bahrain-row", "binance-bahrain", "bahrain"],

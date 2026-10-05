@@ -1,12 +1,3 @@
-type IdentitySnapshot = {
-  productType?: "flexible" | "fixed";
-  termDays?: number;
-  subscriptionStartsAt?: string;
-  subscriptionEndsAt?: string;
-  /** Accepted for adapter compatibility, but ordinary rate tiers are mutable. */
-  tiers?: unknown;
-};
-
 export type PlatformProductIdentityInput = {
   /** Account id already includes the platform and region (for example bybit-global). */
   accountId: string;
@@ -18,7 +9,6 @@ export type PlatformProductIdentityInput = {
 
 export type ProductIdentityRecord = {
   identityKey?: string;
-  identityFingerprint?: string;
 };
 
 export type ProductIdentityChange = {
@@ -55,16 +45,6 @@ export function stableIdentitySlug(value: string) {
     .slice(0, 48);
 }
 
-export function productIdentityFingerprint(snapshot: IdentitySnapshot) {
-  // Identity describes the offer, not a mutable availability window. APR,
-  // quota and subscription timestamps may be omitted or change between the
-  // product-list and position endpoints; they must not create a new product.
-  return JSON.stringify({
-    productType: snapshot.productType ?? null,
-    termDays: snapshot.termDays ?? null,
-  });
-}
-
 /**
  * Build the platform identity used by every API-backed product.
  *
@@ -97,8 +77,7 @@ export function scopedExternalProductAlias(accountId: string, asset: string, ext
 
 export function compareProductIdentity(previous: ProductIdentityRecord | undefined, current: ProductIdentityRecord): ProductIdentityChange {
   if (!previous) return { state: "new", currentKey: current.identityKey };
-  const changed = previous.identityKey !== current.identityKey
-    || previous.identityFingerprint !== current.identityFingerprint;
+  const changed = previous.identityKey !== current.identityKey;
   return {
     state: changed ? "changed" : "unchanged",
     previousKey: previous.identityKey,

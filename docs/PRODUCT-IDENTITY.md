@@ -9,9 +9,8 @@
 | `externalProductId` | 平台 API 的稳定产品身份值；通常是原始 ID，若平台复用原始 ID，则附加官方两端都有的稳定区分字段 | 用于识别平台产品 | 否 |
 | `identityKey` | 应用层的稳定产品身份 | 是，API 和持仓统一靠它匹配 | 否 |
 | `product_id` | D1 中的持久化行 ID，也是各表外键 | 是，用于数据库关联 | 否 |
-| `identityFingerprint` | 身份快照诊断信息 | 否，只用于审计 | 可以变化 |
 
-`identityKey` 和 `product_id` 不要求相等。前者回答“这是不是同一个平台产品”，后者回答“数据库里引用哪一行”。已有 `product_id` 是持久化外键，不能因为命名不统一就直接重命名。
+`identityKey` 和 `product_id` 不要求相等。前者回答“这是不是同一个平台产品”，后者回答“数据库里引用哪一行”。新 API 行 ID 由稳定 identity key 确定；已有 `product_id` 是持久化外键，不能因为命名不统一就直接重命名。产品指纹已删除，不再作为匹配信息、数据库字段或行 ID 输入。
 
 ## `identityKey` 格式
 

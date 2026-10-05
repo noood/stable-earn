@@ -5,7 +5,7 @@ import { fetchBitgetFixedSnapshot, fetchBitgetSavingsSnapshot, type BitgetSaving
 import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, fetchBybitShortFixedSnapshots } from "@/lib/integrations/bybit";
 import { fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
 import { loadCredentials } from "@/lib/credentials";
-import { getDatabase, getUserIdentity } from "@/lib/db";
+import { getDatabase, getUserIdentity, isScheduledSyncEnabled } from "@/lib/db";
 import { fetchPublicRateSnapshot, summarizePublicFailures, type LiveRate } from "@/lib/live-rates";
 import { privateResponseHeaders } from "@/lib/request-security";
 import { mergeRates } from "@/lib/rate-cache";
@@ -95,13 +95,17 @@ export async function GET(request: Request) {
   const identity = await getUserIdentity(request);
   if (!identity) return NextResponse.json({ error: "请先登录。" }, { status: 401, headers: privateResponseHeaders });
   const ownerId = identity.userId;
+  const scheduledSyncEnabled = isScheduledSyncEnabled();
   if (isLocalPreviewRequest(request)) {
     const scenario = new URL(request.url).searchParams.get("syncScenario");
     if (scenario === "product-read-error" || scenario === "both-read-error") {
       return NextResponse.json({ error: "本地模拟：交易所缓存读取失败" }, { status: 503, headers: privateResponseHeaders });
     }
     const preview = localSyncScenarioPreview(scenario) ?? localPrivateProductsPreview();
-    return NextResponse.json(preview, { status: scenario === "initial-error" ? 502 : 200, headers: privateResponseHeaders });
+    const responsePreview = !scheduledSyncEnabled && preview.cache
+      ? { ...preview, cache: { ...preview.cache, scheduledAt: null, scheduledState: "disabled" as const } }
+      : preview;
+    return NextResponse.json(responsePreview, { status: scenario === "initial-error" ? 502 : 200, headers: privateResponseHeaders });
   }
 
   const db = await getDatabase();
@@ -112,6 +116,10 @@ export async function GET(request: Request) {
   let pending = false;
   async function reply(response: Response) {
     const body = await response.json() as Record<string, unknown>;
+    const cache = body.cache;
+    if (!scheduledSyncEnabled && cache && typeof cache === "object" && !Array.isArray(cache)) {
+      body.cache = { ...(cache as Record<string, unknown>), scheduledAt: null, scheduledState: "disabled" };
+    }
     await recordDueManualMaturities(db, ownerId);
     const changeEvents = await loadProductChangeEvents(db, ownerId);
     return NextResponse.json({ ...body, changeEvents, dailyRefreshPending: daily && pending }, {
@@ -141,7 +149,7 @@ export async function GET(request: Request) {
     const cached = await loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey);
     const now = Date.now();
     // Reserve the whole scheduled retry window, not just an individual request.
-    if (scheduledRefreshPending(now, syncCacheMetadata(cached, syncAttemptInProgress(cached, now) ? "syncing" : "fresh", now))) {
+    if (scheduledSyncEnabled && scheduledRefreshPending(now, syncCacheMetadata(cached, syncAttemptInProgress(cached, now) ? "syncing" : "fresh", now))) {
       pending = true;
       return reply(snapshot(cached, true));
     }
@@ -863,10 +871,10 @@ function buildFailures(status: PrivateStatuses, diagnostics: PrivateDiagnostics,
 
 function buildNote(failures: string[]) {
   if (failures.length === 0) return "";
-  const incomplete = failures.filter((failure) => failure.includes("未返回"));
-  const actualFailures = failures.filter((failure) => !failure.includes("未返回"));
+  const incomplete = failures.filter((failure) => failure.includes("未返回") || failure.includes("未完整返回"));
+  const actualFailures = failures.filter((failure) => !failure.includes("未返回") && !failure.includes("未完整返回"));
   if (failures.some((failure) => failure === "公开交易所" || failure.includes("数据更新失败"))) {
-    return "本次产品和持仓数据更新失败；下次更新将重试。";
+    return "本次产品和持仓数据更新失败";
   }
   const incompleteText = incomplete.map((failure) => sanitizeSyncFailure(failure)).join("、");
   const actualTargets = [...new Set(actualFailures.map((failure) => failure.replace(/（.*$/, "").trim()).filter(Boolean))];
@@ -877,7 +885,7 @@ function buildNote(failures: string[]) {
     incompleteText,
     actualText,
   ].filter(Boolean).length
-    ? `${[incompleteText, actualText].filter(Boolean).join("；")}；下次更新将重试。`
+    ? `${[incompleteText, actualText].filter(Boolean).join("；")}`
     : "";
 }
 

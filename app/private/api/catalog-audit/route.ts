@@ -23,7 +23,6 @@ export async function GET(request: Request) {
       // The persisted source of truth is now identityKey.
       canonicalProductId: row.identity_key,
       identityKey: row.identity_key,
-      identityFingerprint: row.identity_fingerprint,
       status: row.status,
       accountId: payload?.accountId ?? null,
       exchange: payload?.exchange ?? null,

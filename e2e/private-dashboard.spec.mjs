@@ -36,11 +36,19 @@ test("private dashboard reaches a settled table state and switches assets", asyn
   await expect(table).toHaveAttribute("aria-busy", "false");
   await expect(table.locator("tbody tr.product-row, tbody td[colspan='5']").first()).toBeVisible();
   await expect(table.getByRole("columnheader", { name: "有效 APR" })).toBeVisible();
-
   await page.getByRole("button", { name: "USDC" }).click();
   await expect(page.getByRole("heading", { name: "USDC 持仓" })).toBeVisible();
   await expect(page).toHaveURL(/asset=USDC/);
   expect(pageErrors).toEqual([]);
+});
+
+test("header menu action labels align vertically within their rows", async ({ page }) => {
+  await page.goto("/private");
+  await page.locator(".action-menu-trigger").click();
+  const apiSettings = page.locator(".action-menu-popover .menu-item").filter({ hasText: "API 设置" });
+  await expect(apiSettings).toBeVisible();
+  await expect(apiSettings).toHaveCSS("display", "flex");
+  await expect(apiSettings).toHaveCSS("align-items", "center");
 });
 
 test("an unknown API quota shows a red warning instead of unlimited capacity", async ({ page }) => {
@@ -69,8 +77,111 @@ test("complete empty sync preview shows an ordinary empty directory without an A
   await expect(table).toBeVisible();
   await expect(table).toHaveAttribute("aria-busy", "false");
   await expect(table.getByText("吸引人的稳定理财尚未出现！")).toBeVisible();
-  await expect(page.getByText(/本地测试数据截至 .*；不会写入数据库。/)).toBeVisible();
+  await expect(page.getByText(/当前数据截至 .*，每日首次打开自动更新。/)).toBeVisible();
   await expect(page.locator(".error-panel")).toHaveCount(0);
+});
+
+test("a sync failure has a separate brand-colored manual refresh action", async ({ page }) => {
+  for (const viewport of [{ width: 780, height: 842 }, { width: 375, height: 812 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/private?syncScenario=error");
+    const notice = page.locator(".sync-notice-copy");
+    const refreshButton = page.getByRole("button", { name: "手动刷新" });
+    await expect(refreshButton).toBeVisible();
+    await expect(refreshButton).toHaveClass(/button-primary/);
+    await expect(refreshButton).toHaveClass(/button-small/);
+    await expect(refreshButton).toHaveCSS("font-size", "12px");
+    await expect(refreshButton).toHaveCSS("font-weight", "600");
+    await expect(refreshButton).toHaveCSS("padding-left", "12px");
+    await expect(refreshButton).toHaveCSS("border-radius", "8px");
+    await expect(refreshButton).toHaveCSS("background-color", "rgb(23, 63, 53)");
+    await expect(notice).toContainText(/当前数据截至 .*，/);
+    await expect(notice).not.toContainText("每日首次打开自动更新");
+    await expect(notice).toContainText("本次产品和持仓数据更新失败");
+    await expect(notice).not.toContainText("请手动刷新");
+    await expect(notice).not.toContainText("下次更新将重试");
+    const bounds = await page.evaluate(() => {
+      const notice = document.querySelector(".card.type-caption.mb-4");
+      const copy = document.querySelector(".sync-notice-copy");
+      const icon = document.querySelector(".sync-notice-icon");
+      const firstLine = document.querySelector(".sync-notice-message > span:first-child");
+      const button = document.querySelector(".sync-notice-refresh");
+      const rect = (node) => node.getBoundingClientRect();
+      return { viewportWidth: innerWidth, documentWidth: document.documentElement.scrollWidth,
+        notice: rect(notice), copy: rect(copy), icon: rect(icon), firstLine: rect(firstLine), button: rect(button) };
+    });
+    expect(bounds.documentWidth).toBeLessThanOrEqual(bounds.viewportWidth);
+    expect(bounds.button.x).toBeGreaterThanOrEqual(bounds.copy.x + bounds.copy.width);
+    expect(bounds.button.x + bounds.button.width).toBeLessThanOrEqual(bounds.notice.x + bounds.notice.width);
+    expect(Math.abs((bounds.copy.y + bounds.copy.height / 2) - (bounds.notice.y + bounds.notice.height / 2))).toBeLessThanOrEqual(1);
+    expect(Math.abs(bounds.icon.y - bounds.firstLine.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(bounds.icon.height - bounds.firstLine.height)).toBeLessThanOrEqual(1);
+    await refreshButton.click();
+    await expect(refreshButton).toBeVisible();
+  }
+});
+
+test("top error action stays disabled without a countdown while the menu shows the retry time", async ({ page }) => {
+  await page.route("**/private/api/products**", async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== "GET" || url.searchParams.get("preview") !== "1") return route.continue();
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.cache = { ...payload.cache, cooldownUntil: new Date(Date.now() + 30 * 60 * 1000).toISOString() };
+    await route.fulfill({ response, json: payload });
+  });
+
+  await page.goto("/private?syncScenario=error");
+  const notice = page.locator(".card.type-caption.mb-4");
+  const topRefresh = notice.getByRole("button", { name: "手动刷新" });
+  await expect(topRefresh).toBeDisabled();
+  await expect(topRefresh).toHaveText("手动刷新");
+  await expect(notice).not.toContainText("冷却至");
+
+  await page.locator(".action-menu-trigger").click();
+  const menuRefresh = page.locator(".menu-item-refresh");
+  await expect(menuRefresh).toBeDisabled();
+  await expect(menuRefresh).toContainText(/冷却至 \d{2}:\d{2}/);
+});
+
+test("top notice keeps success, partial failure, total failure, read failure and refresh states distinct", async ({ page }) => {
+  const notice = page.locator(".card.type-caption").first();
+
+  await page.goto("/private?syncScenario=success");
+  await expect(notice).toContainText(/当前数据截至 .*，每日首次打开自动更新。/);
+  await expect(notice.getByRole("button", { name: "手动刷新" })).toHaveCount(0);
+
+  await page.goto("/private?syncScenario=partial");
+  await expect(notice).toContainText(/当前数据截至 .*，/);
+  await expect(notice).toContainText("Bitget 持仓数据未完整返回");
+  await expect(notice).not.toContainText("每日首次打开自动更新");
+  const partialRefresh = notice.getByRole("button", { name: "手动刷新" });
+  await expect(partialRefresh).toBeVisible();
+  await expect(notice.locator(".sync-notice-message")).not.toContainText("请手动刷新");
+  await expect(partialRefresh).toHaveClass(/button-primary/);
+
+  await page.goto("/private?syncScenario=error");
+  await expect(notice).toContainText("本次产品和持仓数据更新失败");
+  await expect(notice).not.toContainText("每日首次打开自动更新");
+
+  await page.goto("/private?syncScenario=initial-error");
+  await expect(notice).toContainText("暂无成功测试数据，");
+  await expect(notice).toContainText("本次产品和持仓数据更新失败");
+  await expect(notice).not.toContainText("当前数据截至");
+  const noCacheRefresh = notice.getByRole("button", { name: "手动刷新" });
+  await expect(noCacheRefresh).toBeVisible();
+  await expect(noCacheRefresh).toHaveClass(/button-primary/);
+  await expect(notice.locator(".sync-notice-message")).not.toContainText("请手动刷新");
+
+  await page.goto("/private?syncScenario=product-read-error");
+  await expect(notice).toContainText("服务器读取失败，数据无法显示，请刷新页面。");
+  await expect(notice).not.toContainText("当前数据截至");
+  await expect(notice.getByRole("button", { name: "手动刷新" })).toHaveCount(0);
+
+  await page.goto("/private?syncScenario=syncing");
+  await expect(notice).toContainText("数据正在更新中，请稍候。");
+  await expect(notice).not.toContainText("当前数据截至");
+  await expect(notice.getByRole("button", { name: "手动刷新" })).toHaveCount(0);
 });
 
 test("API settings modal keeps its three sections, truthful account copy, and report feedback", async ({ page }) => {
@@ -130,9 +241,13 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(dialog.getByRole("heading", { name: "手动刷新频率" })).toBeVisible();
     const cooldownOptions = dialog.getByRole("radiogroup", { name: "手动刷新冷却时间" });
     await expect(cooldownOptions).toHaveCSS("width", "160px");
-    await expect(dialog.getByRole("radio", { name: "无" })).toBeVisible();
+    await expect(cooldownOptions).toHaveCSS("height", "40px");
+    const noCooldown = dialog.getByRole("radio", { name: "无" });
+    await expect(noCooldown).toBeVisible();
+    await expect(noCooldown).toHaveCSS("font-size", "14px");
+    await expect(noCooldown).toHaveCSS("line-height", "20px");
     await expect(dialog.getByRole("radio", { name: "30 分钟" })).toHaveAttribute("aria-checked", "true");
-    await expect(dialog.getByText("仅限制手动刷新；不影响每日 07:00 更新和当天首次打开时的刷新。设置同步至此邮箱所有设备。")).toBeVisible();
+    await expect(dialog.getByText("仅限制手动刷新；当天首次打开页面时仍会自动更新。设置同步至此邮箱所有设备。")).toBeVisible();
 
     await expect(dialog.getByRole("heading", { name: "配置 API" })).toBeVisible();
     await expect(dialog.locator(".api-settings-body > section").first()).toHaveCSS("margin-block-end", "32px");
@@ -153,8 +268,18 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     const checkButton = dialog.getByRole("button", { name: "检测 API" });
     const checkButtonWidth = await checkButton.evaluate((button) => getComputedStyle(button).width);
     const checkButtonHeight = await checkButton.evaluate((button) => getComputedStyle(button).height);
+    const addButton = dialog.getByRole("button", { name: "添加" }).first();
+    const editHoldingsButton = page.getByRole("button", { name: "编辑持仓" });
     await expect(checkButton).toHaveCSS("width", "96px");
-    await expect(checkButton).toHaveCSS("padding-left", "12px");
+    await expect(checkButton).toHaveCSS("height", "40px");
+    await expect(addButton).toHaveCSS("height", "40px");
+    await expect(editHoldingsButton).toHaveCSS("height", "40px");
+    await expect(checkButton).toHaveCSS("padding-left", "16px");
+    await expect(checkButton).toHaveCSS("padding-left", await addButton.evaluate((button) => getComputedStyle(button).paddingLeft));
+    await expect(checkButton).toHaveCSS("border-radius", "10px");
+    await expect(checkButton).toHaveCSS("border-radius", await addButton.evaluate((button) => getComputedStyle(button).borderRadius));
+    await expect(checkButton).toHaveCSS("padding-left", await editHoldingsButton.evaluate((button) => getComputedStyle(button).paddingLeft));
+    await expect(checkButton).toHaveCSS("border-radius", await editHoldingsButton.evaluate((button) => getComputedStyle(button).borderRadius));
     await expect(cooldownOptions).toHaveCSS("height", checkButtonHeight);
     await expect(checkButton).toHaveText("检测 API");
     await expect(dialog.getByText("只读检查已知接口，不写入产品、持仓或历史；报告不含持仓金额或密钥。OKX On-chain Earn 单独检查。")).toBeVisible();

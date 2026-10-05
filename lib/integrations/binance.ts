@@ -70,6 +70,12 @@ type BinanceTier = {
   apr: number;
 };
 
+type BinanceTierSchedule = {
+  tiers: BinanceTier[];
+  hasReportedTiers: boolean;
+  complete: boolean;
+};
+
 export type BinanceFlexibleSnapshot = {
   rates: LiveRate[];
   holdings: Record<string, number>;
@@ -139,7 +145,9 @@ export async function fetchBinanceFlexibleSnapshot(
     const positionRows = positions.rows.filter((row) => row.asset?.toUpperCase() === asset);
     const productScopeMismatchCount = products.rows.length - productRows.length;
     const positionScopeMismatchCount = positions.rows.length - positionRows.length;
-    const productRowsShapeComplete = productRows.every((row) => normalizeBinanceProductId(row.productId) && hasBinanceApr(row));
+    const productRowsShapeComplete = productRows.every((row) => normalizeBinanceProductId(row.productId)
+      && hasBinanceApr(row)
+      && parseBinanceTiers(asset, row.latestAnnualPercentageRate, row.tierAnnualPercentageRate).complete);
     const positionRowsShapeComplete = positionRows.every((row) => normalizeBinanceProductId(row.productId)
       && parseStrictFinite(row.totalAmount) !== undefined);
     const productListComplete = productResult.status === "fulfilled"
@@ -162,14 +170,15 @@ export async function fetchBinanceFlexibleSnapshot(
       productRowCount: productRows.length,
       productScopeMismatchCount,
       productRows: productRows.map((row) => {
-        const tiers = parseBinanceTiers(asset, row.latestAnnualPercentageRate, row.tierAnnualPercentageRate);
+        const schedule = parseBinanceTiers(asset, row.latestAnnualPercentageRate, row.tierAnnualPercentageRate);
         const hasApr = hasBinanceApr(row);
         return {
           productId: String(row.productId ?? "").trim() || null,
           asset: row.asset ?? null,
           latestAnnualPercentageRate: row.latestAnnualPercentageRate ?? null,
-          rateShape: !hasApr ? "no_rate" : tiers.length > 1 ? "tiered_rate" : "single_rate",
-          tierAnnualPercentageRate: tiers,
+          rateShape: !hasApr ? "no_rate" : schedule.hasReportedTiers ? "tiered_rate" : "single_rate",
+          tierAnnualPercentageRate: schedule.tiers,
+          tierScheduleComplete: schedule.complete,
         };
       }),
       positionApiStatus,
@@ -189,14 +198,12 @@ export async function fetchBinanceFlexibleSnapshot(
     // every position for the coin into it.
     const productRowsById = new Map<string, FlexibleProductRow>();
     let unmappedProductRowCount = 0;
-    let missingProductAprCount = 0;
     productRows.forEach((row) => {
       const productId = normalizeBinanceProductId(row.productId);
       if (!productId) {
         unmappedProductRowCount += 1;
         return;
       }
-      if (!hasBinanceApr(row)) missingProductAprCount += 1;
       const existing = productRowsById.get(productId);
       if (!existing || (!hasBinanceApr(existing) && hasBinanceApr(row))) productRowsById.set(productId, row);
     });
@@ -237,9 +244,10 @@ export async function fetchBinanceFlexibleSnapshot(
       const hasProductRow = Boolean(product);
       const rateSource = product;
       const hasApr = hasBinanceApr(rateSource);
-      const tiers = hasApr
+      const schedule: BinanceTierSchedule = hasApr
         ? parseBinanceTiers(asset, rateSource?.latestAnnualPercentageRate, rateSource?.tierAnnualPercentageRate)
-        : [];
+        : { tiers: [], hasReportedTiers: false, complete: false };
+      const tiers = schedule.tiers;
       const identity = buildPlatformProductIdentity({
         accountId,
         asset,
@@ -252,13 +260,13 @@ export async function fetchBinanceFlexibleSnapshot(
         ...identity,
         ...(!hasProductRow || !hasApr ? { productDataMode: "manual" as const } : {}),
         apr: tiers[0]?.apr ?? 0,
-        rateShape: !hasApr ? "no_rate" : tiers.length > 1 ? "tiered_rate" : "single_rate",
+        rateShape: !hasApr ? "no_rate" : schedule.hasReportedTiers ? "tiered_rate" : "single_rate",
         tiers,
         fetchedAt,
         sourceLabel: hasProductRow
           ? accountConfig.sourceLabel
           : accountConfig.sourceLabel.replace("账户 API", "账户持仓 API；产品资料待填写"),
-        rateCoverage: hasApr ? "complete" : "unavailable",
+        rateCoverage: !hasApr ? "unavailable" : !schedule.hasReportedTiers ? "base_only" : schedule.complete ? "complete" : "base_only",
         catalog: {
           accountId,
           exchange: "binance" as const,
@@ -276,10 +284,12 @@ export async function fetchBinanceFlexibleSnapshot(
       rates,
       holdings,
       productListComplete: productResult.status === "fulfilled"
-        && products.complete && productScopeMismatchCount === 0 && unmappedProductRowCount === 0 && missingProductAprCount === 0,
+        && products.complete && productScopeMismatchCount === 0 && unmappedProductRowCount === 0
+        && productRowsShapeComplete,
       positionListComplete,
       productApiStatus: productResult.status === "rejected" ? "error" as const
-        : products.complete && productScopeMismatchCount === 0 && unmappedProductRowCount === 0 && missingProductAprCount === 0 ? "complete" as const : "partial" as const,
+        : products.complete && productScopeMismatchCount === 0 && unmappedProductRowCount === 0
+        && productRowsShapeComplete ? "complete" as const : "partial" as const,
       positionApiStatus: positionResult.status === "rejected" ? "error" as const
         : positionListComplete ? "complete" as const : "partial" as const,
     };
@@ -584,28 +594,38 @@ function lockedRate(
 function parseBinanceTiers(
   asset: string,
   rawBaseApr: string | number | undefined,
-  rawBonusTiers: Record<string, number | string> | undefined,
-): BinanceTier[] {
-  const baseApr = finiteNumber(rawBaseApr) * 100;
-  const bonusTiers = Object.entries(rawBonusTiers ?? {}).flatMap(([label, rawApr]) => {
+  rawTiers: Record<string, number | string> | undefined,
+): BinanceTierSchedule {
+  const baseApr = parseBinanceApr(rawBaseApr);
+  const entries = Object.entries(rawTiers ?? {});
+  if (entries.length === 0) {
+    return {
+      tiers: [{ min: 0, max: null, apr: baseApr }],
+      hasReportedTiers: false,
+      complete: true,
+    };
+  }
+
+  // Binance documents tierAnnualPercentageRate values as the APR for each
+  // amount range. They are final tier APRs, not bonuses to add to the latest
+  // product APR. Use only the ranges actually returned; do not invent an
+  // unlimited base-rate tier after the final reported range.
+  const tiers = entries.flatMap(([label, rawApr]) => {
     const bounds = parseTierBounds(label, asset);
-    const bonusApr = finiteNumber(rawApr) * 100;
-    return bounds && Number.isFinite(bonusApr)
-      ? [{ ...bounds, apr: baseApr + bonusApr }]
+    const apr = parseBinanceApr(rawApr);
+    return bounds && Number.isFinite(apr)
+      ? [{ ...bounds, apr }]
       : [];
   }).sort((left, right) => left.min - right.min);
-
-  if (bonusTiers.length === 0) return [{ min: 0, max: null, apr: baseApr }];
-
-  const tiers: BinanceTier[] = [];
-  let cursor = 0;
-  for (const tier of bonusTiers) {
-    if (tier.min > cursor) tiers.push({ min: cursor, max: tier.min, apr: baseApr });
-    tiers.push(tier);
-    cursor = Math.max(cursor, tier.max ?? cursor);
-  }
-  tiers.push({ min: cursor, max: null, apr: baseApr });
-  return tiers;
+  const complete = tiers.length === entries.length
+    && tiers.length > 0
+    && tiers[0].min === 0
+    && tiers.every((tier, index) => index === 0 || tiers[index - 1].max === tier.min);
+  return {
+    tiers: tiers.length > 0 ? tiers : [{ min: 0, max: null, apr: baseApr }],
+    hasReportedTiers: true,
+    complete,
+  };
 }
 
 function parseTierBounds(label: string, asset: string) {

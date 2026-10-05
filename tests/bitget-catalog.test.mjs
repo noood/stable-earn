@@ -18,9 +18,9 @@ test("Bitget platform identities reuse the migrated row for the matching offer",
   };
   const now = "2026-10-02T00:00:00.000Z";
   db.sqlite.prepare(`INSERT INTO product_catalog
-    (owner_id, product_id, canonical_product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`)
-    .run("user", legacy.id, legacy.identityKey, legacy.identityKey, legacy.identityFingerprint ?? null, JSON.stringify(legacy), now, now);
+    (owner_id, product_id, canonical_product_id, identity_key, payload, status, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`)
+    .run("user", legacy.id, legacy.identityKey, legacy.identityKey, JSON.stringify(legacy), now, now);
   db.sqlite.prepare("INSERT INTO holdings (user_id, product_id, amount, updated_at) VALUES (?, ?, ?, ?)")
     .run("user", legacy.id, 300, now);
 
@@ -29,7 +29,6 @@ test("Bitget platform identities reuse the migrated row for the matching offer",
     canonicalProductId: `bitget-global:USDT:flexible:${externalProductId}`,
     externalProductId,
     identityKey: `bitget-global:USDT:flexible:${externalProductId}`,
-    identityFingerprint: '{"productType":"flexible","termDays":null}',
     apr,
     tiers: [{ min: 0, max, apr }],
     fetchedAt: now,
@@ -73,9 +72,9 @@ test("Bybit fixed-term duration identity reuses the matching legacy product row 
   };
   const now = "2026-10-03T00:00:00.000Z";
   db.sqlite.prepare(`INSERT INTO product_catalog
-    (owner_id, product_id, canonical_product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`)
-    .run("user", legacy.id, legacyIdentity, legacyIdentity, legacy.identityFingerprint ?? null, JSON.stringify(legacy), now, now);
+    (owner_id, product_id, canonical_product_id, identity_key, payload, status, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`)
+    .run("user", legacy.id, legacyIdentity, legacyIdentity, JSON.stringify(legacy), now, now);
   db.sqlite.prepare("INSERT INTO holdings (user_id, product_id, amount, updated_at) VALUES (?, ?, ?, ?)")
     .run("user", legacy.id, 94, now);
 
@@ -138,9 +137,9 @@ test("partial holding sync does not archive an active product after an APR drop"
     identityKey: "bitget-global:USDT:flexible:bg-usdt-standard",
   };
   db.sqlite.prepare(`INSERT INTO product_catalog
-    (owner_id, product_id, canonical_product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`)
-    .run("user", product.id, product.identityKey, product.identityKey, null, JSON.stringify(product), now, now);
+    (owner_id, product_id, canonical_product_id, identity_key, payload, status, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`)
+    .run("user", product.id, product.identityKey, product.identityKey, JSON.stringify(product), now, now);
   db.sqlite.prepare("INSERT INTO holdings (user_id, product_id, amount, updated_at) VALUES (?, ?, ?, ?)")
     .run("user", product.id, 0, now);
 

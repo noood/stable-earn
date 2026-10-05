@@ -8,6 +8,7 @@ type RuntimeEnv = Cloudflare.Env & {
   DB?: D1Database;
   POLICY_AUD?: string;
   TEAM_DOMAIN?: string;
+  SCHEDULED_SYNC_ENABLED?: string;
 };
 
 type UserIdentity = { userId: string; email: string };
@@ -26,6 +27,10 @@ export async function getDatabase() {
   }
 
   return db;
+}
+
+export function isScheduledSyncEnabled() {
+  return (env as RuntimeEnv).SCHEDULED_SYNC_ENABLED?.trim().toLowerCase() !== "false";
 }
 
 export async function getUserId(request: Request) {

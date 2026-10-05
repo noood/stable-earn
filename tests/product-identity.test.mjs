@@ -20,7 +20,7 @@ test("scoped upstream aliases cannot collide across exchange accounts", () => {
 
 test("manual catalog migration preserves old aliases and rewrites the embedded identity", () => {
   const migrationSql = readFileSync(new URL("../drizzle/0011_manual_identity_aliases.sql", import.meta.url), "utf8");
-  const db = sqliteDb();
+  const db = sqliteDb({ legacyIdentityFingerprint: true });
   const now = "2026-10-02T00:00:00.000Z";
   const payload = JSON.stringify({
     id: "manual-abc12345",
@@ -43,7 +43,7 @@ test("manual catalog migration preserves old aliases and rewrites the embedded i
 
 test("manual identity repair maps legacy account-asset ids to the default slug", () => {
   const migrationSql = readFileSync(new URL("../drizzle/0016_repair_manual_identity_aliases.sql", import.meta.url), "utf8");
-  const db = sqliteDb();
+  const db = sqliteDb({ legacyIdentityFingerprint: true });
   const now = "2026-10-02T00:00:00.000Z";
   const insert = db.sqlite.prepare(`INSERT INTO product_catalog
     (owner_id, product_id, canonical_product_id, identity_key, identity_fingerprint, payload, status, first_seen_at, last_seen_at)
@@ -72,7 +72,7 @@ test("manual identity repair maps legacy account-asset ids to the default slug",
 test("canonical column migration keeps aliases and removes only the obsolete column", () => {
   const aliasesSql = readFileSync(new URL("../drizzle/0011_manual_identity_aliases.sql", import.meta.url), "utf8");
   const dropSql = readFileSync(new URL("../drizzle/0012_remove_canonical_product_id.sql", import.meta.url), "utf8");
-  const db = sqliteDb();
+  const db = sqliteDb({ legacyIdentityFingerprint: true });
   const now = "2026-10-02T00:00:00.000Z";
   const payload = JSON.stringify({ id: "api-example", accountId: "bybit-global", asset: "USDT", productType: "flexible", productDataMode: "api", identityKey: "old-family" });
   db.sqlite.prepare(`INSERT INTO product_catalog

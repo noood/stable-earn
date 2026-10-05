@@ -7,7 +7,7 @@ const { productInformationIssues, productParticipatesInInterest, holdingSyncNote
 const { bestAvailableFirstTierProduct, productHasComparableApr, productHasKnownCapacity, productKnownNotSubscribable, productShouldBeActive, totalHighYieldRemaining } = load("@/lib/opportunity-policy");
 const { remainingHighYield } = load("@/lib/domain");
 const { applyProductOverride, productTermStatus } = load("@/lib/product-overrides");
-const { syncFailureSummary, sanitizeSyncFailure, nextScheduledRefreshAt, scheduledRefreshPending } = load("@/lib/sync-notice");
+const { completedDataSummary, syncFailureSummary, sanitizeSyncFailure, nextScheduledRefreshAt, scheduledRefreshPending } = load("@/lib/sync-notice");
 const { scheduledRefreshMetadata } = load("@/lib/sync-cache");
 const { localPrivateProductsPreview, localSyncScenarioPreview } = load("@/lib/local-preview");
 const base = localPrivateProductsPreview().products.find((p) => p.id === "bn-g-usdt");
@@ -146,21 +146,36 @@ test("qualification-restricted products need eligibility or a positive holding",
 });
 
 test("banner distinguishes whole failure, interface scope and page network failure", () => {
-  assert.match(syncFailureSummary(["Bitget（持仓接口未完整返回）"]), /Bitget 持仓 API/);
+  assert.equal(syncFailureSummary(["Bitget（持仓接口未完整返回）"]), "Bitget 持仓数据未完整返回");
   assert.equal(sanitizeSyncFailure("Bitget（USDT:1382948397058678784、USDT:1488775596992425984 持仓未返回）"), "Bitget（部分数据未返回）");
   assert.equal(sanitizeSyncFailure("Bitget USDT:1382948397058678784 持仓未返回"), "Bitget（部分数据未返回）");
-  assert.equal(syncFailureSummary(["Bitget（USDT:1382948397058678784、USDT:1488775596992425984 持仓未返回）"]), "Bitget 部分数据未返回；下次更新将重试。");
+  assert.equal(syncFailureSummary(["Bitget（USDT:1382948397058678784、USDT:1488775596992425984 持仓未返回）"]), "Bitget 部分数据未返回");
   assert.equal(
     syncFailureSummary(["Bitget（持仓接口未完整返回）", "OKX（连接失败，原因待检查）"]),
-    "Bitget 持仓 API 暂不可用、OKX API 暂不可用；下次更新将重试。",
+    "Bitget 持仓数据未完整返回，OKX API 暂不可用",
   );
   assert.equal(
     syncFailureSummary(["Bybit.com 定期产品", "Bybit.com 定期持仓"]),
-    "Bybit.com 定期产品 API 暂不可用、Bybit.com 定期持仓 API 暂不可用；下次更新将重试。",
+    "Bybit.com 定期产品 API 暂不可用、Bybit.com 定期持仓 API 暂不可用",
   );
-  assert.equal(syncFailureSummary(["Bitget（USDGO 产品未返回）"]), "Bitget USDGO 产品未返回；下次更新将重试。");
+  assert.equal(syncFailureSummary(["Bitget（USDGO 产品未返回）"]), "Bitget USDGO 产品未返回");
   assert.match(syncFailureSummary(["产品和持仓数据更新失败"]), /^本次产品和持仓数据更新失败/);
   assert.equal(syncFailureSummary(["页面数据读取失败"]), "服务器读取失败，数据无法显示，请刷新页面。");
+});
+
+test("settled timestamp copy changes when the scheduled job is paused", () => {
+  assert.equal(
+    completedDataSummary("10/05 08:30", { scheduledRefreshFailed: false, scheduledSyncDisabled: true, nextRefresh: null, hasSyncFailure: false }),
+    "当前数据截至 10/05 08:30，每日首次打开自动更新。",
+  );
+  assert.equal(
+    completedDataSummary("10/05 08:30", { scheduledRefreshFailed: false, scheduledSyncDisabled: false, nextRefresh: "10/06 07:00", hasSyncFailure: false }),
+    "当前数据截至 10/05 08:30，预计 10/06 07:00 自动更新。",
+  );
+  assert.equal(
+    completedDataSummary("10/05 08:30", { scheduledRefreshFailed: false, scheduledSyncDisabled: true, nextRefresh: null, hasSyncFailure: true }),
+    "当前数据截至 10/05 08:30，",
+  );
 });
 
 test("next refresh uses Shanghai 07:00 across day and month boundaries", () => {

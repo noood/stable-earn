@@ -32,7 +32,7 @@ function apiPayload(id, externalProductId) {
 }
 
 test("platform identity migration keeps Bitget offers and zero balances separate", () => {
-  const db = sqliteDb();
+  const db = sqliteDb({ legacyIdentityFingerprint: true });
   const now = "2026-10-02T00:00:00.000Z";
   insertCatalog(db, { id: "bg-usdt-simple", identity: "bg-usdt-simple", payload: apiPayload("bg-usdt-simple", "964334561256718336") });
   insertCatalog(db, { id: "api-bg-usdt-simple-1gd23qx", identity: "bg-usdt-simple:1488775596992425984", payload: apiPayload("api-bg-usdt-simple-1gd23qx", "1488775596992425984") });
@@ -59,7 +59,7 @@ test("platform identity migration keeps Bitget offers and zero balances separate
 });
 
 test("platform identity migration merges only duplicate target identities", () => {
-  const db = sqliteDb();
+  const db = sqliteDb({ legacyIdentityFingerprint: true });
   const now = "2026-10-02T00:00:00.000Z";
   insertCatalog(db, { id: "legacy-a", identity: "bn-g-usdt", payload: {
     ...apiPayload("legacy-a", "flex-1"), accountId: "binance-global", exchange: "binance", identityKey: "bn-g-usdt:flex-1",

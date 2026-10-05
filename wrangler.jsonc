@@ -15,7 +15,8 @@
   },
   "vars": {
     "TEAM_DOMAIN": "https://your-team.cloudflareaccess.com",
-    "POLICY_AUD": "YOUR_CLOUDFLARE_ACCESS_AUDIENCE"
+    "POLICY_AUD": "YOUR_CLOUDFLARE_ACCESS_AUDIENCE",
+    "SCHEDULED_SYNC_ENABLED": "false"
   },
   "secrets": {
     "required": ["CREDENTIAL_ENCRYPTION_KEY"]

@@ -68,7 +68,6 @@ export type Product = {
   capacityFetchedAt?: string;
   externalProductId?: string;
   identityKey: string;
-  identityFingerprint?: string;
   manualFields?: {
     termDays?: boolean;
   };

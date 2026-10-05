@@ -4,7 +4,6 @@ type CatalogAuditRow = {
   owner_id: string;
   product_id: string;
   identity_key: string;
-  identity_fingerprint: string | null;
   status: "active" | "archived";
   payload: string;
 };
@@ -58,7 +57,7 @@ export async function auditCatalogIdentities(db: D1Database, ownerId?: string): 
   const args = ownerId ? [ownerId] : [];
   const [catalogResult, userProductResult, holdingResult, positionResult, overrideResult, hiddenResult, hiddenSeedResult, snapshotResult] = await Promise.all([
     db.prepare(`SELECT owner_id, product_id, identity_key,
-        identity_fingerprint, status, payload
+        status, payload
         FROM product_catalog${scope} ORDER BY owner_id, identity_key, product_id`).bind(...args).all<CatalogAuditRow>(),
     db.prepare(`SELECT user_id AS owner_id, product_id FROM user_products${ownerId ? " WHERE user_id = ?" : ""}`).bind(...args).all<ProductReferenceRow>(),
     db.prepare(`SELECT user_id AS owner_id, product_id, amount FROM holdings${ownerId ? " WHERE user_id = ?" : ""}`).bind(...args).all<ProductReferenceRow>(),
