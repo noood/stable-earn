@@ -3,7 +3,7 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
 function routeWithMocks({ identity = { userId: "owner" }, credential = { apiKey: "secret-key", apiSecret: "secret", passphrase: "pass" } } = {}) {
-  const calls = { credentials: [], probes: [] };
+  const calls = { credentials: [], probes: [], targetedProbes: [] };
   const probe = {
     scope: "Bitget Savings product APR and subscription capacity fields",
     dataChangesCommitted: false,
@@ -34,6 +34,10 @@ function routeWithMocks({ identity = { userId: "owner" }, credential = { apiKey:
         calls.probes.push(args);
         return probe;
       },
+      probeBitgetProductCapacity: async (...args) => {
+        calls.targetedProbes.push(args);
+        return { ...probe, scope: "Single Bitget product remaining amount evidence" };
+      },
     },
     "@/lib/request-security": {
       isSameOriginMutation: (request) => request.headers.get("origin") === new URL(request.url).origin,
@@ -44,8 +48,8 @@ function routeWithMocks({ identity = { userId: "owner" }, credential = { apiKey:
     get: load("@/app/private/api/diagnostics/bitget-products/route").GET, calls, probe };
 }
 
-function request(method = "GET", origin = undefined) {
-  return new Request("https://app.example/private/api/diagnostics/bitget-products", {
+function request(method = "GET", origin = undefined, query = "") {
+  return new Request(`https://app.example/private/api/diagnostics/bitget-products${query}`, {
     method,
     headers: origin ? { origin } : undefined,
   });
@@ -79,6 +83,23 @@ test("Bitget product diagnostic requires an existing complete read-only credenti
   const response = await unconfigured.get(request());
   assert.equal(response.status, 409);
   assert.equal(unconfigured.calls.probes.length, 0);
+});
+
+test("single-product diagnostic validates and scopes the requested asset and product ID", async () => {
+  const invalid = routeWithMocks();
+  const invalidResponse = await invalid.get(request("GET", undefined, "?asset=USDC&productId=not-a-number"));
+  assert.equal(invalidResponse.status, 400);
+  assert.equal(invalid.calls.credentials.length, 0);
+
+  const valid = routeWithMocks();
+  const response = await valid.get(request("GET", undefined, "?asset=USDC&productId=984594834441801728"));
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(valid.calls.probes.length, 0);
+  assert.equal(valid.calls.targetedProbes.length, 1);
+  assert.deepEqual(valid.calls.targetedProbes[0].slice(1), ["USDC", "984594834441801728"]);
+  assert.equal(body.scope, "Single Bitget product remaining amount evidence");
+  assert.equal(body.dataChangesCommitted, false);
 });
 
 test("Bitget product evidence reads product and subscription endpoints only, then strips unrelated fields", async () => {
@@ -127,4 +148,48 @@ test("Bitget product evidence reads product and subscription endpoints only, the
   assert.equal("holdAmount" in result.subscriptionDetails[0].data, false);
   assert.equal("secret" in result.subscriptionDetails[0].data, false);
   assert.equal(JSON.stringify(result).includes("private"), false);
+});
+
+test("single-product capacity evidence verifies the product and reads only its subscription detail", async () => {
+  const calls = [];
+  const targetProductId = "984594834441801728";
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url, init) => {
+        const parsed = new URL(url);
+        calls.push({ path: parsed.pathname, query: Object.fromEntries(parsed.searchParams.entries()), method: init?.method ?? "GET" });
+        const data = parsed.pathname.endsWith("/savings/product")
+          ? [
+            { productId: targetProductId, coin: "USDC", periodType: "flexible", apyType: "ladder", status: "in_progress", apyList: [{ minStepVal: "0", maxStepVal: "300", currentApy: "6.66" }, { minStepVal: "300", maxStepVal: "1000000", currentApy: "1.87" }], holdAmount: "private" },
+            { productId: "other-product", coin: "USDC", periodType: "flexible", apyType: "single", apyList: [{ minStepVal: "0", maxStepVal: "10000000", currentApy: "8" }] },
+          ]
+          : { singleMinAmount: "0.1", singleMaxAmount: "1000000", remainingAmount: "999096.44", apyList: [{ minStepVal: "0", maxStepVal: "300", currentApy: "6.66" }, { minStepVal: "300", maxStepVal: "1000000", currentApy: "1.87" }], holdAmount: "private", secret: "private" };
+        return new Response(JSON.stringify({ code: "00000", msg: "success", data }), { status: 200 });
+      },
+      readExchangeText: async (response) => response.text(),
+      logExchangePayload: () => {},
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+    "@/lib/platform-capabilities": { apiAssetsFor: () => [] },
+  });
+  const { probeBitgetProductCapacity } = load("@/lib/integrations/bitget");
+  const result = await probeBitgetProductCapacity(
+    { apiKey: "key", apiSecret: "secret", passphrase: "pass" },
+    "USDC",
+    targetProductId,
+  );
+
+  assert.equal(result.status, "returned");
+  assert.equal(result.requestsStarted, 2);
+  assert.equal(result.includesHoldingAmounts, false);
+  assert.equal(result.includesRemainingAmountField, true);
+  assert.equal(result.subscriptionDetail.remainingAmount, "999096.44");
+  assert.equal(result.product.apyType, "ladder");
+  assert.equal("holdAmount" in result.product, false);
+  assert.equal("holdAmount" in result.subscriptionDetail, false);
+  assert.equal("secret" in result.subscriptionDetail, false);
+  assert.deepEqual(calls, [
+    { path: "/api/v2/earn/savings/product", query: { coin: "USDC", filter: "available_and_held" }, method: "GET" },
+    { path: "/api/v2/earn/savings/subscribe-info", query: { productId: targetProductId, periodType: "flexible" }, method: "GET" },
+  ]);
 });

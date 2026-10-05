@@ -264,6 +264,88 @@ export async function probeBitgetProductEvidence(credentials: BitgetCredentials)
   };
 }
 
+/**
+ * Narrow, read-only follow-up for one product. It verifies that the product ID
+ * is currently listed for the requested coin before asking for its subscription
+ * detail, and never calls a holdings endpoint.
+ */
+export async function probeBitgetProductCapacity(
+  credentials: BitgetCredentials,
+  asset: SupportedAsset,
+  productId: string,
+) {
+  const productResponse = await signedGet<BitgetProductRow[]>(
+    "/api/v2/earn/savings/product",
+    new URLSearchParams({ coin: asset, filter: "available_and_held" }),
+    credentials,
+  );
+  if (!Array.isArray(productResponse.data)) {
+    return {
+      scope: "Single Bitget product remaining amount evidence",
+      asset,
+      productId,
+      dataChangesCommitted: false,
+      includesHoldingAmounts: false,
+      includesRemainingAmountField: false,
+      requestLimit: 2,
+      requestsStarted: 1,
+      status: "invalid_product_list" as const,
+    };
+  }
+
+  const row = productResponse.data.find((candidate) => candidate.coin?.toUpperCase() === asset
+    && candidate.productId?.trim() === productId
+    && candidate.periodType === "flexible");
+  if (!row) {
+    return {
+      scope: "Single Bitget product remaining amount evidence",
+      asset,
+      productId,
+      dataChangesCommitted: false,
+      includesHoldingAmounts: false,
+      includesRemainingAmountField: false,
+      requestLimit: 2,
+      requestsStarted: 1,
+      status: "product_not_found" as const,
+    };
+  }
+
+  const detailResponse = await signedGet<BitgetSubscriptionEvidence>(
+    "/api/v2/earn/savings/subscribe-info",
+    new URLSearchParams({ productId, periodType: "flexible" }),
+    credentials,
+  );
+  if (!detailResponse.data || typeof detailResponse.data !== "object" || Array.isArray(detailResponse.data)) {
+    return {
+      scope: "Single Bitget product remaining amount evidence",
+      asset,
+      productId,
+      dataChangesCommitted: false,
+      includesHoldingAmounts: false,
+      includesRemainingAmountField: false,
+      requestLimit: 2,
+      requestsStarted: 2,
+      status: "invalid_subscription_detail" as const,
+      product: sanitizeBitgetProductEvidenceRow(row),
+    };
+  }
+
+  return {
+    scope: "Single Bitget product remaining amount evidence",
+    asset,
+    productId,
+    dataChangesCommitted: false,
+    includesHoldingAmounts: false,
+    includesRemainingAmountField: detailResponse.data.remainingAmount !== undefined,
+    remainingAmountScope: "official_description_is_ambiguous" as const,
+    requestLimit: 2,
+    requestsStarted: 2,
+    status: "returned" as const,
+    product: sanitizeBitgetProductEvidenceRow(row),
+    subscriptionDetail: sanitizeBitgetSubscriptionEvidence(detailResponse.data),
+  };
+}
+
 type BitgetProductEvidenceRow = {
   asset: string;
   productId: string | null;

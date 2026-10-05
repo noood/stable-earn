@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { loadCredential } from "@/lib/credentials";
 import { getDatabase, getUserIdentity } from "@/lib/db";
-import { probeBitgetProductEvidence } from "@/lib/integrations/bitget";
+import { probeBitgetProductCapacity, probeBitgetProductEvidence } from "@/lib/integrations/bitget";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 const activeProbes = new Map<string, Promise<unknown>>();
 const lastProbeAt = new Map<string, number>();
 const cooldownMs = 30_000;
+const supportedAssets = new Set(["USDT", "USDC", "BTC", "USDGO"]);
 
 function cooldownResponse(remainingSeconds: number) {
   return NextResponse.json(
@@ -28,6 +29,17 @@ async function handleDiagnostic(request: Request, requireMutationOrigin: boolean
     return NextResponse.json({ error: "请求来源无效。" }, { status: 403, headers: privateResponseHeaders });
   }
 
+  const url = new URL(request.url);
+  const targetAsset = url.searchParams.get("asset");
+  const targetProductId = url.searchParams.get("productId");
+  if ((targetAsset || targetProductId)
+    && (!targetAsset || !supportedAssets.has(targetAsset) || !targetProductId || !/^\d{1,24}$/.test(targetProductId))) {
+    return NextResponse.json(
+      { error: "单产品诊断需要有效的 asset 和数字 productId。" },
+      { status: 400, headers: privateResponseHeaders },
+    );
+  }
+
   try {
     const existing = activeProbes.get(identity.userId);
     if (existing) return NextResponse.json(await existing, { headers: privateResponseHeaders });
@@ -41,11 +53,15 @@ async function handleDiagnostic(request: Request, requireMutationOrigin: boolean
         return { error: "尚未配置完整的 Bitget API 只读凭证。", status: 409 };
       }
 
-      return probeBitgetProductEvidence({
+      const credentials = {
         apiKey: credential.apiKey,
         apiSecret: credential.apiSecret,
         passphrase: credential.passphrase,
-      });
+      };
+      if (targetAsset && targetProductId) {
+        return probeBitgetProductCapacity(credentials, targetAsset as "USDT" | "USDC" | "BTC" | "USDGO", targetProductId);
+      }
+      return probeBitgetProductEvidence(credentials);
     })();
     activeProbes.set(identity.userId, probe);
     lastProbeAt.set(identity.userId, Date.now());
