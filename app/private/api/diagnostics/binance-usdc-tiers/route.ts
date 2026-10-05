@@ -18,7 +18,7 @@ function cooldownResponse(remainingSeconds: number) {
 }
 
 /**
- * Narrow, read-only diagnosis for Binance USDC flexible product APR metadata.
+ * Narrow, read-only diagnosis for Binance USDC/USDT flexible product APR metadata.
  * At most one public-product-list request is made for each configured Binance
  * account. It never requests holdings or writes product, cache, or history data.
  */
@@ -31,6 +31,10 @@ async function handleDiagnostic(request: Request, requireMutationOrigin: boolean
   if (!requireMutationOrigin && (request.headers.get("sec-fetch-site") === "cross-site"
     || (request.headers.get("origin") && request.headers.get("origin") !== new URL(request.url).origin))) {
     return NextResponse.json({ error: "请求来源无效。" }, { status: 403, headers: privateResponseHeaders });
+  }
+  const asset = new URL(request.url).searchParams.get("asset")?.toUpperCase() || "USDC";
+  if (asset !== "USDC" && asset !== "USDT") {
+    return NextResponse.json({ error: "本诊断仅支持 USDC 或 USDT。" }, { status: 400, headers: privateResponseHeaders });
   }
 
   try {
@@ -56,12 +60,12 @@ async function handleDiagnostic(request: Request, requireMutationOrigin: boolean
         results.push(await diagnoseBinanceFlexibleTiers({
           apiKey: credential.apiKey,
           apiSecret: credential.apiSecret,
-        }, region, "USDC"));
+        }, region, asset));
       }
 
       return {
         generatedAt: new Date().toISOString(),
-        scope: "Binance USDC 活期产品 APR",
+        scope: `Binance ${asset} 活期产品 APR`,
         dataChangesCommitted: false,
         includesHoldingAmounts: false,
         requestLimit: 2,

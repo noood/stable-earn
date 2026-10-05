@@ -38,8 +38,10 @@ function routeWithMocks({ identity = { userId: "owner" }, credentials = {
   return { post: route.POST, get: route.GET, calls };
 }
 
-function request(origin = "https://app.example") {
-  return new Request("https://app.example/private/api/diagnostics/binance-usdc-tiers", {
+function request(origin = "https://app.example", asset) {
+  const url = new URL("https://app.example/private/api/diagnostics/binance-usdc-tiers");
+  if (asset) url.searchParams.set("asset", asset);
+  return new Request(url, {
     method: "POST",
     headers: { origin },
   });
@@ -68,6 +70,22 @@ test("direct diagnostic GET is available to the signed-in user but rejects cross
   const response = await direct.get(new Request("https://app.example/private/api/diagnostics/binance-usdc-tiers"));
   assert.equal(response.status, 200);
   assert.equal((await response.json()).scope, "Binance USDC 活期产品 APR");
+});
+
+test("narrow diagnostic can select USDT and rejects every other asset before reading credentials", async () => {
+  const usdt = routeWithMocks();
+  const response = await usdt.get(new Request("https://app.example/private/api/diagnostics/binance-usdc-tiers?asset=USDT"));
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.scope, "Binance USDT 活期产品 APR");
+  assert.equal(usdt.calls.probes.length, 2);
+  assert.deepEqual(usdt.calls.probes.map((call) => call[2]), ["USDT", "USDT"]);
+
+  const unsupported = routeWithMocks();
+  const rejected = await unsupported.get(new Request("https://app.example/private/api/diagnostics/binance-usdc-tiers?asset=BTC"));
+  assert.equal(rejected.status, 400);
+  assert.equal(unsupported.calls.credentials.length, 0);
+  assert.equal(unsupported.calls.probes.length, 0);
 });
 
 test("narrow Binance USDC diagnostic makes at most one read-only request per configured account", async () => {
