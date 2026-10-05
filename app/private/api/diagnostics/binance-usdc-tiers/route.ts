@@ -12,13 +12,13 @@ const cooldownMs = 30_000;
 
 function cooldownResponse(remainingSeconds: number) {
   return NextResponse.json(
-    { error: "刚完成一次 Binance USDC 检查，请稍后再试。" },
+    { error: "刚完成一次 Binance 活期币种检查，请稍后再试。" },
     { status: 429, headers: { ...privateResponseHeaders, "Retry-After": String(remainingSeconds) } },
   );
 }
 
 /**
- * Narrow, read-only diagnosis for Binance USDC/USDT flexible product APR metadata.
+ * Narrow, read-only diagnosis for selected Binance flexible product APR metadata.
  * At most one public-product-list request is made for each configured Binance
  * account. It never requests holdings or writes product, cache, or history data.
  */
@@ -33,8 +33,8 @@ async function handleDiagnostic(request: Request, requireMutationOrigin: boolean
     return NextResponse.json({ error: "请求来源无效。" }, { status: 403, headers: privateResponseHeaders });
   }
   const asset = new URL(request.url).searchParams.get("asset")?.toUpperCase() || "USDC";
-  if (asset !== "USDC" && asset !== "USDT") {
-    return NextResponse.json({ error: "本诊断仅支持 USDC 或 USDT。" }, { status: 400, headers: privateResponseHeaders });
+  if (asset !== "USDC" && asset !== "USDT" && asset !== "BTC") {
+    return NextResponse.json({ error: "本诊断仅支持 USDC、USDT 或 BTC。" }, { status: 400, headers: privateResponseHeaders });
   }
 
   try {
@@ -81,7 +81,7 @@ async function handleDiagnostic(request: Request, requireMutationOrigin: boolean
 
     return NextResponse.json(await probe, { headers: privateResponseHeaders });
   } catch {
-    return NextResponse.json({ error: "Binance USDC 脱敏诊断未能完成；请稍后重试。" }, { status: 502, headers: privateResponseHeaders });
+    return NextResponse.json({ error: "Binance 活期币种脱敏诊断未能完成；请稍后重试。" }, { status: 502, headers: privateResponseHeaders });
   }
 }
 
