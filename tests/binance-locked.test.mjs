@@ -142,3 +142,30 @@ test("narrow Binance locked-product diagnosis returns APR and quota fields witho
   assert.equal(requests.length, 1);
   assert.ok(requests.every((request) => request.pathname === "/sapi/v1/simple-earn/locked/list"));
 });
+
+test("narrow Binance locked-product diagnosis does not call an unrecognized row shape empty", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        path: new URL(url).pathname,
+        url,
+        text: async () => "{}",
+      }),
+      readExchangeJson: async () => ({
+        total: 1,
+        rows: [{ projectId: "USDT-7D", product: { asset: "USDT" }, quota: { totalPersonalQuota: "500000" } }],
+      }),
+    },
+  });
+  const { diagnoseBinanceLockedProducts } = load("@/lib/integrations/binance");
+  const result = await diagnoseBinanceLockedProducts({ apiKey: "key", apiSecret: "secret" }, "global");
+
+  assert.equal(result.responseComplete, true);
+  assert.equal(result.status, "partial");
+  assert.equal(result.unmappedAssetRowCount, 1);
+  assert.equal(result.rows.length, 0);
+  assert.ok(result.sampleFieldShapes[0].topLevelFields.includes("product"));
+});

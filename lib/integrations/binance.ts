@@ -130,6 +130,20 @@ export type BinanceLockedProductDiagnostic = {
   pagesRead: number;
   totalRowCount: number | null;
   reportedTotal: number | null;
+  unmappedAssetRowCount: number;
+  assetCounts: Record<string, number>;
+  sampleFieldShapes: Array<{
+    topLevelFields: string[];
+    detailKind: string;
+    detailFields: string[];
+    assetCandidates: {
+      rowAsset: DiagnosticField;
+      rowCoin: DiagnosticField;
+      detailAsset: DiagnosticField;
+      detailCoin: DiagnosticField;
+      detailSymbol: DiagnosticField;
+    };
+  }>;
   failureKind?: string;
   rows: Array<{
     projectId: string | null;
@@ -441,21 +455,33 @@ export async function diagnoseBinanceLockedProducts(
       credentials,
     );
     const targetAssets = new Set<string>(monitoredAssets);
-    const matchingRows = products.rows.filter((row) => targetAssets.has(String(row.detail?.asset ?? "").toUpperCase()));
-    const responseComplete = products.complete && matchingRows.every((row) => Boolean(row.detail?.asset));
+    const assetRows = products.rows.map((row) => ({ row, asset: lockedProductAsset(row) }));
+    const matchingRows = assetRows.filter(({ asset }) => asset && targetAssets.has(asset.toUpperCase()));
+    const unmappedAssetRowCount = assetRows.filter(({ asset }) => !asset).length;
+    const assetCounts = assetRows.reduce<Record<string, number>>((counts, { asset }) => {
+      if (asset) counts[asset] = (counts[asset] ?? 0) + 1;
+      return counts;
+    }, {});
+    const responseComplete = products.complete;
+    const status = !responseComplete || unmappedAssetRowCount > 0
+      ? "partial"
+      : matchingRows.length ? "returned" : "empty";
 
     return {
       account: accountId,
       endpoint: "/sapi/v1/simple-earn/locked/list",
-      status: !responseComplete ? "partial" : matchingRows.length ? "returned" : "empty",
+      status,
       responseComplete,
       pageSize,
       pagesRead: products.pagesRead,
       totalRowCount: products.rows.length,
       reportedTotal: finiteOptional(products.total) ?? null,
-      rows: matchingRows.map((row) => ({
+      unmappedAssetRowCount,
+      assetCounts,
+      sampleFieldShapes: products.rows.slice(0, 5).map(lockedProductFieldShape),
+      rows: matchingRows.map(({ row, asset }) => ({
         projectId: typeof row.projectId === "string" && row.projectId.trim() ? row.projectId.trim() : null,
-        asset: typeof row.detail?.asset === "string" ? row.detail.asset : null,
+        asset: asset ?? null,
         duration: diagnosticField(row.detail?.duration),
         apr: diagnosticField(row.detail?.apr),
         apy: diagnosticField(row.detail?.apy),
@@ -478,10 +504,49 @@ export async function diagnoseBinanceLockedProducts(
       pagesRead: 0,
       totalRowCount: null,
       reportedTotal: null,
+      unmappedAssetRowCount: 0,
+      assetCounts: {},
+      sampleFieldShapes: [],
       failureKind: diagnosticErrorKind(error),
       rows: [],
     };
   }
+}
+
+function lockedProductAsset(row: LockedProductRow) {
+  const raw = row as Record<string, unknown>;
+  const detail = recordValue(raw.detail);
+  const candidates = [detail?.asset, raw.asset, raw.coin, detail?.coin, detail?.symbol];
+  const asset = candidates.find((value): value is string => typeof value === "string" && Boolean(value.trim()));
+  return asset?.trim();
+}
+
+function lockedProductFieldShape(row: LockedProductRow): BinanceLockedProductDiagnostic["sampleFieldShapes"][number] {
+  const raw = row as Record<string, unknown>;
+  const detail = recordValue(raw.detail);
+  const detailValue = raw.detail;
+  const detailKind = detailValue === undefined ? "missing"
+    : detailValue === null ? "null"
+      : Array.isArray(detailValue) ? "array"
+        : typeof detailValue;
+  return {
+    topLevelFields: Object.keys(raw).sort(),
+    detailKind,
+    detailFields: detail ? Object.keys(detail).sort() : [],
+    assetCandidates: {
+      rowAsset: diagnosticField(raw.asset),
+      rowCoin: diagnosticField(raw.coin),
+      detailAsset: diagnosticField(detail?.asset),
+      detailCoin: diagnosticField(detail?.coin),
+      detailSymbol: diagnosticField(detail?.symbol),
+    },
+  };
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function diagnosticField(value: unknown): DiagnosticField {
