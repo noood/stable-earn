@@ -2,25 +2,31 @@
 
 核对日期：2026-10-05。范围：活期/定期 Earn 的利率含义、梯度和金额额度。此文分开记录官方规则、项目现有代码和仍需实际回包确认的部分；**它不是本次运行时代码变更说明**。
 
-## 本轮证据盘点（先记录事实，不据此定最终计算规则）
+## 汇总表：API 回了什么、我们怎么理解、会怎样影响指标
 
-此前应用诊断事件的相关样本时间为 **2026-10-05 11:51 GMT+8**。它们是 Worker 同步时记录的脱敏字段摘要，不是完整原始 JSON。本轮另补充了用户从内嵌浏览器取得的 Bybit 当前公开产品回包，服务端时间为 **18:01 GMT+8**；两种证据来源在表中分开标明。
+本表按用户要求统一为四列。证据来源分清三种：浏览器直接看到的公开 JSON、用户运行的脱敏应用诊断、以及只记录请求状态/条数的 Worker 日志。它们不能互相冒充。
 
-| 平台/地区/产品 | 已看到的样本 | 官方资料对照 | 证据缺口 |
+| 平台／产品／币种 | API 实际返回了什么 | 利率与额度怎么理解 | 对高息额度、首档指标的影响 |
 |---|---|---|---|
-| Bybit Global 活期 | 用户在内嵌浏览器复制的公开产品回包（服务端时间 2026-10-05 10:01:03Z），列表共 251 项。USDT：`estimateApr=2.3%`，0–200 为 7.3%，200 至 `max=-1` 为 2.3%；USDC：2.23%，0–200 为 5.23%，200 至 `max=-1` 为 2.23%；BTC：0.1%，0–0.003 为 0.4%，0.003 至 `max=-1` 为 0.1%。三项均 Available、`bonusEvents=[]`。回包另有 `maxStakeAmount`：USDT 100,000,000、USDC 200,000,000、BTC 1,500。 | 官方 Global 文档列出动态 `estimateApr`、最大申购额和奖励事件；说明 `estimateApr` 不含 Platform Reward APR，但没有列出 `tierAprDetails`。官方文档称 `maxStakeAmount` 是最大申购金额。 | 实际回包确认了 Global 当前这三种币确实返回梯度；官方活期字段文档没有定义 `tierAprDetails`，也没有明确说明活期梯度里的 `max=-1` 语义或梯度 APR 与顶层 `estimateApr` 的计算关系。`maxStakeAmount` 不是当前剩余可申购额度。 |
-| Bybit EU 活期 | 用户在内嵌浏览器复制的公开产品回包（服务端时间 2026-10-05 10:01:09Z），列表共 20 项。USDT `estimateApr=1.4%`、USDC 1.02%、BTC 1.2%；三项均 Available、`tierAprDetails=[]`、`bonusEvents=[]`。`maxStakeAmount` 分别为 1,000,000,000、100,000,000、1 BTC。 | 找到的是 Global Earn 字段文档；没有找到 EU 独立 Earn 字段文档。 | 这次回包证实 EU 三项有可用顶层 APR，但没有梯度字段；这不证明 unlimited，也不证明 APR 无效。仍需确认 EU 对空梯度的产品含义、可用额度口径，以及 Global 文档字段能否完全套用到 EU。 |
-| Bybit Global 定期 | 产品接口报告成功、返回 11 条；应用日志把产品行归一化成金额/APY 档摘要。 | 官方文档说明 `tieredApyList`（如适用）逐档给 APY，`max="-1"` 明确表示无上限；也列出 `interestCoinApyList` 多币种奖励 APY。 | 当前日志不是原始字段：无法逐条核对原始 `tieredApyList` / `interestCoinApyList`，也不能由归一化摘要判断不同奖励币是否可直接合并。 |
-| Bybit EU 定期 | 本批日志未找到 EU 定期产品事件。 | Global 定期字段文档适用于该接口；EU 没有独立 Earn 字段说明。 | 没有当前 EU 定期 API 回包。项目能力配置记录了 EU 定期公开产品接口，但配置不是这次请求成功的证据。 |
-| Binance Global / Bahrain 活期 | 当日上午诊断覆盖 USDT、USDC、BTC、USDGO。USDT 有实时 APR 与 0–1000 USDT 奖励档；USDC 有基础 APR、没有奖励档字段；BTC 有基础 APR 和有限额奖励档；USDGO 请求成功但没有产品行。两个地区样本大体一致。 | Binance 官方 FAQ（2026-09-29 更新）把实时 APR 与 Bonus Tiered APR 说明为两种独立奖励：实时 APR 按整个持仓金额计，奖励 APR 按奖励档和前一日快照、资格等规则计。 | API 字段摘要不是原始完整回包；无 Bonus 档不证明申购不限额。必须区分“收益两部分可叠加”和“整笔本金都适用奖励 APR”。 |
-| Binance Global 定期 | 当日上午产品列表完整返回 103 条。 | 官方产品列表有基础 APR、额外奖励、额度及售罄字段；不同字段不能只凭名字合并。 | 现有事件只给整体成功/条数及裁剪后的产品摘要，尚不足以逐条核对原始奖励/梯度字段；Bahrain 定期当前证据也未补齐。 |
-| Bitget Global 活期/定期 | 2026-10-05 用户从已登录应用运行产品诊断：四种币的产品列表请求均成功；USDT 返回 6 行（活期 single/ladder、VIP 活期 ladder、7/14 天定期 single），USDC 返回 3 行（活期 single/ladder、VIP single），BTC 与 USDGO 是成功空列表。返回行都为 `in_progress`。另对 USDT 活期 single、活期 ladder、7 天定期 single 各请求一次 `subscribe-info`；共 7 个请求，未读持仓接口。 | 官方文档用 `apyType=single/ladder` 区分单一利率/梯度；每档 `currentApy` 是 API 直接给出的 APY。`singleMaxAmount` 明确是单笔申购上限；`remainingAmount` 只写作 “Amount held remaining”，文档没说明是全产品池、账号可用额度还是其他范围。 | 本次实测确认了当前账号看到的产品形状和档位；不等于 BTC/USDGO 在 Bitget 全平台永久无产品。文档没有说梯度末档之后是否继续沿用末档，也未定义 `remainingAmount` 的范围；不得把它当持仓数量或直接作为全局剩余额度。 |
+| Binance Global / Bahrain 活期：USDT、USDC、BTC、USDGO | 11:51 左右的脱敏诊断字段：USDT 有基础 `latestAnnualPercentageRate=2.768876%` 和 0–1,000 USDT 的 `tierAnnualPercentageRate=4%`；USDC 有基础 APR `2.231321%`、未报奖励档；BTC 有基础 APR 和有限额奖励档；USDGO 请求成功但没有产品行。不是原始完整 JSON。 | Binance 官方说明：基础实时 APR 适用于持仓，Bonus Tiered APR 是额外奖励，所以 USDT 首档应按约 2.768876% + 4% = 6.768876% 理解；奖励档以外仍按基础 APR。没有奖励档表示本次没报额外奖励，不表示基础 APR 缺失，也不表示申购不限额。 | USDT 已知 0–1,000 的总 APR 超过 6%，名义高息上限为 1,000，剩余量还要扣同产品的已知持仓；USDC 当前 APR 低于 6%，没有高息额度；BTC 具体档值须看原样本，不能在此臆算；USDGO 本次无产品行，不参与。缺额度字段不能显示“不限”。 |
+| Binance Global / Bahrain 定期：USDT、USDC、BTC、USDGO | Worker 日志显示 Global 产品列表 103 行、Bahrain 93 行且请求完整；但日志不含逐条原始利率/额度字段。 | 官方产品列表字段需要按具体产品区分基础收益、额外奖励、申购量和售罄状态；不能因接口成功就假定每行字段齐全。 | 目前不能可靠算哪些定期产品达到 6%、首档额度是多少；需拿到脱敏产品字段样本后才能把它们纳入高息和首档指标。 |
+| Bybit Global 活期：USDT、USDC、BTC | 本轮内嵌浏览器实际打开 `/v5/earn/product?category=FlexibleSaving`，完整返回 251 行（`retCode=0`，18:01:03 GMT+8）。USDT 顶层 2.3%，0–200 为 7.3%，200 至 `max=-1` 为 2.3%；USDC 顶层 2.23%，0–200 为 5.23%，之后 2.23%；BTC 顶层 0.1%，0–0.003 为 0.4%，之后 0.1%。 | 用户已确认梯度值是每档最终利率，不是额外奖励，所以不再加顶层 APR；回包也显示顶层 APR 与末档相同。`maxStakeAmount` 是最大申购量；`remainingPoolAmount` 虽然也返回，但当前官方活期字段资料没有定义其范围。梯度里的 `max=-1` 确实返回了；定期文档明确同类标记含义，但活期字段文档未单独定义。 | 首档分别是 7.3%/200、5.23%/200、0.4%/0.003。按现行 6% 门槛，只有 USDT 首档属于高息，名义高息额度最多 200（剩余要扣该产品持仓）；USDC、BTC不计高息。所有首档 APR 和金额边界均可比较；是否把活期 `-1` 认作开放末档，建议暂按 API 哨兵值处理、明确记录为“活期文档未明说”，且不得因此把整个产品可买额度显示为不限。 |
+| Bybit EU 活期：USDT、USDC、BTC | 本轮内嵌浏览器实际打开 EU 同一接口，完整返回 20 行（`retCode=0`，18:01:09 GMT+8）。三者分别为 1.4%、1.02%、1.2%，`tierAprDetails=[]`；API 同时返回 `maxStakeAmount` 和 `remainingPoolAmount`。 | 用户确认 EU 这几项没有梯度，是单档产品；因此有效顶层 APR 就是这一个档位的利率，不是 API 缺失，也不代表无限额度。公开资料把 `maxStakeAmount` 说明为申购上限；`remainingPoolAmount` 的账号/产品范围未确认。 | 三种币的单档 APR 都低于 6%，当前没有高息额度；持仓收益可按单一 APR 估算。可列出单档 APR，但因申购上限和剩余量不是已确认的账号剩余额度，不把它当作“尚可买入数量”或不限额。 |
+| Bybit Global 定期：USDT、USDC、BTC、USDGO | 旧 Worker 日志有 11 条产品行，但只记录状态和裁剪摘要；本轮直接打开定期 JSON 仍被内嵌浏览器本地拦截。 | 官方 Global 定期文档规定 `tieredApyList` 的每档 APY，`max="-1"` 明确表示该档无上限；`interestCoinApyList` 可能是另一奖励币种，不能把不同币种的 APY 直接相加。 | 规则可按官方字段解释，但本次没有原始产品行，无法核对这四种币当前档位或达到 6% 的额度；这些产品先不进入可信高息/首档合计。 |
+| Bybit EU 定期：USDT、USDC、BTC、USDGO | 旧日志无 EU 定期行；本轮直接打开 EU 定期 JSON 被浏览器本地拦截。 | 没有 EU 独立 Earn 字段说明，也没有当前实际产品回包。不能把 Global 的实际产品清单冒充 EU 回包。 | 该地区定期首档和高息额度暂不计算；需要用户以后提供一次 EU 产品 JSON，才可补实测字段。 |
+| Bitget Global 活期：USDT、USDC | 用户运行的只读产品诊断返回 USDT 6 行、USDC 3 行。`apyType=single` 的例子：USDT 10%、USDC 8%，各有 0–10,000,000 的 APY 范围；normal ladder：USDT 0–300 为 8.02%、300–120,000,000 为 3.36%；USDC 0–300 为 6.66%、300–1,000,000 为 1.87%。另有 VIP 产品，均是不同产品 ID。 | `apyType=single` 是单利率，`ladder` 才是梯度；`currentApy` 是接口给出的各产品／档位 APY，没有第二个基础利率可加。VIP 与 normal 是不同产品，不能把两行相加。`singleMaxAmount` 是单笔申购最大值；`remainingAmount` 的统计范围未定义，不等同持仓或确定的全局剩余额度。 | USDT 10% 单利率产品、USDC 8% 单利率产品，以及两币 0–300 的 normal 梯度均超过 6%；其已知 APY 范围可识别，但可用余额要按具体产品的实际持仓扣减。VIP 产品单列且须满足资格；不能把 `remainingAmount` 当剩余额度，也不能把 single 误标成“缺梯度”。 |
+| Bitget Global 定期：USDT、USDC、BTC、USDGO | 用户只读诊断：USDT 有 normal 7 天 1.30%、VIP 7 天 3.00%、VIP 14 天 3.20% 的 single 产品；USDC、BTC、USDGO 本次没有定期行。详情抽样仅查到 USDT normal 7 天。 | `currentApy` 是该独立产品的 APY；每个 single 产品本身不需要梯度。额度详情里的 `singleMaxAmount` 是单笔上限，`remainingAmount` 范围未定义。 | 这些 USDT 定期样本都低于 6%，不计高息额度；已知单一 APY 可展示，但这组样本没有高息首档。USDC/BTC/USDGO 只是本次无返回，不代表平台永久不支持。 |
+| OKX 普通 Earn、MEXC Earn | 当前项目没有可用的普通 Earn 产品 APR 接口；没有发出产品 API 请求。 | “项目没接入”不是“交易所没有产品”，也不是一次成功空返回。 | 当前无法从 API 计算这些平台的高息额度或首档；若要纳入，需先单独接入产品资料来源。 |
+
+此前应用诊断的时间约为 **2026-10-05 11:51 GMT+8**；本轮 Bybit 活期接口响应的服务器时间为 **18:01 GMT+8**。Worker 请求日志中的 `outcome=ok` 或行数只证明请求流程/列表读取状态，不能证明日志里没有记录的原始 APR、额度字段。
 
 ## 本轮浏览器重查结果
 
-我按要求只用 Codex 内嵌浏览器打开 Bybit Global 与 EU 的公开 USDT 活期接口，两次导航都被浏览器本地拦截（`ERR_BLOCKED_BY_CLIENT`），不是交易所返回的错误，也没有使用 Chrome。用户随后从内嵌浏览器粘贴了两份完整公开产品列表：第一份有 251 项且 USDT/USDC/BTC 均带梯度，和 Global 旧诊断的字段/利率吻合；第二份有 20 项且这三种币均无梯度，和 EU 旧诊断吻合，因此按打开顺序将其对应为 Global、EU。两个回包顶层 `retCode=0`，服务端时间相差约 6 秒。这里记录的是用户实际取得的 API 回包，不是 Worker 事件日志；没有持仓接口或生产 D1 写入。
+代理恢复后，我在 Codex 内嵌浏览器直接读取了 Bybit Global 与 EU 的活期公开 JSON；两边都成功返回 `retCode=0`，没有读取持仓、调用写入接口或改动生产数据。Global 返回 251 行，EU 返回 20 行。用户确认 Global 的 `tierAprDetails` 数值是每档最终利率而不是额外奖励；用户也确认 EU 这三种币的空梯度是单档产品。
 
-从这次返回能确定：Global 的梯度首档从 0 起且连续，末档原始 `max` 是 `-1`；顶层 `estimateApr` 与末档值相同。EU 则是 APR 有效、梯度数组为空。两边的 `maxStakeAmount` 都有数值，但文档把它定义为最大申购额，并非实时剩余可售额度。仍不能仅靠官方活期文档断定 Global 梯度中的 `-1` 语义或是否应把顶层 APR 再加到各梯度；官方字段表没有描述 `tierAprDetails`。固定期限接口文档对自己的 `tieredApyList.max="-1"` 明确写了无上限，但不能自动把该说明当成活期接口对 `tierAprDetails` 的正式定义。
+Global 与 EU 的定期产品 URL 本轮各自重试后仍显示浏览器本地拦截（`ERR_BLOCKED_BY_CLIENT`），所以这不是交易所返回的失败。按用户要求不再循环尝试：Global 暂用旧日志中“11 行”这一有限证据，但日志没有原始产品字段；EU 定期仍无当前返回证据。两个定期接口的实际字段待用户以后提供 JSON。
+
+Global 活期的梯度首档从 0 起且连续，末档原始 `max` 是 `-1`；顶层 `estimateApr` 与末档值相同。EU 则是有效 APR 加空梯度，经用户确认是单档。两边都返回了 `maxStakeAmount` 和 `remainingPoolAmount`；前者是最大申购量，不是账号当前剩余可买金额，后者的统计范围没有在本次查到的官方字段资料中定义。Global 活期梯度 `max=-1` 可暂作为“该利率档没有列出有限上界”的 API 哨兵值，但不能等同于整款产品对单个用户不限额；这是样本推断，不是活期官方明文。
 
 ### Bitget 当前回包与官方字段对照
 
@@ -50,7 +56,11 @@
 
 没有 APR 梯度，不必然代表 APR 缺失；反过来，缺少梯度也不代表不限额。单一 APR 可以支持“已持有金额的收益估算”，但只有额度规则明确时，才能算剩余额度。不要用一个 `complete/partial` 标记同时表达这两件事。
 
-## 分平台规则与证据
+## 早期文字摘要（有冲突时以上方四列表和下方规则为准）
+
+此处旧摘要保留来源背景；它写于本轮直接重查 Bybit 活期之前。Bybit Global 梯度是否为最终 APR、EU 空梯度是否为单档，现以用户线上确认和上方四列表为准；定期页面拦截不是交易所 API 报错。
+
+<details><summary>旧版平台摘要（已更新，默认折叠；当前结论看上方四列表）</summary>
 
 | 平台 | 官方资料确认的利率口径 | 没有梯度时怎么理解 | 尚未确认/不能推断的事 |
 |---|---|---|---|
@@ -60,12 +70,39 @@
 | Bybit 定期（Global / EU） | 官方 `GET /v5/earn/fixed-term/product` 提供 `tieredApyList[]`，每档有 `min`、`max`、`apy`；其中 `max="-1"` 明确表示该档没有上限。它就是你记得的“能拿到完整阶梯”的接口，适用于**定期产品**，不是活期 `/v5/earn/product`。若没有阶梯，接口也可能通过 `interestCoinApyList[].apy` 返回单一/奖励币种 APY；需按币种和产品规则确认如何汇总，不能把不同币种 APY 直接相加。 | 空 `tieredApyList` 不等于 APR 缺失：若 `interestCoinApyList` 提供可用 APY，就是单一 APY；两者都没有可用利率才是 APR 缺失。 | `max="-1"` 是官方明确不限额标记；普通空值/空数组不是。Global 文档说明字段语义；项目 2026-10-04 的能力检查也曾通过 EU 主机拿到定期产品行。但 EU 没有独立的 Earn 字段文档，若要确认 EU 当前返回细节仍应看一次 EU 实际样本。 |
 | Bybit EU (`api.bybit.eu`) 活期 | 项目代码使用 EU 主机请求 `/v5/earn/product`，Global 与 EU 共用解析器。用户提供的当前 API 回包确认 USDT 1.4%、USDC 1.02%、BTC 1.2%，三者都有顶层估算 APR、但 `tierAprDetails` 为空。 | 对这三条回包，APR 数值可用；空梯度本身不能当成“APR 缺失”或“不限额”。容量需独立判断。 | EU 没有找到独立 Earn 字段文档。当前回包能证实 API 确实不返回梯度，但无法单凭空数组判断 EU 产品本来就是单利率，还是梯度字段不适用于 EU；也不能确认 EU 与 Global 的 APR 资格和额度语义完全相同。 |
 
+</details>
+
 来源：
 
 - Binance [Simple Earn Flexible 产品说明](https://www.binance.com/en/support/faq/detail/3bd1a6eba20a445da1e94bf6cfa52e80)（实时 APR 适用于全部申购金额；Bonus Tiered APR 为选定产品的额外奖励）和 [Simple Earn REST API：Flexible & Locked](https://developers.binance.com/en/docs/catalog/investment-and-services-simple-earn/api/rest-api/flexible-locked)（产品/持仓回包字段）。
 - Bitget [Classic Earn Savings API](https://www.bitget.com/docs/catalog/earn-classic-savings/classic-earn-savings)（`apyType`、`apyList`、`currentApy`）。
 - Bybit [Get Product Info](https://bybit-exchange.github.io/docs/v5/finance/earn/easy-onchain/product-info)（`estimateApr`、申购金额字段、Platform Reward APR 说明）；Bybit EU [如何获取 EU API 文档](https://www.bybit.eu/en-EU/help-center/article/How-to-retrieve-API-documentations)及其链接的 [PSD2/XS2A 文档](https://bybit-exchange.github.io/eu-docs/fin)（后者不是 Earn 产品字段文档）。
 - Bybit 定期 [Get Product Info](https://bybit-exchange.github.io/docs/v5/finance/earn/fixed-saving/product)（`tieredApyList`、每档 APY、`max="-1"` 明确不限额）。
+
+本轮复核更正：上方“早期文字摘要”仅作历史记录，凡与首页四列表、本段规则相冲突的地方都不再作为当前结论。当前结论是：Bybit Global 活期各档值按最终 APR；Bybit EU 这三种币为空梯度是有效单档；Bybit 活期 `max=-1` 只暂按开放末端处理、不推断账号总额度无限。Global/EU 定期页面本轮仍被本地浏览器拦截，不能把这说成交易所拒绝请求。
+
+## 当前建议的统一处理规则
+
+这些是按已取得的官方说明、真实回包和用户线上确认整理的实施规则；它们不是“任何接口只要返回一些数字就算完整”。
+
+1. **先判断请求有没有读全，再判断字段够不够用。** `retCode=0`、请求成功、所有分页读完，只能说明列表请求读成功；不能自动说明利率/额度业务字段完整。成功但没有产品行记为“本次空列表”，不要当请求失败，也不要据此推断平台永久不支持。请求错误或分页不完整保留上次数据，不把空白覆盖成零。
+2. **APR 按平台字段含义，不看字段名字猜。** Binance 活期用“基础实时 APR + 适用金额档的 Bonus APR”；Bitget `apyType=single` 是一个 APY，`ladder` 的每个 `currentApy` 是该档 APY；Bybit Global 活期梯度按每档最终 APR 使用，不再加顶层 APR；Bybit EU 这几种币空梯度按用户确认视作有效单档 APR。Bybit 定期的 `tieredApyList[].apy` 是该档 APY。若奖励以不同币种发放，没有同一资产计价的官方总收益率时，不把多个币种的 APY 直接相加。
+3. **“没返回梯度”逐平台判断，不套一个全平台口径。** Binance 有有效基础 APR、但没返回 bonus 档＝基础 APR 仍能用于持仓估算，本次额外奖励为零/未报；Bitget 明确 `single`＝正常单利率；Bybit EU 本次空数组＝已确认的单档产品。其他产品没有梯度字段、又没有 `single` 类型或线上产品说明佐证时＝“梯度形状未确认”，不是“不限额”，也不要造一条无限档。
+4. **APR 可用与额度可用分开。** 有可信单档 APR，可按已知持仓估算收益；但剩余额度只有在“这档适用的本金边界已知、同一产品持仓已知、上限范围清楚”时才算。已知 APR 但额度未知时，收益估算可以保留，产品不计入高息剩余额度/首档可买额度，也不显示“不限”。
+5. **首档和高息额度只按 API 明确的金额档算。** 本项目的高息线是 APR ≥6%；定期另受期限筛选。对每个 APR ≥6% 的档，只算它的已知金额上限，减去该产品中已经占用的对应额度；已知持仓超过首档上限时，剩余首档额度为零。不得用一个产品的其他档、VIP 产品或币种总持仓来代替。
+6. **上限只有明确证据才叫“不限”。** Bybit 定期文档的 `max="-1"` 明确表示不限档。Bybit 活期本轮回包也用 `max=-1`，建议暂把它识别为“该档开放末端”的哨兵值，但台账保留“活期字段未被官方文档定义”；它不代表 `maxStakeAmount` 或用户可申购量无限。Binance 没有奖励档、Bitget 空梯度、`max: null`、`remainingAmount` 或 `remainingPoolAmount` 的单独出现，都不等于不限。
+7. **梯度完整要看整段，不是“解析出一档就通过”。** 保留 API 原档数与解析成功数；每档 APR 和上下界都要可读；首档起点正确；档与档无缺口、无重叠。有限末档只能确认已知范围内的利率；除非平台文档/明确产品类型说明梯度已经覆盖整个申购范围，否则末档后仍标“未确认”，不向外推算。
+
+### 按规则算出的本轮样例
+
+| 样例 | 规则落地结果 |
+|---|---|
+| Binance USDT 活期，基础 2.768876%，0–1,000 额外奖励 4% | 首档总 APR 6.768876%，是高息；名义高息档上限 1,000 USDT，减该产品已知持仓后才是剩余量。 |
+| Binance USDC 活期，基础 2.231321%，没有 bonus 档 | APR 有效，仍能估算已持仓收益；低于 6%，无高息档，不可把空 bonus 档解释成无限申购。 |
+| Bybit Global USDT 活期，首档 0–200 为 7.3% | 按最终档 APR，不加 2.3%；首档为高息，名义上限 200 USDT，剩余量需扣同产品持仓。 |
+| Bybit Global USDC / BTC 活期 | 首档 APR 分别 5.23% / 0.4%，低于 6%，不计高息额度；仍可显示 APR 和首档边界。 |
+| Bybit EU USDT / USDC / BTC 活期 | 经用户确认是单档，APR 有效（1.4% / 1.02% / 1.2%）；均低于 6%，持仓收益可估算，但 `maxStakeAmount` 不等于账号剩余额度。 |
+| Bitget USDT、USDC 活期 | `single` 与 `ladder` 按不同产品分别看；normal USDT 10% single、USDT 8.02% 首档、USDC 8% single、USDC 6.66% 首档均达到 6%。扣持仓须按各自产品 ID，不用 `remainingAmount` 替代持仓。 |
 
 ## 当前代码与风险
 
@@ -90,20 +127,14 @@
 
 注：Binance `tierAnnualPercentageRate` 的已知活动档属于基础实时 APR 之上的额外奖励；Bybit 定期 `tieredApyList[].apy` 则是该金额档本身的 APY。字段叫法相似不代表平台含义相同。
 
-## 建议的统一判定标准
-
-1. 先按平台明确的 `rateShape` 识别 `single` 或 `tiered`。Binance 没有 bonus tier 字段时仍有基础实时 APR；Bitget 使用 `apyType`；Bybit 活期若返回项目目前读取的 `tierAprDetails`，必须按实际档验证，不能因为官方文档未写就忽略它。不得仅凭空数组判“不限”或判完整。
-2. `single`：有可信 APR 就记为 APR 完整；额度/资格另外判定。没有 APR 数字才是 APR 待获取。
-3. `tiered`：必须保留返回档总数和解析成功数，确认两者相等；验证首档起点、边界连续不重叠，并确认末档是有限产品终点还是明确不限。若缺档或回包无法证明适用范围，只保留已知值，不把未覆盖金额按任何利率推算。
-4. 对额外奖励（如 Binance Bonus Tiered APR），仅在平台确认它是“加在基础 APR 上”的奖励，且适用档位、金额和资格已知时才相加；历史奖励 APR、活动上限、单笔申购上限不可自动当作当前总 APR 或当前剩余额度。
-5. `max: null`、没有档位或最高档有一个有限 `maxStepVal`，都不等于无限。无限必须有平台明确标记/文档语义；未知上限只阻止依赖额度的指标，不抹掉已知 APR。
-
-## 仍需的最小线上样本
+## 尚未补齐的实测证据
 
 若要排查“是不是某个币种/地区回包不同”，需要覆盖项目实际支持的资产；不必索取每个产品的全部账户数据，也不要运行全平台能力扫描：
 
-- Bitget：当前账号四币产品列表已由用户诊断回包覆盖；本次已取得 USDT 三种代表产品的 `subscribe-info`。还缺 USDC 的订阅详情样本，且官方 `remainingAmount` 的统计范围未定义。无需再次贴账户密钥或持仓接口数据；如确需补充，可只对 USDC 的 single 与 ladder 代表产品做只读详情查询。
-- Bybit 活期：Global 与 EU 的当前公开产品列表已由用户各提供一份，覆盖项目支持的 USDT、USDC、BTC；不支持 USDGO。此项本轮已补齐，不需要再重复请求。待规则确认时只需决定：活期 `max=-1` 是否按 unlimited、梯度 APR 是否直接作为最终档位 APR（而非与顶层 APR 相加），并将官方文档未定义这一点标清。
-- Bybit 定期：项目支持四种资产 USDT、USDC、BTC、USDGO。Global 旧诊断记录有 11 条，但只有归一化摘要；本批未找到 EU 定期回包。尚需 EU 当前完整产品清单，以及 Global 原始字段样本，核对 `coin`、`duration`、`status`、`tieredApyList`、`interestCoinApyList`、`minStakeAmount/maxStakeAmount`。
+- Bitget：四币产品列表和 USDT/USDC APY 档位已足以完成本轮利率形状盘点；不必再查 USDC `subscribe-info`，因为 `remainingAmount` 的范围不清，查一条相似详情也不能解决这个口径问题。
+- Bybit 活期：Global 与 EU 当前公开列表都已直接读到，覆盖项目支持的 USDT、USDC、BTC；此项已完成，不需要再重复请求。规则建议见上文：每档值按最终 APR；EU 空梯度按已确认单档；Global `max=-1` 暂作开放档哨兵，但不推断账号不限额。
+- Bybit 定期：项目支持 USDT、USDC、BTC、USDGO。Global 旧日志只证明有 11 行产品，不含原始字段；EU 旧日志没有产品行。本轮 Global/EU 直接页面都被内嵌浏览器拦截。尚缺两站各一份公开产品 JSON，用来确认 `coin`、`duration`、`status`、`tieredApyList`、`interestCoinApyList` 和额度字段；用户以后方便时再提供即可。
+- Binance 定期：Global/Bahrain 列表虽成功，但 Worker 日志没有逐条利率/额度字段。若要把 Binance 定期也纳入完整的高息和首档计算规则，还需各地区少量脱敏产品字段样本；当前不能从请求成功或行数补推这些字段。
+- 暂无必要索取密钥、持仓 JSON 或再跑全平台诊断。只需公开产品字段；不得包含 API 密钥或账户持仓。
 
 这些都是公开产品资料或只读 API 产品资料，不需要持仓金额、用户身份或密钥。直接浏览器若拦截 Bybit API，应记为“本次查看工具受限”，不要误报成交易所 API 故障。

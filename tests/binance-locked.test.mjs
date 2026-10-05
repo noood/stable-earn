@@ -92,3 +92,53 @@ test("Binance locked snapshot fetches past the first page before marking product
   assert.ok(requests.some((request) => request.pathname.endsWith("/locked/list")
     && request.searchParams.get("current") === "2"));
 });
+
+test("narrow Binance locked-product diagnosis returns APR and quota fields without requesting holdings", async () => {
+  const requests = [];
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => {
+        const parsed = new URL(url);
+        requests.push(parsed);
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          path: parsed.pathname,
+          url,
+          text: async () => "{}",
+        };
+      },
+      readExchangeJson: async (response) => {
+        const current = Number(new URL(response.url).searchParams.get("current"));
+        if (current === 1) return {
+          total: 2,
+          rows: [
+            {
+              projectId: "USDT-7D",
+              detail: { asset: "USDT", duration: 7, apr: "0.025", status: "PURCHASABLE", isSoldOut: false },
+              quota: { minimum: "100", totalPersonalQuota: "500000" },
+            },
+            { projectId: "OTHER-7D", detail: { asset: "OTHER", duration: 7, apr: "0.03" } },
+          ],
+        };
+        return { total: 2, rows: [] };
+      },
+    },
+  });
+  const { diagnoseBinanceLockedProducts } = load("@/lib/integrations/binance");
+  const result = await diagnoseBinanceLockedProducts({ apiKey: "key", apiSecret: "secret" }, "global");
+
+  assert.equal(result.status, "returned");
+  assert.equal(result.responseComplete, true);
+  assert.equal(result.totalRowCount, 2);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].asset, "USDT");
+  assert.deepEqual(result.rows[0].apr, { state: "returned", value: "0.025" });
+  assert.deepEqual(result.rows[0].apy, { state: "missing" });
+  assert.deepEqual(result.rows[0].minimum, { state: "returned", value: "100" });
+  assert.deepEqual(result.rows[0].totalPersonalQuota, { state: "returned", value: "500000" });
+  assert.equal(result.pagesRead, 1);
+  assert.equal(requests.length, 1);
+  assert.ok(requests.every((request) => request.pathname === "/sapi/v1/simple-earn/locked/list"));
+});

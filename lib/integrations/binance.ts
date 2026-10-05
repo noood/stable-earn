@@ -3,7 +3,7 @@ import { buildPlatformProductIdentity, scopedExternalProductAlias } from "@/lib/
 import type { LiveRate } from "@/lib/live-rates";
 import type { HoldingPosition, Product } from "@/lib/domain";
 import { diagnosticErrorKind, syncDiagnostic } from "@/lib/sync-diagnostics";
-import { apiAssetsFor } from "@/lib/platform-capabilities";
+import { apiAssetsFor, monitoredAssets } from "@/lib/platform-capabilities";
 
 type Credentials = {
   apiKey: string;
@@ -64,6 +64,12 @@ type PageResponse<Row> = {
   total?: number | string;
 };
 
+type DiagnosticField = {
+  state: "missing" | "null" | "returned" | "empty_string" | "other";
+  value?: string | number | boolean | null;
+  valueType?: string;
+};
+
 type BinanceTier = {
   min: number;
   max: number | null;
@@ -112,6 +118,32 @@ export type BinanceFlexibleTierDiagnostic = {
     }>;
     tierScheduleComplete: boolean;
     tierScheduleIssue: "none_reported" | "empty_object" | "unrecognized_entry" | "range_gap_or_overlap" | "complete";
+  }>;
+};
+
+export type BinanceLockedProductDiagnostic = {
+  account: "binance-global" | "binance-bahrain";
+  endpoint: "/sapi/v1/simple-earn/locked/list";
+  status: "returned" | "empty" | "partial" | "error";
+  responseComplete: boolean;
+  pageSize: number;
+  pagesRead: number;
+  totalRowCount: number | null;
+  reportedTotal: number | null;
+  failureKind?: string;
+  rows: Array<{
+    projectId: string | null;
+    asset: string | null;
+    duration: DiagnosticField;
+    apr: DiagnosticField;
+    apy: DiagnosticField;
+    annualPercentageRate: DiagnosticField;
+    interestRate: DiagnosticField;
+    minimum: DiagnosticField;
+    totalPersonalQuota: DiagnosticField;
+    status: string | null;
+    isSoldOut: boolean | null;
+    subscriptionStartTime: DiagnosticField;
   }>;
 };
 
@@ -384,6 +416,85 @@ export async function diagnoseBinanceFlexibleTiers(
       rows: [],
     };
   }
+}
+
+/**
+ * Narrow, read-only diagnosis of Binance Locked product rows. It calls only
+ * the product-list endpoint, follows its pages, filters to monitored assets,
+ * and never requests positions or returns credentials/raw response objects.
+ */
+export async function diagnoseBinanceLockedProducts(
+  credentials: Credentials,
+  account: BinanceAccount,
+): Promise<BinanceLockedProductDiagnostic> {
+  const accountId = account === "global" ? "binance-global" : "binance-bahrain";
+  const pageSize = binancePageSize;
+  try {
+    const firstPage = await signedGet<PageResponse<LockedProductRow>>(
+      "/sapi/v1/simple-earn/locked/list",
+      { current: 1, size: pageSize },
+      credentials,
+    );
+    const products = await collectBinancePages(
+      "/sapi/v1/simple-earn/locked/list",
+      firstPage,
+      credentials,
+    );
+    const targetAssets = new Set<string>(monitoredAssets);
+    const matchingRows = products.rows.filter((row) => targetAssets.has(String(row.detail?.asset ?? "").toUpperCase()));
+    const responseComplete = products.complete && matchingRows.every((row) => Boolean(row.detail?.asset));
+
+    return {
+      account: accountId,
+      endpoint: "/sapi/v1/simple-earn/locked/list",
+      status: !responseComplete ? "partial" : matchingRows.length ? "returned" : "empty",
+      responseComplete,
+      pageSize,
+      pagesRead: products.pagesRead,
+      totalRowCount: products.rows.length,
+      reportedTotal: finiteOptional(products.total) ?? null,
+      rows: matchingRows.map((row) => ({
+        projectId: typeof row.projectId === "string" && row.projectId.trim() ? row.projectId.trim() : null,
+        asset: typeof row.detail?.asset === "string" ? row.detail.asset : null,
+        duration: diagnosticField(row.detail?.duration),
+        apr: diagnosticField(row.detail?.apr),
+        apy: diagnosticField(row.detail?.apy),
+        annualPercentageRate: diagnosticField(row.detail?.annualPercentageRate),
+        interestRate: diagnosticField(row.detail?.interestRate),
+        minimum: diagnosticField(row.quota?.minimum),
+        totalPersonalQuota: diagnosticField(row.quota?.totalPersonalQuota),
+        status: typeof row.detail?.status === "string" ? row.detail.status : null,
+        isSoldOut: typeof row.detail?.isSoldOut === "boolean" ? row.detail.isSoldOut : null,
+        subscriptionStartTime: diagnosticField(row.detail?.subscriptionStartTime),
+      })),
+    };
+  } catch (error) {
+    return {
+      account: accountId,
+      endpoint: "/sapi/v1/simple-earn/locked/list",
+      status: "error",
+      responseComplete: false,
+      pageSize,
+      pagesRead: 0,
+      totalRowCount: null,
+      reportedTotal: null,
+      failureKind: diagnosticErrorKind(error),
+      rows: [],
+    };
+  }
+}
+
+function diagnosticField(value: unknown): DiagnosticField {
+  if (value === undefined) return { state: "missing" };
+  if (value === null) return { state: "null", value: null };
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? { state: "returned", value } : { state: "other", valueType: "number" };
+  }
+  if (typeof value === "boolean") return { state: "returned", value };
+  if (typeof value === "string") {
+    return value.length ? { state: "returned", value } : { state: "empty_string", value };
+  }
+  return { state: "other", valueType: Array.isArray(value) ? "array" : typeof value };
 }
 
 function describeFlexibleTierRow(row: FlexibleProductRow, asset: string): BinanceFlexibleTierDiagnostic["rows"][number] {
@@ -826,6 +937,7 @@ async function collectBinancePages<Row>(
 ) {
   let shapeComplete = Array.isArray(firstPage.rows);
   const rows = Array.isArray(firstPage.rows) ? [...firstPage.rows] : [];
+  let pagesRead = 1;
   const reportedTotal = finiteOptional(firstPage.total);
   const totalPages = reportedTotal === undefined
     ? undefined
@@ -845,6 +957,7 @@ async function collectBinancePages<Row>(
       shapeComplete = false;
       break;
     }
+    pagesRead += 1;
     const pageShapeValid = Array.isArray(page.rows);
     shapeComplete &&= pageShapeValid;
     const pageRows = pageShapeValid ? page.rows! : [];
@@ -856,6 +969,7 @@ async function collectBinancePages<Row>(
   return {
     rows,
     total: reportedTotal,
+    pagesRead,
     complete: shapeComplete && (reportedTotal !== undefined
       ? rows.length >= reportedTotal
       : lastPageSize < binancePageSize),
