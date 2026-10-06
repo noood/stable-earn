@@ -1,5 +1,6 @@
 import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
 import { parseExchangeNumber } from "@/lib/exchange-number";
+import { syncDiagnostic } from "@/lib/sync-diagnostics";
 
 type OkxCredentials = {
   apiKey: string;
@@ -47,11 +48,37 @@ const okxApiBases = ["https://openapi.okx.com", "https://www.okx.com"] as const;
 
 export async function fetchOkxSavingsHoldings(credentials: OkxCredentials) {
   const body = await signedGet("/api/v5/finance/savings/balance", credentials);
+  const responseRows = Array.isArray(body.data) ? body.data : [];
+  const assetChecks = Object.keys(productIds).map((asset) => {
+    const matchingRows = responseRows.filter((row) => safeCurrencyCode(row.ccy)?.toUpperCase() === asset);
+    const parsedAmounts = matchingRows.map((row) => parseExchangeNumber(row.amt));
+    return {
+      asset,
+      rowCount: matchingRows.length,
+      returnedCurrencyCodes: [...new Set(matchingRows.map((row) => safeCurrencyCode(row.ccy) ?? "unreadable"))].slice(0, 5),
+      amountFieldPresentCount: matchingRows.filter((row) => Object.hasOwn(row, "amt")).length,
+      amountValidCount: parsedAmounts.filter((amount) => amount !== undefined && amount >= 0).length,
+      adapterRecognizedCount: matchingRows.filter((row) => row.ccy === asset).length,
+      usableByAdapterCount: matchingRows.filter((row) => row.ccy === asset && (parseExchangeNumber(row.amt) ?? -1) >= 0).length,
+    };
+  });
+  syncDiagnostic("okx_holding_response", {
+    endpoint: "/api/v5/finance/savings/balance",
+    dataFieldPresent: Object.hasOwn(body, "data"),
+    dataIsArray: Array.isArray(body.data),
+    rowCount: responseRows.length,
+    assetChecks,
+    unclassifiedRowCount: responseRows.length - assetChecks.reduce((total, item) => total + item.rowCount, 0),
+  });
+  if (body.data !== undefined && body.data !== null && !Array.isArray(body.data)) {
+    throw new Error("OKX savings balance data is not a list");
+  }
+
   const holdings: Record<string, number> = {};
   const observedAssets = new Set<string>();
   const invalidAssets = new Set<string>();
 
-  for (const row of body.data ?? []) {
+  for (const row of responseRows) {
     if (row.ccy) observedAssets.add(row.ccy.toUpperCase());
     const productId = row.ccy ? productIds[row.ccy as keyof typeof productIds] : undefined;
     if (!productId) continue;
@@ -64,6 +91,12 @@ export async function fetchOkxSavingsHoldings(credentials: OkxCredentials) {
   }
   for (const asset of invalidAssets) delete holdings[productIds[asset as keyof typeof productIds]];
   return { holdings, observedAssets: [...observedAssets], invalidAssets: [...invalidAssets] };
+}
+
+function safeCurrencyCode(value: unknown) {
+  if (typeof value !== "string") return null;
+  const code = value.trim();
+  return /^[A-Za-z0-9]{1,16}$/.test(code) ? code : null;
 }
 
 /**
