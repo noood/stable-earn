@@ -724,9 +724,11 @@ input:focus-visible,
 .api-connection-row { padding: .875rem 1rem; }
 .api-connection-row-divided { border-top: var(--hairline) solid var(--border); }
 .api-check-actions { display: grid; justify-items: end; gap: .25rem; }
-.api-check-button,
-.sync-notice-refresh {
+.api-check-button {
   width: 6rem;
+}
+.sync-notice-refresh {
+  width: calc(4em + var(--button-small-padding-x) + var(--button-small-padding-x) + 2px);
 }
 .api-check-button {
   height: var(--button-default-height);
