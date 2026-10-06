@@ -3,6 +3,7 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
 function loadProbe({ malformedNumbers = false } = {}) {
+  let onchainCalls = 0;
   const accountId = (region) => region === "global" ? "binance-global" : "binance-bahrain";
   const load = moduleLoader({
     "@/lib/integrations/binance": {
@@ -123,10 +124,7 @@ function loadProbe({ malformedNumbers = false } = {}) {
     },
     "@/lib/integrations/okx": {
       fetchOkxSavingsHoldings: async () => ({ holdings: {}, observedAssets: ["USDT", "USDGO"], invalidAssets: ["USDT"], snapshotComplete: false }),
-      fetchOkxOnchainOffers: async () => ({ byAsset: {
-        USDT: { rowCount: 1, rows: [{ id: "offer-1", asset: "USDT", protocol: "Example Staking", protocolType: "staking", status: "available", term: "0", apy: "4.2" }] },
-        USDC: { rowCount: 0, rows: [] }, USDGO: { rowCount: 0, rows: [] }, BTC: { rowCount: 0, rows: [] },
-      } }),
+      fetchOkxOnchainOffers: async () => { onchainCalls += 1; return { byAsset: {} }; },
     },
     "@/lib/live-rates": {
       fetchPublicRateSnapshot: async () => ({
@@ -139,11 +137,11 @@ function loadProbe({ malformedNumbers = false } = {}) {
       }),
     },
   });
-  return load("@/lib/platform-capability-probe");
+  return { ...load("@/lib/platform-capability-probe"), getOnchainCalls: () => onchainCalls };
 }
 
 test("capability probe returns all scopes without exposing holding amounts or credentials", async () => {
-  const { probePlatformCapabilities: probe } = loadProbe();
+  const { probePlatformCapabilities: probe, getOnchainCalls } = loadProbe();
   const credentials = Object.fromEntries([
     "binance-global", "binance-bahrain", "bybit-global", "bitget-global", "okx-global",
   ].map((accountId) => [accountId, { apiKey: "secret-key", apiSecret: "secret-value", passphrase: "secret-pass" }]));
@@ -165,7 +163,9 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   assert.equal(json.includes("45.67"), false);
   assert.equal(json.includes("hasPositiveHolding"), false);
   assert.equal(json.includes("identityComparison"), false);
-  assert.equal(json.includes("On-chain Earn offers"), true);
+  assert.equal(json.includes("onchain_earn"), false);
+  assert.equal("additionalProbes" in result, false);
+  assert.equal(getOnchainCalls(), 0);
 
   const check = (accountId, asset, productType, item) => result.checks.find((entry) => (
     entry.accountId === accountId && entry.asset === asset && entry.productType === productType && entry.item === item
@@ -231,12 +231,6 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   assert.equal(check("binance-global", "USDT", "flexible", "holding").holdingEmptyMeansZero, "yes");
   assert.equal(check("okx-global", "USDT", "flexible", "holding").holdingEmptyMeansZero, "yes");
   assert.equal(check("bybit-eu", "USDT", "flexible", "holding").api.path, null);
-  const okxOffers = result.additionalProbes.find((entry) => entry.id === "okx-onchain-earn-offers");
-  assert.equal(okxOffers.assets.find((entry) => entry.asset === "USDT").status, "returned");
-  assert.equal(okxOffers.assets.find((entry) => entry.asset === "USDT").rows[0].rateShape, "single_rate");
-  assert.equal(okxOffers.assets.find((entry) => entry.asset === "USDT").rows[0].apy, 4.2);
-  assert.equal(okxOffers.assets.find((entry) => entry.asset === "USDC").status, "empty");
-  assert.match(okxOffers.note, /不代表普通活期\/定期/);
   assert.equal(scope("mexc-ph", "USDT", "flexible").productApi.status, "unsupported");
   const mexc = check("mexc-ph", "USDT", "flexible", "product_apr");
   assert.equal(mexc.platform, "MEXC");
@@ -252,8 +246,6 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   const unconfiguredBinanceHolding = withoutCredentials.checks.find((entry) => entry.accountId === "binance-global" && entry.asset === "USDT" && entry.productType === "flexible" && entry.item === "holding");
   assert.equal(unconfiguredBinanceHolding.result.status, "not_configured");
   assert.equal(unconfiguredBinanceHolding.apiSupport, "支持");
-  const okxOffersWithoutCredential = withoutCredentials.additionalProbes.find((entry) => entry.id === "okx-onchain-earn-offers");
-  assert.equal(okxOffersWithoutCredential.assets.every((entry) => entry.status === "not_configured"), true);
 });
 
 test("capability report accepts a trailing percent on APY but rejects malformed amounts", async () => {

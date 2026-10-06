@@ -6,6 +6,29 @@ import { sqliteDb } from "./helpers/sqlite-db.mjs";
 const load = moduleLoader();
 const { archiveApiCatalogProducts, prepareProductCatalogSync, resolveCatalogProductIds } = load("@/lib/product-catalog");
 
+test("an existing API product keeps its row and marks APR unavailable after a complete field-empty response", async () => {
+  const db = sqliteDb();
+  const product = load("@/lib/local-preview").localPrivateProductsPreview().products
+    .find((item) => item.id === "bn-g-usdt");
+  assert.ok(product);
+  const now = "2026-10-06T00:00:00.000Z";
+  db.sqlite.prepare(`INSERT INTO product_catalog
+    (owner_id, product_id, canonical_product_id, identity_key, payload, status, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`)
+    .run("user", product.id, product.identityKey, product.identityKey, JSON.stringify(product), now, now);
+  const result = await prepareProductCatalogSync(db, "user", [{
+    productId: product.identityKey, identityKey: product.identityKey,
+    externalProductId: product.externalProductId, apr: 0, tiers: [], rateCoverage: "unavailable",
+    fetchedAt: now, sourceLabel: "Binance API", productType: product.productType,
+    catalog: { accountId: product.accountId, exchange: product.exchange, region: product.region,
+      asset: product.asset, holdingDataMode: "api", apiAccess: "authenticated" },
+  }], { [product.identityKey]: 0 });
+  const kept = result.products.find((item) => item.id === product.id);
+  assert.ok(kept);
+  assert.equal(kept.rateCoverage, "unavailable");
+  assert.equal(kept.productDataMode, "api");
+});
+
 test("a complete supported scope cannot zero or archive an unsupported sibling scope", async () => {
   const { createProductTemplate } = load("@/lib/product-template");
   const db = sqliteDb();

@@ -1,5 +1,23 @@
 import { expect, test } from "@playwright/test";
 
+const visualPreviewAt = "2026-10-06T10:00:00.000Z";
+
+async function waitForVisualAssets(page) {
+  await page.evaluate(() => Promise.all([
+    document.fonts.ready,
+    ...Array.from(document.images, (image) => image.decode().catch(() => undefined)),
+  ]));
+}
+
+async function openFixedPrivatePreview(page, viewport) {
+  await page.clock.setFixedTime(new Date(visualPreviewAt));
+  await page.setViewportSize({ width: viewport.width, height: viewport.height });
+  await page.goto(`/private?previewAt=${encodeURIComponent(visualPreviewAt)}`);
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+  await expect(page.locator("tr.product-row").first()).toBeVisible();
+  await waitForVisualAssets(page);
+}
+
 async function interceptLocalPortfolioSave(page, savedPayloads) {
   await page.route("**/private/api/holdings**", async (route) => {
     const url = new URL(route.request().url());
@@ -51,6 +69,39 @@ test("header menu action labels align vertically within their rows", async ({ pa
   await expect(apiSettings).toHaveCSS("align-items", "center");
 });
 
+test("public menu has equal space above and below its only action", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".action-menu-trigger").click();
+  const menu = page.locator(".action-menu-popover");
+  const action = menu.getByRole("button", { name: "API 设置" });
+  await expect(action).toBeVisible();
+  const gaps = await menu.evaluate((popover) => {
+    const item = popover.querySelector(".menu-item");
+    if (!item) throw new Error("Public menu action missing");
+    const outer = popover.getBoundingClientRect();
+    const inner = item.getBoundingClientRect();
+    return { top: inner.top - outer.top, bottom: outer.bottom - inner.bottom };
+  });
+  expect(gaps.top).toBeCloseTo(gaps.bottom, 0);
+});
+
+test("signed-out demo shows two synthetic product changes without requesting private history", async ({ page }) => {
+  let privateHistoryRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/private/api/product-history")) privateHistoryRequests += 1;
+  });
+  await page.goto("/");
+  const row = page.getByRole("row").filter({ hasText: "Binance.com" }).filter({ hasText: "6.20%" });
+  await expect(row).not.toContainText("阶梯额度未获取");
+  await expect(row).toContainText("5.35%");
+  await row.getByRole("button", { name: "查看变更记录" }).click();
+  const dialog = page.getByRole("dialog", { name: "产品变更记录" });
+  await expect(dialog.getByText("首档 APR 下调")).toBeVisible();
+  await expect(dialog.getByText("首档额度减少")).toBeVisible();
+  await expect(dialog.locator(".product-history-event")).toHaveCount(2);
+  expect(privateHistoryRequests).toBe(0);
+});
+
 test("an unknown API quota shows a red warning instead of unlimited capacity", async ({ page }) => {
   await page.route("**/private/api/products**", async (route) => {
     const url = new URL(route.request().url());
@@ -64,10 +115,11 @@ test("an unknown API quota shows a red warning instead of unlimited capacity", a
   });
 
   await page.goto("/private");
-  const row = page.locator("tr.product-row").filter({ hasText: "首档额度待确认" });
+  const row = page.locator("tr.product-row").filter({ hasText: "首档额度未获取" });
   await expect(row).toBeVisible();
-  await expect(row.locator(".product-meta-danger")).toContainText("首档额度待确认，不参与收益计算");
-  await expect(row).toContainText("申购额度 · 上限待确认");
+  await expect(row.locator(".product-meta-danger")).toContainText("首档额度未获取，不参与收益计算");
+  await expect(page.locator(".sync-notice-message")).toContainText("Fixed Saving · 7 天 · APR 边界 · 首档额度未获取");
+  await expect(row).toContainText("申购额度 · 上限未获取");
   await expect(row).not.toContainText("不限额");
 });
 
@@ -101,7 +153,7 @@ test("a known first tier stays visible without claiming an unknown later rate", 
   });
 
   await page.goto("/private");
-  const row = page.locator("tr.product-row").filter({ hasText: "阶梯结构不完整" });
+  const row = page.locator("tr.product-row").filter({ hasText: "阶梯结构未获取" });
   await expect(row.locator(".holding-summary")).toContainText("持仓 650.00 / 首档 300.00");
   await expect(row.locator(".holding-summary")).toContainText("超出首档 +350.00 USDT · 后续档位待确认");
   await expect(row.locator("td").nth(3)).toHaveText("—");
@@ -339,7 +391,7 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(checkButton).toHaveCSS("border-radius", await editHoldingsButton.evaluate((button) => getComputedStyle(button).borderRadius));
     await expect(cooldownOptions).toHaveCSS("height", checkButtonHeight);
     await expect(checkButton).toHaveText("检测 API");
-    await expect(dialog.getByText("只读检查已知接口，不写入产品、持仓或历史；报告不含持仓金额或密钥。OKX On-chain Earn 单独检查。")).toBeVisible();
+    await expect(dialog.getByText("只读检查已知接口，不写入产品、持仓或历史；报告不含持仓金额或密钥。")).toBeVisible();
     await checkButton.click();
     await expect.poll(() => checkStarted).toBe(true);
     const loadingButton = dialog.getByRole("button", { name: "正在检测 API" });
@@ -347,7 +399,7 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(loadingButton).toHaveText("");
     await expect(loadingButton).toHaveCSS("width", checkButtonWidth);
     await expect(loadingButton).toHaveCSS("height", checkButtonHeight);
-    const spinner = dialog.locator(".api-check-spinner");
+    const spinner = dialog.locator(".loading-spinner");
     await expect(spinner).toBeVisible();
 
     releaseReport();
@@ -418,6 +470,20 @@ test("scrolling the product history popover at its boundary does not scroll the 
 
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(pageScrollBeforePopoverWheel);
   await expect(popover).toBeVisible();
+});
+
+test("a click after hover opens product history keeps it open on a narrow table", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto("/private?asset=USDT");
+  const trigger = page.locator("tr.product-row").filter({ hasText: "Binance.com" }).first()
+    .getByRole("button", { name: "查看变更记录" });
+  await trigger.hover();
+  const history = page.getByRole("dialog", { name: "产品变更记录" });
+  await expect(history).toBeVisible();
+  await trigger.click();
+  await expect(history).toBeVisible();
+  await trigger.click();
+  await expect(history).toHaveCount(0);
 });
 
 test("rate-limited API report explains partial results and shows a retry countdown", async ({ page }) => {
@@ -612,6 +678,13 @@ test("empty local product history opens directly in its stable empty state", asy
   const dialog = page.getByRole("dialog", { name: "产品变更记录" });
   await expect(dialog.getByText("暂无变更记录")).toBeVisible();
   await expect(dialog.getByRole("status")).toHaveCount(0);
+  const gaps = await dialog.evaluate((popover) => {
+    const header = popover.querySelector(".product-history-header");
+    const empty = popover.querySelector(".product-history-empty");
+    if (!header || !empty) throw new Error("History popover content missing");
+    return { top: header.offsetTop, bottom: popover.scrollHeight - empty.offsetTop - empty.offsetHeight };
+  });
+  expect(gaps.top).toBe(gaps.bottom);
 });
 
 test("saving an edited holding submits only the local preview payload", async ({ page }) => {
@@ -655,6 +728,80 @@ for (const viewport of [
   { name: "desktop", width: 1280, height: 900 },
   { name: "mobile", width: 375, height: 812 },
 ]) {
+  test(`settled signed-out page matches the ${viewport.name} visual baseline`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+    await expect(page.getByText("以下均为演示数据。")).toBeVisible();
+    await waitForVisualAssets(page);
+    await expect(page).toHaveScreenshot(`public-settled-${viewport.name}.png`, {
+      fullPage: true,
+      animations: "disabled",
+      caret: "hide",
+    });
+  });
+
+  test(`settled private page and editing match the ${viewport.name} full-page baselines`, async ({ page }) => {
+    await openFixedPrivatePreview(page, viewport);
+    for (const asset of ["USDT", "USDC", "USDGO", "BTC"]) {
+      if (asset !== "USDT") {
+        await page.getByRole("button", { name: asset, exact: true }).first().click();
+        await expect(page.getByRole("heading", { name: `${asset} 持仓` })).toBeVisible();
+      }
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await waitForVisualAssets(page);
+      await expect(page).toHaveScreenshot(`private-settled-${asset.toLowerCase()}-${viewport.name}.png`, {
+        fullPage: true, animations: "disabled", caret: "hide",
+      });
+    }
+
+    await page.getByRole("button", { name: "USDT", exact: true }).first().click();
+    await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+    await page.getByRole("button", { name: "编辑持仓" }).click();
+    await expect(page.getByRole("button", { name: "取消" }).first()).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect(page).toHaveScreenshot(`private-editing-${viewport.name}.png`, {
+      fullPage: true, animations: "disabled", caret: "hide",
+    });
+  });
+
+  test(`private empty and sync-status pages match the ${viewport.name} full-page baselines`, async ({ page }) => {
+    for (const scenario of ["empty", "partial", "error", "syncing"]) {
+      await page.clock.setFixedTime(new Date(visualPreviewAt));
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto(`/private?previewAt=${encodeURIComponent(visualPreviewAt)}&syncScenario=${scenario}`);
+      await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+      await waitForVisualAssets(page);
+      await expect(page).toHaveScreenshot(`private-${scenario}-${viewport.name}.png`, {
+        fullPage: true, animations: "disabled", caret: "hide",
+      });
+    }
+  });
+
+  test(`private settings and history match the ${viewport.name} visual baselines`, async ({ page }) => {
+    await openFixedPrivatePreview(page, viewport);
+    await page.locator(".action-menu-trigger").click();
+    await page.getByRole("button", { name: "API 设置" }).click();
+    const dialog = page.getByRole("dialog", { name: "API 设置" });
+    await expect(dialog.locator(".api-connection-row")).toHaveCount(8);
+    await waitForVisualAssets(page);
+    await expect(page).toHaveScreenshot(`private-settings-top-${viewport.name}.png`, {
+      animations: "disabled", caret: "hide",
+    });
+    await dialog.locator(".api-settings-body").evaluate((body) => { body.scrollTop = body.scrollHeight; });
+    await expect(page).toHaveScreenshot(`private-settings-bottom-${viewport.name}.png`, {
+      animations: "disabled", caret: "hide",
+    });
+    await dialog.getByRole("button", { name: "关闭" }).click();
+
+    const historyRow = page.locator("tr.product-row").filter({ hasText: "Binance.com" }).first();
+    await historyRow.getByRole("button", { name: "查看变更记录" }).click();
+    await expect(page.getByRole("dialog", { name: "产品变更记录" })).toBeVisible();
+    await expect(page).toHaveScreenshot(`private-history-${viewport.name}.png`, {
+      animations: "disabled", caret: "hide",
+    });
+  });
+
   test(`initial loading layout matches the ${viewport.name} visual baseline`, async ({ page }) => {
     let releaseRequests;
     let holdingsIntercepted = false;
@@ -681,6 +828,7 @@ for (const viewport of [
       await page.goto("/private", { waitUntil: "domcontentloaded" });
       await expect.poll(() => holdingsIntercepted && productsIntercepted).toBe(true);
       await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "true");
+      await waitForVisualAssets(page);
       await expect(page).toHaveScreenshot(`private-loading-${viewport.name}.png`, {
         animations: "disabled",
         caret: "hide",

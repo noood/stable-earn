@@ -202,7 +202,7 @@ test("Bitget labels single APY offers correctly and rejects a ladder with a miss
   const { probeBitgetAssets } = load("@/lib/integrations/bitget");
   const [result] = await probeBitgetAssets({ apiKey: "key", apiSecret: "secret", passphrase: "pass" }, ["USDT"]);
 
-  assert.equal(result.productApi.status, "partial");
+  assert.equal(result.productApi.status, "returned");
   assert.equal(result.productApi.rows.find((row) => row.productId === "single").rateShape, "single_rate");
   assert.deepEqual(result.productApi.rows.find((row) => row.productId === "single").tiers, [{ min: 0, max: 1000, apr: 8 }]);
   assert.deepEqual(result.productApi.rows.find((row) => row.productId === "gap").tiers, []);
@@ -216,7 +216,7 @@ test("Bitget labels single APY offers correctly and rejects a ladder with a miss
   assert.deepEqual(result.productApi.rows.find((row) => row.productId === "bad-bound").tiers, []);
 });
 
-test("Bitget marks a single-rate product with multiple APY rows as partial", async () => {
+test("Bitget keeps a complete query separate from an unreadable APY schedule", async () => {
   const load = moduleLoader({
     "@/lib/exchange-fetch": {
       exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url }),
@@ -240,7 +240,7 @@ test("Bitget marks a single-rate product with multiple APY rows as partial", asy
   const { probeBitgetAssets } = load("@/lib/integrations/bitget");
   const [result] = await probeBitgetAssets({ apiKey: "key", apiSecret: "secret", passphrase: "pass" }, ["USDT"]);
 
-  assert.equal(result.productApi.status, "partial");
+  assert.equal(result.productApi.status, "returned");
   const product = result.productApi.rows.find((row) => row.productId === "shape-mismatch");
   assert.equal(product.rateShape, "no_rate");
   assert.deepEqual(product.tiers, []);
@@ -269,7 +269,7 @@ test("Bitget treats null APR as missing and rejects numeric prefixes", async () 
   const { probeBitgetAssets } = load("@/lib/integrations/bitget");
   const [result] = await probeBitgetAssets({ apiKey: "key", apiSecret: "secret", passphrase: "pass" }, ["USDT"]);
 
-  assert.equal(result.productApi.status, "partial");
+  assert.equal(result.productApi.status, "returned");
   assert.deepEqual(result.productApi.rows.find((row) => row.productId === "null-apr").tiers, []);
   assert.deepEqual(result.productApi.rows.find((row) => row.productId === "malformed-apr").tiers, []);
   assert.deepEqual(result.productApi.rows.find((row) => row.productId === "null-open-boundary").tiers, [

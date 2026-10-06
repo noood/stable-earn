@@ -6,11 +6,11 @@ import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, fetchBybitShortFixedSn
 import { fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
 import { loadCredentials } from "@/lib/credentials";
 import { getDatabase, getUserIdentity, isScheduledSyncEnabled } from "@/lib/db";
-import { fetchPublicRateSnapshot, summarizePublicFailures, type LiveRate } from "@/lib/live-rates";
+import { fetchPublicRateSnapshot, summarizePublicFailures, type ApiFieldNotice, type LiveRate } from "@/lib/live-rates";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
 import { mergeRates } from "@/lib/rate-cache";
 import { loadManualRefreshCooldown, manualRefreshCooldownMs } from "@/lib/user-settings";
-import { isLocalPreviewRequest, localPrivateProductsPreview, localSyncScenarioPreview } from "@/lib/local-preview";
+import { isLocalPreviewRequest, localPreviewTime, localPrivateProductsPreview, localSyncScenarioPreview } from "@/lib/local-preview";
 import { cachedHoldingTimes, mergeHoldingPositions } from "@/lib/holding-cache";
 import { compareProductIdentity, type ProductIdentityChange } from "@/lib/product-identity";
 import { buildManualMaturityEvents, buildSyncChangeEvents, loadProductChangeEvents, prepareProductChangeEventStatements, type ProductChangeSource, type ProductSnapshotForChanges } from "@/lib/product-change-events";
@@ -66,6 +66,7 @@ type PrivateProductsPayload = {
   holdingFallbacks: Record<string, string>;
   holdingSyncStates: Record<string, HoldingSyncState>;
   holdingPositions: HoldingPosition[];
+  apiFieldNotices?: ApiFieldNotice[];
   fetchedAt: string;
   partial: boolean;
   note: string;
@@ -130,7 +131,8 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
     if (scenario === "product-read-error" || scenario === "both-read-error") {
       return NextResponse.json({ error: "本地模拟：交易所缓存读取失败" }, { status: 503, headers: privateResponseHeaders });
     }
-    const preview = localSyncScenarioPreview(scenario) ?? localPrivateProductsPreview();
+    const previewNow = localPreviewTime(request.url);
+    const preview = localSyncScenarioPreview(scenario, previewNow) ?? localPrivateProductsPreview(previewNow);
     const responsePreview = !scheduledSyncEnabled && preview.cache
       ? { ...preview, cache: { ...preview.cache, scheduledAt: null, scheduledState: "disabled" as const } }
       : preview;
@@ -265,8 +267,19 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
       refreshSource(options.trigger),
       payload.fetchedAt,
     );
+    const apiHoldingStatements = Object.entries(payload.holdingUpdates)
+      .filter(([productId, amount]) => catalog.products.some((product) => product.id === productId && product.holdingDataMode === "api")
+        && payload.holdingSyncStates[productId] === "synced"
+        && !Object.hasOwn(payload.holdingFallbacks, productId)
+        && Number.isFinite(amount) && amount >= 0)
+      .map(([productId, amount]) => db.prepare(`INSERT INTO holdings (user_id, product_id, amount, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id, product_id)
+        DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`)
+        .bind(userId, productId, amount, payload.fetchedAt));
     await db.batch([
       ...catalog.statements,
+      ...apiHoldingStatements,
       ...prepareHoldingPositionStatements(db, userId, payload.holdingPositions),
       ...prepareProductChangeEventStatements(db, userId, changeEvents),
       prepareSyncCacheSave(db, userId, privateCacheKey, payload, payload.fetchedAt),
@@ -491,6 +504,12 @@ async function buildPrivatePayload(
     ...(bybitGlobal?.rates ?? []),
     ...(bitget?.rates ?? []),
   ];
+  const apiFieldNotices: ApiFieldNotice[] = [
+    ...(publicSnapshot.fieldNotices ?? []),
+    ...freshRates.flatMap((rate) => rate.productDataMode !== "manual" && rate.rateCoverage === "unavailable" && rate.catalog
+      ? [{ accountId: rate.catalog.accountId, asset: rate.catalog.asset, productName: rate.name ?? rate.externalProductId ?? rate.productId, externalProductId: rate.externalProductId, fields: ["APR 未获取"] }]
+      : []),
+  ];
   const freshHoldingUpdates = {
     ...(binanceGlobal?.holdings ?? {}),
     ...(binanceBahrain?.holdings ?? {}),
@@ -678,6 +697,7 @@ async function buildPrivatePayload(
       holdingFallbacks,
       holdingSyncStates,
       holdingPositions,
+      apiFieldNotices,
       fetchedAt: updatedAt,
       partial,
       note: `${buildNote(failures)} ${fallbackNote}`.trim(),

@@ -327,6 +327,21 @@ test("real sync route: success → partial → partial → total failure → rec
   assert.equal(response.holdingUpdates["bg-usdc"], 299.64);
 });
 
+test("the sync transaction saves fresh API amounts, including zero, without a browser PUT", async () => {
+  const f = fixture();
+  await f.refresh();
+  const saved = (productId) => f.db.sqlite.prepare("SELECT amount FROM holdings WHERE user_id = 'test-user' AND product_id = ?")
+    .get(productId)?.amount;
+  assert.equal(saved("bg-usdc"), 299.64);
+  assert.equal(saved("bn-g-usdt"), 0);
+  f.step("partial");
+  await f.refresh();
+  assert.equal(saved("bg-usdc"), 299.64);
+  f.step("sparse");
+  await f.refresh();
+  assert.equal(saved("bg-usdc"), 0);
+});
+
 test("scheduled retry keeps the saved directory and does not commit intermediate failures", async () => {
   const f = fixture();
   await f.refresh();

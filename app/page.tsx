@@ -13,9 +13,8 @@ import { effectiveApr, formatAmount, type Account, type Asset, type HoldingMap, 
 import { applyProductOverride, dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { holdingSyncNote, productCapacityIsIncomplete, productInformationIssues, productInformationNote, productParticipatesInInterest, type ProductInformationIssue } from "@/lib/product-status";
 import { apiFieldCapability } from "@/lib/api-capabilities";
-import { freshHoldingIdsForSave } from "@/lib/holding-cache";
 import { completedDataSummary, dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
-import { publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
+import { publicDemoChangeEvents, publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
 import { accounts } from "@/lib/seed-data";
 import { bestAvailableFirstTierProduct, maximumShortTermDays, minimumOpportunityApr, productHasKnownCapacity, totalHighYieldRemaining } from "@/lib/opportunity-policy";
 import { buildManualChangeEvents, sameManualProduct } from "@/lib/product-change-events";
@@ -57,6 +56,7 @@ type ApiResult = {
   holdingFallbacks?: Record<string, string>;
   holdingSyncStates?: Record<string, HoldingSyncState>;
   holdingPositions?: HoldingPosition[];
+  apiFieldNotices?: Array<{ accountId: string; asset: Asset; productName: string; externalProductId?: string; fields: string[] }>;
   changeEvents?: ProductChangeEvent[];
   partial: boolean;
   note: string;
@@ -153,12 +153,13 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const [holdingFallbacks, setHoldingFallbacks] = useState<Record<string, string>>({});
   const [holdingSyncStates, setHoldingSyncStates] = useState<ApiResult["holdingSyncStates"]>({});
   const [holdingPositions, setHoldingPositions] = useState<HoldingPosition[]>([]);
-  const [changeEvents, setChangeEvents] = useState<ProductChangeEvent[]>([]);
+  const [changeEvents, setChangeEvents] = useState<ProductChangeEvent[]>(() => isDemo ? publicDemoChangeEvents : []);
   const [showApiSettings, setShowApiSettings] = useState(false);
   const [apiSettingsMounted, setApiSettingsMounted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [hasSyncFailure, setHasSyncFailure] = useState(false);
   const [syncFailures, setSyncFailures] = useState<string[]>([]);
+  const [apiFieldNotices, setApiFieldNotices] = useState<NonNullable<ApiResult["apiFieldNotices"]>>([]);
   const [syncing, setSyncing] = useState(false);
   const [refreshingExchange, setRefreshingExchange] = useState(false);
   const [manualRefreshInProgress, setManualRefreshInProgress] = useState(false);
@@ -179,7 +180,9 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const holdingsRef = useRef<HoldingMap>(holdings);
   const previewScenario = localPreview && typeof window !== "undefined"
     ? new URLSearchParams(window.location.search).get("syncScenario") : null;
-  const previewQuery = localPreview ? `?preview=1${previewScenario ? `&syncScenario=${encodeURIComponent(previewScenario)}` : ""}` : "";
+  const previewAt = localPreview && typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("previewAt") : null;
+  const previewQuery = localPreview ? `?preview=1${previewScenario ? `&syncScenario=${encodeURIComponent(previewScenario)}` : ""}${previewAt ? `&previewAt=${encodeURIComponent(previewAt)}` : ""}` : "";
   const holdingsEndpoint = `/private/api/holdings${previewQuery}`;
   const productsEndpoint = `/private/api/products${previewQuery}`;
   function refreshEndpoint(manual = false) {
@@ -231,19 +234,6 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     const timer = window.setInterval(() => setClock(Date.now()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    // Keep polling even when the first request failed and there is no cache
-    // timestamp yet; a later scheduled refresh should appear without reload.
-    if (isDemo || editing || openingLoading || (!holdingsReady && !dailyRefreshPendingRef.current)) return;
-    const timer = window.setInterval(() => {
-      if (!personalDataReadyRef.current && !dailyRefreshPendingRef.current) return;
-      void refreshRates(holdingsRef.current, { silent: true });
-    }, 60_000);
-    return () => window.clearInterval(timer);
-    // Polls only read cache once this opening's daily refresh has been handled.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, holdingsReady, isDemo, openingLoading, productsEndpoint]);
 
   async function loadPersonalData(): Promise<HoldingMap | null> {
     setPersonalDataLoading(true);
@@ -362,6 +352,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       setSyncing(data.cache?.state === "syncing");
       setHasSyncFailure(hardFailure || data.partial || failures.length > 0);
       setSyncFailures(failures);
+      setApiFieldNotices(data.apiFieldNotices ?? []);
       setRateFallbacks(data.rateFallbacks ?? {});
       setApiHoldingProductIds(new Set(data.holdingSourceIds ?? Object.keys(data.holdingUpdates ?? {})));
       setHoldingFallbacks(data.holdingFallbacks ?? {});
@@ -391,20 +382,6 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         const next = { ...baseHoldings, ...acceptedHoldingUpdates };
         setHoldings(next);
         holdingsRef.current = next;
-        const freshHoldingIds = freshHoldingIdsForSave(
-          acceptedHoldingUpdates, data.holdingFallbacks ?? {}, data.cache?.state, options?.cacheOnly || (options?.silent && !refreshingDaily),
-        );
-        if (personalDataReadyRef.current && freshHoldingIds.length > 0) {
-          void persistPortfolio(next, productOverridesRef.current, manualProductsRef.current, {
-            holdingProductIds: freshHoldingIds,
-            overrideProductIds: [],
-            manualProductIds: [],
-            deletedManualProductIds: [],
-            source: options?.manual ? "手动刷新" : refreshingDaily ? "每日首次打开" : "定时刷新",
-          }).catch(() => {
-            // The freshly read values stay visible even if the background cloud save fails.
-          });
-        }
       }
       const updatedAt = data.cache?.updatedAt
         ?? data.fetchedAt
@@ -428,6 +405,19 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       if (!options?.silent) setLoading(false);
     }
   }
+
+  useEffect(() => {
+    // Keep polling even when the first request failed and there is no cache
+    // timestamp yet; a later scheduled refresh should appear without reload.
+    if (isDemo || editing || openingLoading || (!holdingsReady && !dailyRefreshPendingRef.current)) return;
+    const timer = window.setInterval(() => {
+      if (!personalDataReadyRef.current && !dailyRefreshPendingRef.current) return;
+      void refreshRates(holdingsRef.current, { silent: true });
+    }, 60_000);
+    return () => window.clearInterval(timer);
+    // Polls only read cache once this opening's daily refresh has been handled.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, holdingsReady, isDemo, openingLoading, productsEndpoint]);
 
   async function persistPortfolio(next: HoldingMap, overrides: ProductOverrideMap, nextManualProducts: Product[], changes: PortfolioChanges) {
     const manualProductIds = new Set(changes.manualProductIds);
@@ -670,7 +660,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     holdingPositions.filter((position) => Number(position.amount) > 0).map((position) => position.productId),
   ), [holdingPositions]);
   const totalHolding = assetProducts.reduce((sum, product) => holdingIsKnown(product) ? sum + (activeHoldings[product.id] ?? 0) : sum, 0);
-  const calculableProducts = assetProducts.filter((product) => holdingIsKnown(product) && productParticipatesInInterest(product, activeHoldings[product.id] ?? 0, activeOverrides[product.id], Boolean(holdingPositionByProduct.get(product.id))));
+  const calculableProducts = assetProducts.filter((product) => holdingIsKnown(product) && productParticipatesInInterest(product, activeHoldings[product.id] ?? 0, activeOverrides[product.id], Boolean(dateOnlyFromTimestamp(holdingPositionByProduct.get(product.id)?.purchaseAt))));
   const calculableHolding = calculableProducts.reduce((sum, product) => sum + (activeHoldings[product.id] ?? 0), 0);
   const annualEarn = calculableProducts.reduce((sum, product) => sum + (activeHoldings[product.id] ?? 0) * effectiveApr(product, activeHoldings[product.id] ?? 0) / 100, 0);
   const portfolioApr = calculableHolding ? annualEarn / calculableHolding * 100 : 0;
@@ -680,6 +670,25 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     ? sum + overflowFromFirstTier(product, activeHoldings[product.id] ?? 0)
     : sum, 0);
   const holdingProductCount = assetProducts.filter((product) => holdingIsKnown(product) && (activeHoldings[product.id] ?? 0) > 0).length;
+  const missingApiFieldNotices = (isDemo ? [] : resolvedProducts).flatMap((product) => {
+    const issues = productInformationIssues(product, activeOverrides[product.id],
+      Boolean(dateOnlyFromTimestamp(holdingPositionByProduct.get(product.id)?.purchaseAt)),
+      holdingIsKnown(product) && (activeHoldings[product.id] ?? 0) > 0)
+      .filter((issue) => issue.endsWith("未获取"));
+    return issues.length ? [`${accountName(product.accountId)} · ${product.asset} ${product.name} · ${issues.join("、")}`] : [];
+  }).concat((isDemo ? [] : apiFieldNotices).flatMap((notice) => {
+    const visible = resolvedProducts.find((product) => product.accountId === notice.accountId
+      && product.asset === notice.asset && product.externalProductId === notice.externalProductId);
+    if (visible) {
+      const visibleIssues = productInformationIssues(visible, activeOverrides[visible.id],
+        Boolean(dateOnlyFromTimestamp(holdingPositionByProduct.get(visible.id)?.purchaseAt)),
+        holdingIsKnown(visible) && (activeHoldings[visible.id] ?? 0) > 0);
+      if (notice.fields.every((field) => visibleIssues.includes(field as ProductInformationIssue))) return [];
+    }
+    return [`${accountName(notice.accountId)} · ${notice.asset} ${notice.productName} · ${notice.fields.join("、")}`];
+  }));
+  const uniqueMissingApiFieldNotices = [...new Set(missingApiFieldNotices)];
+  const hasTopNotice = hasSyncFailure || uniqueMissingApiFieldNotices.length > 0;
   const manualRefreshCooling = Boolean(manualRefreshAvailableAt && Date.parse(manualRefreshAvailableAt) > clock);
   const pageReadFailed = syncFailures.includes("页面数据读取失败");
   const { updating, dataBlocked, initialLoading, canEdit } = dashboardReadState({
@@ -701,16 +710,16 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     ? ""
     : localPreview
       ? lastUpdated
-        ? completedDataSummary(formatSyncDateTime(lastUpdated), { scheduledRefreshFailed, scheduledSyncDisabled, nextRefresh: automaticRefreshSummary, hasSyncFailure })
+        ? completedDataSummary(formatSyncDateTime(lastUpdated), { scheduledRefreshFailed, scheduledSyncDisabled, nextRefresh: automaticRefreshSummary, hasSyncFailure: hasTopNotice })
         : hasSyncFailure ? "暂无成功测试数据，" : "暂无成功测试数据。"
     : isDemo
       ? "以下均为演示数据。"
       : lastUpdated
-        ? completedDataSummary(formatSyncDateTime(lastUpdated), { scheduledRefreshFailed, scheduledSyncDisabled, nextRefresh: automaticRefreshSummary, hasSyncFailure })
+        ? completedDataSummary(formatSyncDateTime(lastUpdated), { scheduledRefreshFailed, scheduledSyncDisabled, nextRefresh: automaticRefreshSummary, hasSyncFailure: hasTopNotice })
         : scheduledRefreshFailed ? "" : hasSyncFailure ? "暂无成功数据，" : "暂无成功数据。";
   const failureSummary = syncFailureSummary(syncFailures);
   const showSyncFailureRefresh = (manualRefreshInProgress && preserveManualRefreshButton)
-    || (!dataBlocked && !isDemo && !updating && !scheduledRefreshFailed && hasSyncFailure);
+    || (!dataBlocked && !isDemo && !updating && !scheduledRefreshFailed && hasTopNotice);
 
   async function handleManualRefresh() {
     if (manualRefreshInFlightRef.current) return;
@@ -730,7 +739,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   return (
     <main className="min-h-screen">
       <nav className="top-nav sticky top-0 z-20 px-5 backdrop-blur lg:px-10" aria-label="主导航">
-        <div className="mx-auto flex min-h-14 max-w-[1500px] flex-wrap items-center gap-x-4 sm:flex-nowrap">
+        <div className="page-width mx-auto flex min-h-14 flex-wrap items-center gap-x-4 sm:flex-nowrap">
           <div className="flex items-center py-2"><p className="type-title font-semibold tracking-[-0.025em]">Stable Earn</p></div>
           <div className="order-3 h-11 w-full self-stretch sm:order-none sm:ml-8 sm:h-auto sm:w-auto"><AssetSwitch asset={asset} onChange={(nextAsset) => { if (nextAsset === asset) return; if (editing) { setPendingAsset(nextAsset); setShowAssetSwitchWarning(true); } else setAsset(nextAsset); }} /></div>
           <HeaderMenu
@@ -745,13 +754,13 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         </div>
       </nav>
 
-      <div className="mx-auto max-w-[1500px] px-5 py-5 lg:px-10 lg:py-6">
+      <div className="page-width mx-auto px-5 py-5 lg:px-10 lg:py-6">
         <div className="card type-caption mb-4 flex items-center justify-between gap-4 px-5 py-4" aria-live="polite">
           <div className="sync-notice-copy flex min-w-0 flex-1 items-start gap-2">
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
             {dataBlocked
               ? <p className="text-danger font-semibold">{serverReadFailureMessage}</p>
-            : <p className="sync-notice-message min-w-0 flex-1 text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-secondary font-normal">数据正在更新中，请稍候。</span>}{scheduledRefreshFailed && <span className="text-danger font-semibold">{scheduledFailureLabel}</span>}{!scheduledRefreshFailed && hasSyncFailure && <span className="text-danger font-semibold">{failureSummary}</span>}</p>}
+            : <p className="sync-notice-message min-w-0 flex-1 text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-secondary font-normal">数据正在更新中，请稍候。</span>}{scheduledRefreshFailed && <span className="text-danger font-semibold">{scheduledFailureLabel}</span>}{!scheduledRefreshFailed && hasSyncFailure && <span className="text-danger font-semibold">{failureSummary}</span>}{!updating && uniqueMissingApiFieldNotices.length > 0 && <span className="text-danger font-semibold">{hasSyncFailure && !scheduledRefreshFailed ? "；" : ""}{uniqueMissingApiFieldNotices.join("；")}</span>}</p>}
           </div>
           {showSyncFailureRefresh && <ActionButton size="small" className="shrink-0 sync-notice-refresh" aria-label={manualRefreshInProgress && preserveManualRefreshButton ? "正在刷新" : undefined} aria-busy={manualRefreshInProgress && preserveManualRefreshButton} disabled={openingLoading || loading || refreshingExchange || manualRefreshInProgress || manualRefreshCooling} onClick={handleManualRefresh}>
             {manualRefreshInProgress && preserveManualRefreshButton
@@ -834,7 +843,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
 
 function AssetSwitch({ asset, onChange }: { asset: Asset; onChange: (asset: Asset) => void }) {
   const assets: Asset[] = ["USDT", "USDC", "USDGO", "BTC"];
-  return <div className="asset-switch inline-flex h-full w-fit max-w-full flex-nowrap items-stretch gap-1">{assets.map((item) => <button key={item} onClick={() => onChange(item)} aria-current={asset === item ? "page" : undefined} className={`type-label flex shrink-0 items-center gap-2 border-b-[3px] px-3.5 font-semibold transition-colors ${asset === item ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"}`}><AssetIcon asset={item} /><span>{item}</span></button>)}</div>;
+  return <div className="asset-switch inline-flex h-full w-fit max-w-full flex-nowrap items-stretch gap-1">{assets.map((item) => <button key={item} onClick={() => onChange(item)} aria-current={asset === item ? "page" : undefined} className={`type-label flex shrink-0 items-center gap-2 border-b-[3px] px-3 font-semibold transition-colors ${asset === item ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"}`}><AssetIcon asset={item} /><span>{item}</span></button>)}</div>;
 }
 
 function AssetIcon({ asset }: { asset: Asset }) {
@@ -874,8 +883,8 @@ async function loadProductHistoryPage(productId: string, cursor: string | null):
 
 function ProductRow({ product, baseProduct, manualSettings, holdingPosition, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, apiDeleteDisabled, apiDeleteDisabledReason, rateFallbackAt, holdingFallbackAt, changeEvents, loadHistoryPage, onEventsRead, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingPosition?: HoldingPosition; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; apiDeleteDisabled: boolean; apiDeleteDisabledReason?: string; rateFallbackAt?: string; holdingFallbackAt?: string; changeEvents: ProductChangeEvent[]; loadHistoryPage?: (cursor: string | null) => Promise<ProductHistoryPage>; onEventsRead: (readAt: string) => void; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
   const account = accounts.find((item) => item.id === product.accountId)!;
-  const hasApiTiming = Boolean(holdingPosition?.purchaseAt);
-  const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming);
+  const hasApiTiming = Boolean(dateOnlyFromTimestamp(holdingPosition?.purchaseAt));
+  const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming, holdingAvailable && holding > 0);
   return (
     <tr className={`product-row ${!editing && holdingAvailable && holding <= 0 ? "product-row-empty" : ""}`}>
       <TableCell>
@@ -943,7 +952,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
   const apiPurchaseDate = apiTiming?.purchaseAt ? dateOnlyFromTimestamp(apiTiming.purchaseAt) : null;
   const apiDateSupported = apiManaged && apiFieldCapability(product, "purchaseAt") === "supported";
   const termStatus = productTermStatus(product, manualSettings?.purchaseDate);
-  const productInfoIssues = productInformationIssues(product, manualSettings, Boolean(apiPurchaseDate));
+  const productInfoIssues = productInformationIssues(product, manualSettings, Boolean(apiPurchaseDate), holding > 0);
   const rateHeadline = rateHeadlineFor(product, apiManaged);
   const sourceText = rateFallbackAt && product.rateCoverage !== "unavailable"
     ? `产品信息沿用 ${formatSyncDateTime(rateFallbackAt)} 的缓存数据`
@@ -961,7 +970,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
   const lifecycleDate = apiDateSupported ? apiPurchaseDate : manualSettings?.purchaseDate ?? null;
   const lifecycleDateLabel = lifecycleDate
     ? formatFactDate(lifecycleDate)
-    : apiDateSupported ? "待获取" : "待填写";
+    : apiDateSupported ? "未获取" : "待填写";
   const showLifecycleFact = Boolean(durationDays) && (!editing || (apiManaged && apiDateSupported));
   const apiMaturity = apiTiming
     ? apiTiming.redeemAt
@@ -978,7 +987,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
     {!editing && manualTerm && <ProductFact label="活动期限" value={durationDays ? formatTerm(durationDays) : "待填写"} />}
     {sourceText && <ProductMeta text={sourceText} danger={Boolean(rateFallbackAt || product.capacitySource === "cache")} />}
-    {incompleteText && <ProductMeta text={incompleteText} danger={product.rateCoverage === "partial" || holding > 0 || (apiManaged && productInfoIssues.some((issue) => issue === "首档额度待确认" || issue === "阶梯额度待确认"))} />}
+    {incompleteText && <ProductMeta text={incompleteText} danger={product.rateCoverage === "partial" || holding > 0 || productInfoIssues.some((issue) => issue.endsWith("未获取"))} />}
     {editing && (manualApr || manualLimit || manualTerm || manualProductTerm || (productNeedsPurchaseDate(product) && Boolean(durationDays))) && <div className="manual-fields">
       {manualLimit && <ManualLimitInput value={manualSettings?.firstTierLimit ?? null} asset={product.asset} disabled={saving} onChange={(firstTierLimitValue) => onOverrideChange({ firstTierLimit: firstTierLimitValue })} />}
       {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
@@ -999,7 +1008,7 @@ function apiTermLifecycleText(product: Product, position: HoldingPosition): Reac
     ?? (position.purchaseAt && productTermDays(product)
       ? new Date(Date.parse(position.purchaseAt) + productTermDays(product)! * 24 * 60 * 60 * 1000).toISOString()
       : undefined);
-  if (!maturity || !Number.isFinite(Date.parse(maturity))) return "到期日待获取";
+  if (!maturity || !Number.isFinite(Date.parse(maturity))) return "到期日未获取";
   return Date.parse(maturity) > Date.now()
     ? <>预计 {formatShortDate(maturity)} 到期</>
     : <>已于 {formatShortDate(maturity)} 到期</>;
@@ -1019,8 +1028,8 @@ function rateHeadlineFor(product: Product, apiManaged: boolean) {
   if (product.rateCoverage === "unavailable") {
     const knownManualLimit = !apiManaged && firstTier?.max !== null && firstTier?.max !== undefined;
     return {
-      label: apiManaged ? "额度待获取" : knownManualLimit ? `${capacityName} · ${tierLabel(firstTier.min, firstTier.max)}` : `${capacityName}额度待填写`,
-      value: apiManaged ? "APR 待获取" : "APR 待填写",
+      label: apiManaged ? "额度未获取" : knownManualLimit ? `${capacityName} · ${tierLabel(firstTier.min, firstTier.max)}` : `${capacityName}额度待填写`,
+      value: apiManaged ? "APR 未获取" : "APR 待填写",
       muted: true,
     };
   }
@@ -1035,10 +1044,10 @@ function rateHeadlineFor(product: Product, apiManaged: boolean) {
     };
   }
   if (product.rateCoverage === "base_only" || (apiManaged && firstTier?.max === null && firstTier.maxStatus !== "unlimited")) {
-    return { label: apiManaged ? `${capacityName} · 上限待确认` : `${capacityName}额度待填写`, value: `${firstTier?.apr.toFixed(2) ?? "0.00"}%` };
+    return { label: apiManaged ? `${capacityName} · 上限未获取` : `${capacityName}额度待填写`, value: `${firstTier?.apr.toFixed(2) ?? "0.00"}%` };
   }
   return {
-    label: `${capacityName} · ${firstTier ? tierLabel(firstTier.min, firstTier.max) : "待获取"}`,
+    label: `${capacityName} · ${firstTier ? tierLabel(firstTier.min, firstTier.max) : "未获取"}`,
     value: `${firstTier?.apr.toFixed(2) ?? "0.00"}%`,
   };
 }
@@ -1061,7 +1070,7 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
   const nextApr = product.tiers[1]?.apr;
   const capacityLabel = product.productType === "fixed" ? "申购额度" : "首档";
   const capacityIncomplete = productCapacityIsIncomplete(product, productInfoIssues);
-  const laterTierIncomplete = productInfoIssues.some((issue) => issue === "阶梯结构待确认" || issue === "阶梯结构不完整" || issue === "阶梯额度待确认");
+  const laterTierIncomplete = productInfoIssues.some((issue) => issue === "阶梯 APR 未获取" || issue === "阶梯结构未获取" || issue === "阶梯额度未获取");
   const holdingAmountClassName = editing ? undefined : "holding-summary-amount";
   const holdingDetailClassName = editing ? undefined : "holding-summary-detail";
   const holdingLabel = (detail?: string) => <><span className={holdingAmountClassName}>持仓 {formatAmount(holding)}</span>{detail && <span className={holdingDetailClassName}> / {detail}</span>}</>;
@@ -1208,7 +1217,7 @@ function qualificationLabel(product: Product) {
 }
 function fixedProductFacts(product: Product): Array<[string, string]> {
   const facts: Array<[string, string]> = [];
-  const missingTerm = product.productDataMode === "manual" ? "待填写" : "待获取";
+  const missingTerm = product.productDataMode === "manual" ? "待填写" : "未获取";
   if (product.manualKind === "limited") facts.push(["活动期限", product.termDays ? formatTerm(product.termDays) : missingTerm]);
   else facts.push(["锁定期限", product.termDays ? formatTerm(product.termDays) : missingTerm]);
   if (product.minimumAmount !== undefined) facts.push(["最低申购", `${formatAmount(product.minimumAmount)} ${product.asset}`]);

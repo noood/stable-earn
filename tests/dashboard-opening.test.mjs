@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
-import { freshHoldingIdsForSave } from "../lib/holding-cache.ts";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
 const { dashboardReadState } = moduleLoader()("@/lib/sync-notice");
@@ -31,7 +30,7 @@ async function open({ personalFailure = false, cacheFailure = false, dailyFailur
     holdingsRef: { current: {} }, productOverridesRef: { current: {} }, manualProductsRef: { current: [] }, hiddenProductIdsRef: { current: [] },
     personalDataReadyRef: { current: false }, personalDataLoadingRef: { current: false },
     dailyRefreshPendingRef: { current: daily }, refreshInFlightRef: { current: false },
-    freshHoldingIdsForSave, manualProductPayload: product => product,
+    manualProductPayload: product => product,
     fetch: async (url, options) => {
       requests.push(url);
       methods.push(options?.method ?? "GET");
@@ -69,8 +68,7 @@ for (const personalFailure of [false, true]) for (const cacheFailure of [false, 
     assert.equal(run.view.updating, false);
     assert.equal(run.view.dataBlocked, personalFailure);
     assert.equal(run.view.canEdit, !personalFailure);
-    if (personalFailure) assert.equal(run.writes.length, 0);
-    else assert.deepEqual(run.writes[0].holdings, { api: 100 });
+    assert.equal(run.writes.length, 0);
   });
 }
 

@@ -6,7 +6,7 @@ const load = moduleLoader();
 const { productCapacityIsIncomplete, productInformationIssues, productParticipatesInInterest, holdingSyncNote } = load("@/lib/product-status");
 const { bestAvailableFirstTierProduct, productHasComparableApr, productHasKnownCapacity, productKnownNotSubscribable, productShouldBeActive, totalHighYieldRemaining } = load("@/lib/opportunity-policy");
 const { remainingHighYield } = load("@/lib/domain");
-const { applyProductOverride, productTermStatus } = load("@/lib/product-overrides");
+const { applyProductOverride, formatShortDate, productTermStatus } = load("@/lib/product-overrides");
 const { completedDataSummary, syncFailureSummary, sanitizeSyncFailure, nextScheduledRefreshAt, scheduledRefreshPending } = load("@/lib/sync-notice");
 const { scheduledRefreshMetadata } = load("@/lib/sync-cache");
 const { localPrivateProductsPreview, localSyncScenarioPreview } = load("@/lib/local-preview");
@@ -22,6 +22,22 @@ test("product completeness and holdings remain independent", () => {
   }
   assert.equal(productParticipatesInInterest(base, 100), true);
   assert.equal(productParticipatesInInterest(base, 0), false);
+});
+
+test("missing API and manual fields are named separately without flagging an established unlimited rate", () => {
+  const fixed = { ...base, exchange: "bybit", productType: "fixed", termDays: 7,
+    rateCoverage: "unavailable", tiers: [] };
+  assert.deepEqual(productInformationIssues(fixed, undefined, false, true), ["APR 未获取", "买入日待填写"]);
+  assert.deepEqual(productInformationIssues(fixed, undefined, false, false), ["APR 未获取"]);
+  assert.equal(productParticipatesInInterest(fixed, 100), false);
+  assert.deepEqual(productInformationIssues({ ...fixed, termDays: undefined }, undefined, false, true), ["APR 未获取", "锁定期限未获取"]);
+  assert.deepEqual(productInformationIssues({ ...base, rateCoverage: "complete",
+    tiers: [{ min: 0, max: null, apr: 2, maxStatus: "unlimited" }] }), []);
+});
+
+test("short dates display API timestamps in Shanghai and leave date-only values unchanged", () => {
+  assert.equal(formatShortDate("2026-10-06T16:30:00.000Z"), "10/07");
+  assert.equal(formatShortDate("2026-10-06"), "10/06");
 });
 
 test("best APR metric compares only first tiers with remaining or unlimited quota", () => {
@@ -73,11 +89,11 @@ test("high-yield remaining sums unused capacity from every APR-qualified tier", 
   assert.equal(remainingHighYield({ ...product, rateCoverage: "base_only" }, 150), 0);
   assert.equal(remainingHighYield({ ...product, tiers: [{ min: 0, max: null, apr: 6 }] }, 150), 0);
   assert.equal(remainingHighYield({ ...product, tiers: [{ min: 0, max: null, apr: 6, maxStatus: "unlimited" }] }, 150), Number.POSITIVE_INFINITY);
-  assert.deepEqual(productInformationIssues({ ...product, tiers: [{ min: 0, max: null, apr: 6 }] }), ["首档额度待确认"]);
+  assert.deepEqual(productInformationIssues({ ...product, tiers: [{ min: 0, max: null, apr: 6 }] }), ["首档额度未获取"]);
   assert.equal(productParticipatesInInterest({ ...product, tiers: [{ min: 0, max: null, apr: 6 }] }, 150), false);
   assert.deepEqual(productInformationIssues({ ...product, tiers: [{ min: 0, max: null, apr: 6, maxStatus: "unlimited" }] }), []);
   const unknownLaterTier = { ...product, tiers: [{ min: 0, max: 100, apr: 10 }, { min: 100, max: null, apr: 8 }] };
-  assert.deepEqual(productInformationIssues(unknownLaterTier), ["阶梯额度待确认"]);
+  assert.deepEqual(productInformationIssues(unknownLaterTier), ["阶梯额度未获取"]);
   assert.equal(productParticipatesInInterest(unknownLaterTier, 150), false);
   assert.equal(remainingHighYield(unknownLaterTier, 50), 0);
   assert.equal(totalHighYieldRemaining([unknownLaterTier], { [unknownLaterTier.id]: 50 }, () => true), 0);
@@ -100,7 +116,7 @@ test("partial tier coverage preserves known rates but excludes whole-product cal
     ],
   };
 
-  assert.deepEqual(productInformationIssues(partial), ["阶梯结构不完整"]);
+  assert.deepEqual(productInformationIssues(partial), ["阶梯结构未获取"]);
   assert.equal(productCapacityIsIncomplete(partial, productInformationIssues(partial)), false);
   assert.equal(productParticipatesInInterest(partial, 1500), false);
   assert.equal(remainingHighYield(partial, 1500), 0);
@@ -134,7 +150,7 @@ test("manual missing fields, maturity and eligibility do not invent a holding st
   const issues = productInformationIssues(product, override);
   assert.deepEqual(issues, ["买入日待填写"]);
   assert.equal(productCapacityIsIncomplete(product, issues), false);
-  assert.equal(productCapacityIsIncomplete(product, ["首档额度待确认"]), true);
+  assert.equal(productCapacityIsIncomplete(product, ["首档额度未获取"]), true);
   assert.equal(productCapacityIsIncomplete({ ...product, tiers: [{ ...product.tiers[0], max: null }] }, issues), true);
   assert.equal(productHasKnownCapacity(product), true);
   const held = { ...base, productType: "fixed", termDays: 180, eligibilityStatus: "ineligible", availability: "unavailable" };

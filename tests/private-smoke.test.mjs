@@ -4,7 +4,7 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
 const load = moduleLoader();
-const { publicDemoProducts } = load("@/lib/public-demo");
+const { publicDemoProducts, publicDemoChangeEvents } = load("@/lib/public-demo");
 const { catalogProductTemplates } = load("@/lib/catalog-templates");
 const { localPrivateProductsPreview, localPrivateHoldingsPreview } = load("@/lib/local-preview");
 
@@ -15,6 +15,9 @@ test("private dashboard smoke data keeps demo, production compatibility, and pre
     "by-g-usdt-short-fixed",
     "mexc-uk-usdt",
   ]);
+  assert.equal(publicDemoChangeEvents.length, 2);
+  assert.ok(publicDemoChangeEvents.every((event) => publicDemoProducts.some((product) => product.id === event.productId)));
+  assert.deepEqual(publicDemoChangeEvents.map((event) => event.after), ["6.20%", "500 USDT"]);
   assert.deepEqual(catalogProductTemplates.map((product) => product.id), ["okx-usdt", "okx-usdc", "okx-btc"]);
   assert.ok(catalogProductTemplates.every((product) => product.productDataMode === "manual" && product.holdingDataMode === "api"));
 });

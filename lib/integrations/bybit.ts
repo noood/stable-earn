@@ -247,7 +247,6 @@ export async function scanBybitFlexibleProducts(accountId: "bybit-global" | "byb
     complete: pageScan.complete && rawRows.every((row) => (
       (!row.coin || row.coin.toUpperCase() === asset)
       && Boolean(row.productId?.trim())
-      && rows.some((candidate) => candidate.productId === row.productId?.trim() && candidate.rateShape !== "no_rate" && candidate.tierScheduleComplete && candidate.limitFieldsComplete)
     )),
   };
 }
@@ -337,9 +336,7 @@ export async function scanBybitFixedProducts(accountId: "bybit-global" | "bybit-
   const malformed = !pageScan.complete || rawRows.some((row) => {
     const coin = row.coin?.toUpperCase() as Product["asset"];
     if (!supportedFixedAssets.has(coin)) return !row.coin;
-    return !row.productId?.trim() || !normalizeBybitDuration(row.duration)
-      || !fixedProductTierSchedule(row).complete
-      || row.maxStakeAmount !== undefined && !fixedProductLimitIsReadable(row.maxStakeAmount);
+    return !row.productId?.trim() || !normalizeBybitDuration(row.duration);
   });
   return {
     rows,
@@ -405,7 +402,7 @@ export async function fetchBybitShortFixedSnapshots(credentials: BybitCredential
   const productIdentityIncomplete = productRows.some((row) => {
     const asset = row.coin?.toUpperCase() as Product["asset"];
     if (!supportedFixedAssets.has(asset)) return !row.coin;
-    return !row.productId?.trim() || !normalizeBybitDuration(row.duration) || !fixedProductTierSchedule(row).complete;
+    return !row.productId?.trim() || !normalizeBybitDuration(row.duration);
   });
   const rates: Array<LiveRate & { sourceProductId?: string }> = productRows.flatMap((row) => {
     const rate = fixedProductRate(row);
@@ -518,7 +515,6 @@ function fixedProductRate(row: BybitFixedProductRow) {
     ...identity,
     sourceProductId,
     legacyIdentityKey: `bybit-global:${asset}:fixed:${sourceProductId}`,
-    ...(!tiers.length ? { productDataMode: "manual" as const } : {}),
     name: `Fixed Saving · ${formatDuration(row.duration)}`,
     apr: tiers[0]?.apr ?? 0,
     rateShape: (row.tieredApyList ?? []).some((tier) => Number.isFinite(parsePercent(tier.apy)))
@@ -528,7 +524,7 @@ function fixedProductRate(row: BybitFixedProductRow) {
     fetchedAt: new Date().toISOString(),
     sourceLabel: tiers.length
       ? tierSchedule.complete ? "Bybit 官方固定期限产品与账户持仓 API" : "Bybit 定期档位未覆盖产品总额度；不参与收益计算"
-      : "Bybit 定期产品资料缺少 APR；待手动填写",
+      : "Bybit 定期产品 APR 未获取；不参与收益计算",
     productType: "fixed" as const,
     termDays: termDays > 0 ? termDays : undefined,
     minimumAmount: finiteNumber(row.minStakeAmount),
@@ -676,11 +672,6 @@ function fixedProductTierSchedule(row: BybitFixedProductRow) {
   const hasFiniteProductLimit = row.maxStakeAmount !== undefined && max > 0 && max !== -1;
   return { tiers: [{ min: 0, max: hasFiniteProductLimit ? max : null, apr,
     ...(row.maxStakeAmount === undefined || max === -1 ? { maxStatus: "unlimited" as const } : {}) }], complete: productLimitIsReadable };
-}
-
-function fixedProductLimitIsReadable(value: string | number | null | undefined) {
-  const parsed = probeNumber(value);
-  return parsed === -1 || (parsed !== undefined && parsed > 0);
 }
 
 function tierScheduleCoversProduct(

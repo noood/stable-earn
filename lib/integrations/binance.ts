@@ -224,9 +224,7 @@ export async function fetchBinanceFlexibleSnapshot(
     const positionRows = positions.rows.filter((row) => row.asset?.toUpperCase() === asset);
     const productScopeMismatchCount = products.rows.length - productRows.length;
     const positionScopeMismatchCount = positions.rows.length - positionRows.length;
-    const productRowsShapeComplete = productRows.every((row) => normalizeBinanceProductId(row.productId)
-      && hasBinanceApr(row)
-      && parseBinanceTiers(asset, row.latestAnnualPercentageRate, row.tierAnnualPercentageRate).complete);
+    const productRowsShapeComplete = productRows.every((row) => normalizeBinanceProductId(row.productId));
     const positionRowsShapeComplete = positionRows.every((row) => normalizeBinanceProductId(row.productId)
       && parseStrictFinite(row.totalAmount) !== undefined);
     const productListComplete = productResult.status === "fulfilled"
@@ -340,7 +338,7 @@ export async function fetchBinanceFlexibleSnapshot(
       rates.push({
         productId: identity.identityKey,
         ...identity,
-        ...(!hasProductRow || !hasApr ? { productDataMode: "manual" as const } : {}),
+        ...(!hasProductRow ? { productDataMode: "manual" as const } : {}),
         apr: tiers[0]?.apr ?? 0,
         ...(hasApr ? { baseApr: parseBinanceApr(rateSource?.latestAnnualPercentageRate) } : {}),
         bonusTiers: parseBinanceBonusTiers(asset, rateSource?.tierAnnualPercentageRate),
@@ -664,8 +662,7 @@ export async function fetchBinanceLockedSnapshot(
     if (!asset) return false;
     if (!supported.has(asset)) return true;
     return Boolean(String(row.projectId ?? "").trim())
-      && positiveNumber(row.detail?.duration) !== undefined
-      && Number.isFinite(parseBinanceApr(row.detail?.apr ?? row.detail?.apy ?? row.detail?.annualPercentageRate ?? row.detail?.interestRate));
+      && positiveNumber(row.detail?.duration) !== undefined;
   });
   const positionShapeComplete = positionRows.every((row) => {
     const asset = normalizedAsset(row.asset);
@@ -767,9 +764,15 @@ export async function fetchBinanceLockedSnapshot(
     const asset = String(detail?.asset ?? "").toUpperCase();
     const duration = positiveNumber(detail?.duration);
     const apr = parseBinanceApr(detail?.apr ?? detail?.apy ?? detail?.annualPercentageRate ?? detail?.interestRate);
-    if (!projectId || !supported.has(asset) || !duration || !Number.isFinite(apr)
+    if (!projectId || !supported.has(asset) || !duration
       || ambiguousProjectIds.has(`${asset}:${projectId}`)) continue;
-    const rate = lockedRate(accountConfig, account, asset, projectId, duration, apr, detail, row.quota, fetchedAt);
+    const parsedApr = Number.isFinite(apr);
+    const rate = lockedRate(accountConfig, account, asset, projectId, duration, parsedApr ? apr : 0, detail, row.quota, fetchedAt);
+    if (!parsedApr) {
+      rate.tiers = [];
+      rate.rateCoverage = "unavailable";
+      rate.rateShape = "no_rate";
+    }
     rates.push(rate);
     rateByProject.set(`${asset}:${projectId}`, rate);
   }

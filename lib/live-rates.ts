@@ -56,6 +56,8 @@ export type LiveRate = {
   };
 };
 
+export type ApiFieldNotice = { accountId: string; asset: Product["asset"]; productName: string; externalProductId?: string; fields: string[] };
+
 type BybitEndpoint = {
   platform: "Bybit.com" | "Bybit EU";
   accountId: "bybit-global" | "bybit-eu";
@@ -109,13 +111,14 @@ export async function fetchPublicRateSnapshot() {
   const settled = await Promise.allSettled(jobs.map((job) => job.task));
   return {
     rates: settled.flatMap((result) => result.status === "fulfilled" ? result.value.rates : []),
+    fieldNotices: settled.flatMap((result) => result.status === "fulfilled" ? result.value.fieldNotices : []),
     failures: settled.flatMap((result, index) => result.status === "fulfilled" ? [] : [jobs[index].label]),
     partials: settled.flatMap((result, index) => result.status === "fulfilled" && result.value.partial ? [jobs[index].label] : []),
     empty: settled.flatMap((result, index) => result.status === "fulfilled" && result.value.empty ? [jobs[index].label] : []),
   };
 }
 
-async function fetchBybitEuFixedRates(): Promise<{ rates: LiveRate[]; partial: boolean; empty: boolean }> {
+async function fetchBybitEuFixedRates(): Promise<{ rates: LiveRate[]; partial: boolean; empty: boolean; fieldNotices: ApiFieldNotice[] }> {
   const productScan = await scanBybitFixedProducts("bybit-eu");
   const products = productScan.rows;
   const rates: LiveRate[] = products.map((row) => {
@@ -157,7 +160,14 @@ async function fetchBybitEuFixedRates(): Promise<{ rates: LiveRate[]; partial: b
   });
   return {
     rates,
-    partial: !productScan.complete || products.some((row) => row.rateShape === "no_rate" || !bybitDurationDays(row.duration)),
+    fieldNotices: products.flatMap((row) => {
+      const fields = [
+        ...(row.rateShape === "no_rate" ? ["APR 未获取"] : []),
+        ...(row.rateCoverage === "partial" ? ["阶梯结构未获取"] : []),
+      ];
+      return fields.length ? [{ accountId: "bybit-eu", asset: row.coin, productName: `定期 ${row.duration} · ${row.externalProductId}`, externalProductId: row.externalProductId, fields }] : [];
+    }),
+    partial: !productScan.complete,
     empty: productScan.complete && products.length === 0,
   };
 }
@@ -196,21 +206,21 @@ export function summarizePublicFailures(failures: string[]) {
   ));
 }
 
-async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRate[]; partial: boolean; empty: boolean }> {
+async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRate[]; partial: boolean; empty: boolean; fieldNotices: ApiFieldNotice[] }> {
   const productScan = await fetchBybitFlexibleProductRows(endpoint.accountId, endpoint.coin);
       const candidates = productScan.rows;
       const paginationComplete = productScan.complete;
-      if (!paginationComplete && candidates.length === 0) return { rates: [], partial: true, empty: false };
+      if (!paginationComplete && candidates.length === 0) return { rates: [], partial: true, empty: false, fieldNotices: [] };
       if (candidates.length === 0 && paginationComplete) {
         syncDiagnostic("bybit_flexible_rows", { platform: endpoint.platform, coin: endpoint.coin, rowCount: 0, unmappedRowCount: 0, rows: [], includedProducts: [] });
-        return { rates: [], partial: false, empty: true };
+        return { rates: [], partial: false, empty: true, fieldNotices: [] };
       }
       const ratesByProductId = new Map<string, LiveRate>();
       const fetchedAt = new Date().toISOString();
       const scopeMismatchCount = candidates.filter((candidate) => candidate.coin && candidate.coin.toUpperCase() !== endpoint.coin).length;
       const scopedCandidates = candidates.filter((candidate) => !candidate.coin || candidate.coin.toUpperCase() === endpoint.coin);
       const unmappedRowCount = scopedCandidates.filter((candidate) => !candidate.productId?.trim()).length;
-      let missingRateCount = 0;
+      const fieldNotices: ApiFieldNotice[] = [];
       for (const item of scopedCandidates) {
         const externalProductId = item.productId?.trim();
         if (!externalProductId) continue;
@@ -220,7 +230,6 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
         const baseApr = parsePercent(item.estimateApr ?? item.apr);
         const tierSchedule = parseBybitFlexibleTiers(item.tierAprDetails, rawMaximum, productMaximumUnreadable);
         const rateScheduleComplete = tierSchedule.complete && !(productMaximumUnreadable && tierSchedule.hasTiers);
-        if (!rateScheduleComplete || productMaximumUnreadable) missingRateCount += 1;
         const productMaximum = rawMaximum !== undefined && rawMaximum > 0 ? rawMaximum : undefined;
         const parsedTiers = tierSchedule.tiers.flatMap((tier) => {
           const apr = tier.apr ?? tier.apy;
@@ -243,7 +252,12 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
               ...(productMaximum === undefined && (item.maxStakeAmount === undefined || rawMaximum === -1) ? { maxStatus: "unlimited" as const } : {}) }]
             : [];
         const apr = tiers[0]?.apr ?? baseApr;
-        if (!Number.isFinite(apr)) { missingRateCount += 1; continue; }
+        const fields = [
+          ...(!Number.isFinite(apr) ? ["APR 未获取"] : []),
+          ...(!rateScheduleComplete ? ["阶梯结构未获取"] : []),
+          ...(productMaximumUnreadable ? ["额度未获取"] : []),
+        ];
+        if (fields.length) fieldNotices.push({ accountId: endpoint.accountId, asset: endpoint.coin, productName: `活期 · ${externalProductId}`, externalProductId, fields });
         const identity = buildPlatformProductIdentity({
           accountId: endpoint.accountId,
           asset: endpoint.coin,
@@ -258,7 +272,7 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
         const rate: LiveRate = {
           productId: identity.identityKey,
           ...identity,
-          apr,
+          apr: Number.isFinite(apr) ? apr : 0,
           rateShape: tierSchedule.hasTiers ? "tiered_rate" : Number.isFinite(baseApr) ? "single_rate" : "no_rate",
           ...(tiers.length > 0 ? { tiers } : {}),
           fetchedAt,
@@ -268,7 +282,7 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
             : item.status
               ? "unavailable"
               : "unknown",
-          rateCoverage: rateScheduleComplete ? "complete" : "partial",
+          rateCoverage: !Number.isFinite(apr) ? "unavailable" : rateScheduleComplete ? "complete" : "partial",
           subscriptionMaximum: rawMaximum === undefined || rawMaximum === -1 ? null : rawMaximum,
           subscriptionMaximumStatus,
           subscriptionMaximumSource: item.maxStakeAmount === undefined ? "not_returned" : "api",
@@ -313,7 +327,7 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
           tierCount: rate.tiers?.length ?? 0,
         })),
       });
-  return { rates, partial: !paginationComplete || scopeMismatchCount > 0 || unmappedRowCount > 0 || missingRateCount > 0, empty: false };
+  return { rates, fieldNotices, partial: !paginationComplete || scopeMismatchCount > 0 || unmappedRowCount > 0, empty: false };
 }
 
 function bybitRateScore(rate: LiveRate) {

@@ -85,10 +85,8 @@ export function productTermStatus(product: Product, purchaseDate: string | null 
 }
 
 export function formatShortDate(value: string | null | undefined) {
-  const timestamp = parseDateOnly(value) ?? (value ? Date.parse(value) : Number.NaN);
-  if (!Number.isFinite(timestamp)) return "";
-  const date = new Date(timestamp);
-  return `${String(date.getUTCMonth() + 1).padStart(2, "0")}/${String(date.getUTCDate()).padStart(2, "0")}`;
+  const dateOnly = dateOnlyFromTimestamp(value);
+  return dateOnly ? `${dateOnly.slice(5, 7)}/${dateOnly.slice(8, 10)}` : "";
 }
 
 /** Convert an API timestamp to the editable date field's YYYY-MM-DD value. */

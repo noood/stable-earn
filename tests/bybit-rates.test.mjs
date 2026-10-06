@@ -125,8 +125,11 @@ test("Bybit public flexible APR keeps all product IDs and each complete tier lad
   assert.equal(malformedCap.subscriptionMaximum, null);
   assert.equal(malformedCap.subscriptionMaximumStatus, "unreadable");
   assert.deepEqual(malformedCap.tiers, [{ min: 0, max: null, apr: 2 }]);
-  assert.equal(result.rates.some((item) => item.externalProductId === "malformed-product-apr"), false);
-  assert.equal(result.partials.includes("Bybit.com USDC 公共 APR"), true);
+  const malformedApr = result.rates.find((item) => item.externalProductId === "malformed-product-apr");
+  assert.equal(malformedApr.rateCoverage, "unavailable");
+  assert.equal(malformedApr.catalog.asset, "USDC");
+  assert.equal(result.partials.includes("Bybit.com USDC 公共 APR"), false);
+  assert.ok(result.fieldNotices.some((notice) => notice.productName.includes("malformed-product-apr") && notice.fields.includes("APR 未获取")));
   assert.equal(rate.capacitySource, "live");
   assert.ok(rate.capacityFetchedAt);
   for (const productId of ["partial-finite-limit", "partial-unlimited-limit", "partial-unreadable-limit"]) {
@@ -235,6 +238,40 @@ test("Bybit fixed scan marks known tiers partial when the product limit extends 
   assert.deepEqual(badTierBound.tiers, [{ min: 0, max: null, apy: 6 }]);
 });
 
+test("Bybit flexible scan keeps a complete request when one identified product lacks APR", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url }),
+      readExchangeJson: async () => ({ retCode: 0, result: { list: [
+        { productId: "without-apr", coin: "USDT", status: "Available" },
+      ] } }),
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { scanBybitFlexibleProducts } = load("@/lib/integrations/bybit");
+  const result = await scanBybitFlexibleProducts("bybit-global", "USDT");
+  assert.equal(result.complete, true);
+  assert.equal(result.rows[0].rateShape, "no_rate");
+});
+
+test("Bybit fixed product with missing APR remains API-managed while the request succeeds", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url }),
+      readExchangeJson: async (response) => new URL(response.url).pathname.endsWith("/fixed-term/product")
+        ? { retCode: 0, result: { list: [{ productId: "without-apr", coin: "USDT", duration: "7d", status: "Available" }] } }
+        : { retCode: 0, result: { list: [{ productId: "without-apr", coin: "USDT", duration: "7d", amount: "12" }] } },
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { fetchBybitShortFixedSnapshots } = load("@/lib/integrations/bybit");
+  const result = await fetchBybitShortFixedSnapshots({ apiKey: "key", apiSecret: "secret", baseUrls: ["https://api.bybit.com"] });
+  assert.equal(result.sync.productStatus, "complete");
+  assert.equal(result.rates[0].productDataMode, undefined);
+  assert.equal(result.rates[0].rateCoverage, "unavailable");
+  assert.equal(result.holdings[result.rates[0].productId], 12);
+});
+
 test("Bybit EU fixed product probe checks the public endpoint once and distinguishes reused IDs by duration", async () => {
   const requests = [];
   const load = moduleLoader({
@@ -298,7 +335,7 @@ test("Bybit fixed APY uses the product coin only and never sums other reward coi
   const { scanBybitFixedProducts } = load("@/lib/integrations/bybit");
   const scan = await scanBybitFixedProducts("bybit-global");
 
-  assert.equal(scan.complete, false);
+  assert.equal(scan.complete, true);
   assert.equal(scan.rows.find((row) => row.coin === "USDT").apy, 2);
   assert.deepEqual(scan.rows.find((row) => row.coin === "USDT").tiers, [{ min: 0, max: 1000, apy: 2 }]);
   assert.equal(scan.rows.find((row) => row.coin === "USDC").rateShape, "no_rate");

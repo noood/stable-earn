@@ -438,8 +438,7 @@ function buildBitgetCapabilityProbe(
       const malformedRows = scopedRows.some((row) => (
         !normalizeExternalProductId(row.productId)
         || !["flexible", "fixed"].includes(row.periodType ?? "")
-        || (row.periodType === "fixed" && (parseBitgetTermDays(row.period) === undefined || normalizeTiers(row.apyList, row.apyType).length === 0))
-        || (row.periodType === "flexible" && normalizeTiers(row.apyList, row.apyType).length === 0)
+        || (row.periodType === "fixed" && parseBitgetTermDays(row.period) === undefined)
       )) || duplicateFixedIdentity;
       const normalizedRows = scopedRows.map((row) => {
         const eligibleForMonitoring = row.periodType === "flexible"
@@ -544,8 +543,7 @@ export async function fetchBitgetSavingsSnapshot(
   const malformedProductRows = productRows.filter((row) => assets.includes(row.coin as SupportedAsset)
     && (!normalizeExternalProductId(row.productId)
       || !["flexible", "fixed"].includes(row.periodType ?? "")
-      || (row.periodType === "flexible" && normalizeTiers(row.apyList, row.apyType).length === 0)
-      || (row.periodType === "fixed" && (parseBitgetTermDays(row.period) === undefined || normalizeTiers(row.apyList, row.apyType).length === 0))));
+      || (row.periodType === "fixed" && parseBitgetTermDays(row.period) === undefined)));
   const productRowsMissingScope = productEntries.some(({ requestedAsset, row }) => !row.coin || !row.periodType || row.coin !== requestedAsset);
   const malformedHoldingRows = assetRows.filter((row) => !row.productCoin || !row.periodType
     || assets.includes(row.productCoin as SupportedAsset)
@@ -619,9 +617,9 @@ export async function fetchBitgetSavingsSnapshot(
         tiers: item.hasProductRow ? item.tiers : [],
         fetchedAt,
         sourceLabel: item.hasProductRow
-          ? item.tiers.length ? "Bitget 官方账户产品 API" : "Bitget 产品资料缺少 APR；待手动填写"
+          ? item.tiers.length ? "Bitget 官方账户产品 API" : "Bitget 产品 APR 未获取"
           : "Bitget 官方账户持仓 API；产品资料待填写",
-        ...(!item.hasProductRow || item.tiers.length === 0 ? { productDataMode: "manual" as const } : {}),
+        ...(!item.hasProductRow ? { productDataMode: "manual" as const } : {}),
         catalog: {
           accountId: "bitget-global",
           exchange: "bitget" as const,
@@ -743,7 +741,7 @@ export async function fetchBitgetFixedSnapshot(
     if (!row.coin || !row.periodType || row.coin !== requestedAsset) malformedProducts.add(requestedAsset);
     if (row.coin !== requestedAsset || row.periodType !== "fixed") continue;
     const identity = bitgetFixedIdentityId(row.productId, row.period);
-    if (!identity || normalizeTiers(row.apyList, row.apyType).length === 0) malformedProducts.add(requestedAsset);
+    if (!identity) malformedProducts.add(requestedAsset);
     if (identity && seenOfferIds.has(`${requestedAsset}:${identity}`)) duplicateOfferIds.add(`${requestedAsset}:${identity}`);
     if (identity) seenOfferIds.add(`${requestedAsset}:${identity}`);
   }
@@ -805,9 +803,9 @@ export async function fetchBitgetFixedSnapshot(
         tiers: item.hasProduct ? item.tiers : [],
         fetchedAt,
         sourceLabel: item.hasProduct
-          ? item.tiers.length ? "Bitget 官方 Savings 定期产品 API" : "Bitget 定期产品资料缺少 APR；待手动填写"
+          ? item.tiers.length ? "Bitget 官方 Savings 定期产品 API" : "Bitget 定期产品 APR 未获取"
           : "Bitget 官方 Savings 定期持仓 API；产品资料待填写",
-        ...(!item.hasProduct || item.tiers.length === 0 ? { productDataMode: "manual" as const } : {}),
+        ...(!item.hasProduct ? { productDataMode: "manual" as const } : {}),
         productType: "fixed" as const,
         ...(termDays !== undefined ? { termDays } : {}),
         catalog: {

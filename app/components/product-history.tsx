@@ -17,6 +17,7 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
   const popoverRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pinnedByClickRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [acknowledgedEventIds, setAcknowledgedEventIds] = useState<string[]>([]);
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -29,21 +30,31 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
     || historyEvents.some((event) => event.attention && !event.readAt && !acknowledgedEventIds.includes(event.id));
   const sortedEvents = useMemo(() => [...historyEvents].sort((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt)), [historyEvents]);
 
-  useDismissiblePopover(open, setOpen, buttonRef, popoverRef);
+  useDismissiblePopover(open, setOpen, buttonRef, popoverRef, { closeOnScroll: false });
 
   useLayoutEffect(() => {
     if (!open) return;
-    const trigger = buttonRef.current;
-    const popover = popoverRef.current;
-    if (!trigger || !popover) return;
-    const triggerRect = trigger.getBoundingClientRect();
-    const popoverRect = popover.getBoundingClientRect();
-    const gutter = 12;
-    const left = Math.max(gutter, Math.min(triggerRect.right - popoverRect.width, window.innerWidth - popoverRect.width - gutter));
-    const top = window.innerHeight - triggerRect.bottom >= popoverRect.height + 8 || triggerRect.top < popoverRect.height + 8
-      ? triggerRect.bottom + 8
-      : triggerRect.top - popoverRect.height - 8;
-    setPosition((current) => current.top === top && current.left === left ? current : { top, left });
+    function updatePosition() {
+      const trigger = buttonRef.current;
+      const popover = popoverRef.current;
+      if (!trigger || !popover) return;
+      const triggerRect = trigger.getBoundingClientRect();
+      const popoverRect = popover.getBoundingClientRect();
+      const gutter = 12;
+      const left = Math.max(gutter, Math.min(triggerRect.right - popoverRect.width, window.innerWidth - popoverRect.width - gutter));
+      const preferredTop = window.innerHeight - triggerRect.bottom >= popoverRect.height + 8 || triggerRect.top < popoverRect.height + 8
+        ? triggerRect.bottom + 8
+        : triggerRect.top - popoverRect.height - 8;
+      const top = Math.max(gutter, Math.min(preferredTop, window.innerHeight - popoverRect.height - gutter));
+      setPosition((current) => current.top === top && current.left === left ? current : { top, left });
+    }
+    updatePosition();
+    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      window.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("resize", updatePosition);
+    };
   }, [open, sortedEvents.length]);
 
   useEffect(() => () => {
@@ -66,6 +77,7 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
   }
 
   function scheduleClose() {
+    if (pinnedByClickRef.current) return;
     cancelScheduledClose();
     closeTimerRef.current = setTimeout(() => setOpen(false), 180);
   }
@@ -118,6 +130,7 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
   function openPopover() {
     cancelScheduledClose();
     cancelScheduledHoverOpen();
+    pinnedByClickRef.current = false;
     const rect = buttonRef.current?.getBoundingClientRect();
     if (rect) {
       const width = Math.min(288, window.innerWidth - 24);
@@ -140,8 +153,17 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
 
   function handleTriggerClick() {
     cancelScheduledHoverOpen();
-    if (open) setOpen(false);
-    else openPopover();
+    // A click confirms a hover/focus-opened popover instead of closing it as
+    // the browser scrolls a narrow table's trigger into view.
+    if (open && !pinnedByClickRef.current) {
+      pinnedByClickRef.current = true;
+      cancelScheduledClose();
+    }
+    else if (open) setOpen(false);
+    else {
+      openPopover();
+      pinnedByClickRef.current = true;
+    }
   }
 
   return <div className="product-history">

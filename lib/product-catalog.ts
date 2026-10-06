@@ -98,7 +98,8 @@ export async function prepareProductCatalogSync(
   const incomingCanonicalIds = incomingIdentityKeys;
 
   for (const rate of normalizedIncomingRates.filter((candidate) => rateHasKnownApr(candidate)
-    || hasPositiveFreshHolding(candidate, freshHoldings))) {
+    || hasPositiveFreshHolding(candidate, freshHoldings)
+    || byIdentity.has(candidate.identityKey ?? candidate.canonicalProductId ?? candidate.productId))) {
     const identityKey = rate.identityKey ?? rate.canonicalProductId ?? rate.productId;
     const canonicalProductId = identityKey;
     const seed = catalogProductTemplates.find((product) => product.id === canonicalProductId);
@@ -125,7 +126,8 @@ export async function prepareProductCatalogSync(
     const product = productFromRate(base, rate, id, identityKey);
     const evidence = holdingEvidence(product, rate, id, freshHoldings, persistedHoldings, completeScopes);
     const alreadyActive = selectedCurrent?.status === "active";
-    const active = productShouldBeActive(product, evidence, alreadyActive);
+    const active = productShouldBeActive(product, evidence, alreadyActive)
+      || (alreadyActive && product.productDataMode === "api" && product.rateCoverage === "unavailable");
     if (isBinanceLockedProduct(product)) {
       binanceCatalogDecisions.push({
         branch: "incoming_rate",

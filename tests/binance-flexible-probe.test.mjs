@@ -170,7 +170,7 @@ test("Binance marks malformed product data and an interrupted later page as part
   assert.equal(calls.filter((url) => url.pathname.endsWith("/flexible/list")).length, 2);
 });
 
-test("a positive Binance holding without APR becomes an editable manual information row", async () => {
+test("a complete Binance product row without APR remains API-managed while its holding stays visible", async () => {
   const load = moduleLoader({
     "@/lib/exchange-fetch": {
       exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), path: new URL(url).pathname }),
@@ -183,10 +183,10 @@ test("a positive Binance holding without APR becomes an editable manual informat
   const { fetchBinanceFlexibleSnapshot } = load("@/lib/integrations/binance");
   const result = await fetchBinanceFlexibleSnapshot({ apiKey: "key", apiSecret: "secret" }, "global", ["BTC"]);
 
-  assert.equal(result.productApiStatus, "partial");
+  assert.equal(result.productApiStatus, "complete");
   assert.equal(result.positionApiStatus, "complete");
   assert.equal(result.rates.length, 1);
-  assert.equal(result.rates[0].productDataMode, "manual");
+  assert.equal(result.rates[0].productDataMode, undefined);
   assert.equal(result.rates[0].rateCoverage, "unavailable");
   assert.equal(result.holdings[result.rates[0].productId], 0.25);
 });
@@ -256,7 +256,7 @@ test("Binance USDC tier diagnosis distinguishes a missing field from malformed t
   assert.equal(JSON.stringify(result).includes("id-one"), false);
 });
 
-test("malformed Binance tier container makes product data partial instead of implying a single rate", async () => {
+test("malformed Binance tier container leaves the query complete but the product incomplete", async () => {
   const load = moduleLoader({
     "@/lib/exchange-fetch": {
       exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), path: new URL(url).pathname }),
@@ -269,7 +269,7 @@ test("malformed Binance tier container makes product data partial instead of imp
   const { fetchBinanceFlexibleSnapshot } = load("@/lib/integrations/binance");
   const result = await fetchBinanceFlexibleSnapshot({ apiKey: "key", apiSecret: "secret" }, "global", ["USDC"]);
 
-  assert.equal(result.productApiStatus, "partial");
+  assert.equal(result.productApiStatus, "complete");
   assert.equal(result.rates[0].rateShape, "tiered_rate");
   assert.equal(result.rates[0].rateCoverage, "base_only");
 });
@@ -290,7 +290,7 @@ test("Binance APR parser accepts a complete percent value and rejects trailing j
   const { fetchBinanceFlexibleSnapshot } = load("@/lib/integrations/binance");
   const result = await fetchBinanceFlexibleSnapshot({ apiKey: "key", apiSecret: "secret" }, "global", ["USDC"]);
 
-  assert.equal(result.productApiStatus, "partial");
+  assert.equal(result.productApiStatus, "complete");
   assert.equal(result.rates.find((rate) => rate.externalProductId === "explicit-percent").apr, 2.5);
   assert.equal(result.rates.find((rate) => rate.externalProductId === "malformed-percent").rateCoverage, "unavailable");
 });

@@ -10,18 +10,18 @@ import {
 } from "./product-overrides";
 
 export type ProductInformationIssue =
-  | "产品数据待获取"
+  | "APR 未获取"
   | "APR 待填写"
-  | "阶梯结构待确认"
-  | "阶梯结构不完整"
+  | "阶梯 APR 未获取"
+  | "阶梯结构未获取"
   | "首档额度待填写"
-  | "首档额度待确认"
-  | "阶梯额度待确认"
+  | "首档额度未获取"
+  | "阶梯额度未获取"
   | "活动期限待填写"
-  | "活动期限待获取"
+  | "活动期限未获取"
   | "锁定期限待填写"
-  | "锁定期限待获取"
-  | "买入日待获取"
+  | "锁定期限未获取"
+  | "买入日未获取"
   | "买入日待填写";
 
 export function productInformationNote(issues: ProductInformationIssue[]) {
@@ -29,10 +29,9 @@ export function productInformationNote(issues: ProductInformationIssue[]) {
 }
 
 const firstTierCapacityIssues = new Set<ProductInformationIssue>([
-  "产品数据待获取",
-  "阶梯结构待确认",
+  "阶梯 APR 未获取",
   "首档额度待填写",
-  "首档额度待确认",
+  "首档额度未获取",
 ]);
 
 export function productCapacityIsIncomplete(product: Product, issues: ProductInformationIssue[]) {
@@ -48,17 +47,17 @@ export function productInformationIssues(
   product: Product,
   override?: ProductOverride,
   hasExternalPurchaseTiming = false,
+  hasHolding = true,
 ): ProductInformationIssue[] {
   const issues: ProductInformationIssue[] = [];
   const apiManaged = product.productDataMode === "api";
 
-  if (product.rateCoverage === "unavailable" && apiManaged) return ["产品数据待获取"];
-  if (product.rateCoverage === "unavailable") issues.push("APR 待填写");
-  if (product.rateCoverage === "max_only") issues.push("阶梯结构待确认");
-  if (product.rateCoverage === "partial") issues.push("阶梯结构不完整");
-  if (apiManaged && product.rateCoverage === "base_only") issues.push("首档额度待确认");
+  if (product.rateCoverage === "unavailable") issues.push(apiManaged ? "APR 未获取" : "APR 待填写");
+  if (product.rateCoverage === "max_only") issues.push("阶梯 APR 未获取");
+  if (product.rateCoverage === "partial") issues.push("阶梯结构未获取");
+  if (apiManaged && product.rateCoverage === "base_only") issues.push("首档额度未获取");
   if (apiManaged && product.rateCoverage === "complete" && productHasUnknownTierCapacity(product)) {
-    issues.push(product.tiers[0]?.max == null && product.tiers[0].maxStatus !== "unlimited" ? "首档额度待确认" : "阶梯额度待确认");
+    issues.push(product.tiers[0]?.max == null && product.tiers[0].maxStatus !== "unlimited" ? "首档额度未获取" : "阶梯额度未获取");
   }
   if (productNeedsManualLimit(product) && (override?.firstTierLimit === null || override?.firstTierLimit === undefined)) issues.push("首档额度待填写");
 
@@ -67,10 +66,10 @@ export function productInformationIssues(
   if (durationRequired && durationDays === null) {
     const activity = product.manualKind === "limited" || productNeedsManualTerm(product);
     issues.push(activity
-      ? apiManaged ? "活动期限待获取" : "活动期限待填写"
-      : apiManaged ? "锁定期限待获取" : "锁定期限待填写");
-  } else if (productNeedsPurchaseDate(product) && !hasExternalPurchaseTiming && !productTermStatus(product, override?.purchaseDate)) {
-    issues.push(apiManaged && apiFieldCapability(product, "purchaseAt") === "supported" ? "买入日待获取" : "买入日待填写");
+      ? apiManaged ? "活动期限未获取" : "活动期限待填写"
+      : apiManaged ? "锁定期限未获取" : "锁定期限待填写");
+  } else if (hasHolding && productNeedsPurchaseDate(product) && !hasExternalPurchaseTiming && !productTermStatus(product, override?.purchaseDate)) {
+    issues.push(apiManaged && apiFieldCapability(product, "purchaseAt") === "supported" ? "买入日未获取" : "买入日待填写");
   }
 
   return issues;

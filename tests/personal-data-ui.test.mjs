@@ -33,6 +33,7 @@ function render(part, overrides = {}) {
   };
   props.scheduledRefreshFailed ??= false;
   props.hasSyncFailure ??= false;
+  props.uniqueMissingApiFieldNotices ??= [];
   props.manualRefreshInProgress ??= false;
   props.preserveManualRefreshButton ??= false;
   props.showSyncFailureRefresh ??= (props.manualRefreshInProgress && props.preserveManualRefreshButton)
@@ -50,6 +51,19 @@ test("personal read failure keeps six metric cards with missing values instead o
   assert.match(html, /— 个持仓产品/);
   for (const label of ["总持仓", "组合有效 APR", "预计每日收益", "最佳首档 APR", "高息剩余额度", "超出首档"]) assert.ok(html.includes(label));
   assert.doesNotMatch(html, /暂无产品|未超出首档|已进入次档|Test Exchange|text-danger|尚未加载|skeleton/);
+});
+
+test("a complete API response can still name a product with missing APR in the top notice", () => {
+  const html = render("notice", {
+    dataBlocked: false, updating: false, hasSyncFailure: false,
+    currentDataSummary: "当前数据截至 10/06 13:02，",
+    uniqueMissingApiFieldNotices: ["Bitget · USDT 活期 · APR 未获取"],
+    openingLoading: false, loading: false, refreshingExchange: false,
+    manualRefreshCooling: false, handleManualRefresh() {}, showSyncFailureRefresh: true,
+  });
+  assert.match(html, /Bitget · USDT 活期 · APR 未获取/);
+  assert.match(html, /sync-notice-refresh/);
+  assert.doesNotMatch(html, /部分数据未返回|API 暂不可用/);
 });
 
 test("personal read error notice has the requested copy and no retry button", () => {

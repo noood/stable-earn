@@ -8,7 +8,7 @@ const PrivateDashboard = dynamic(
     ssr: false,
     loading: () => (
       <main className="min-h-screen" aria-busy="true">
-        <div className="mx-auto max-w-[1500px] px-5 py-5 lg:px-10 lg:py-6">
+        <div className="page-width mx-auto px-5 py-5 lg:px-10 lg:py-6">
           <div className="card type-caption flex items-center gap-3 px-5 py-4" role="status">
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="12" r="8.5" />

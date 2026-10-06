@@ -67,6 +67,23 @@ test("a Binance locked single-rate product with no returned quota is treated as 
   assert.equal(result.rates[0].capacitySource, undefined);
 });
 
+test("a Binance locked product with identity and term but no APR is an API field issue", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), path: new URL(url).pathname, text: async () => "{}" }),
+      readExchangeJson: async (response) => response.path.endsWith("/locked/list")
+        ? { total: 1, rows: [{ projectId: "USDT-NO-APR", detail: { asset: "USDT", duration: 7 } }] }
+        : { total: 1, rows: [{ projectId: "USDT-NO-APR", asset: "USDT", duration: 7, amount: "20" }] },
+    },
+  });
+  const { fetchBinanceLockedSnapshot } = load("@/lib/integrations/binance");
+  const result = await fetchBinanceLockedSnapshot({ apiKey: "key", apiSecret: "secret" }, "global", ["USDT"]);
+  assert.equal(result.productApiStatus, "complete");
+  assert.equal(result.rates[0].rateCoverage, "unavailable");
+  assert.notEqual(result.rates[0].productDataMode, "manual");
+  assert.equal(result.holdings[result.rates[0].productId], 20);
+});
+
 test("Binance locked snapshot fetches past the first page before marking products complete", async () => {
   const requests = [];
   const load = moduleLoader({

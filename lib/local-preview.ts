@@ -5,6 +5,14 @@ import { buildManualProductIdentity } from "./product-identity";
 import { nextScheduledRefreshAt } from "./sync-cache";
 import { isLocalDevelopmentRequest } from "./request-security";
 
+/** Pin local-only preview fixtures for repeatable browser screenshots. */
+export function localPreviewTime(requestUrl: string) {
+  const value = new URL(requestUrl).searchParams.get("previewAt");
+  if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return new Date();
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value ? parsed : new Date();
+}
+
 export function localPrivateProductsPreview(now = new Date()) {
   const freshAt = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
   const cachedAt = new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString();

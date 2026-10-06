@@ -11,17 +11,6 @@ export function cachedHoldingTimes(
   ]));
 }
 
-/** Only a new refresh result can supply holdings to save; reading cache cannot. */
-export function freshHoldingIdsForSave(
-  holdings: Record<string, number>,
-  fallbacks: Record<string, string>,
-  cacheState: string | undefined,
-  silent = false,
-): string[] {
-  if (silent || cacheState !== "updated") return [];
-  return Object.keys(holdings).filter((id) => !Object.hasOwn(fallbacks, id));
-}
-
 /**
  * Merge incremental position reads, but replace the previous snapshot for
  * accounts whose position endpoints completed successfully. An empty complete

@@ -1,7 +1,7 @@
 import { fetchBinanceFlexibleSnapshot, fetchBinanceLockedSnapshot } from "@/lib/integrations/binance";
 import { probeBitgetAssets } from "@/lib/integrations/bitget";
 import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, scanBybitFixedHoldings, scanBybitFixedProducts, scanBybitFlexibleProducts } from "@/lib/integrations/bybit";
-import { fetchOkxOnchainOffers, fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
+import { fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
 import { withCapabilityProbeRequestGuard } from "@/lib/exchange-fetch";
 import { parseExchangeNumber } from "@/lib/exchange-number";
 import type { LiveRate } from "@/lib/live-rates";
@@ -38,9 +38,6 @@ type SafeApiRow = {
   isVip?: boolean;
   specialUserGroupRequired?: boolean;
   asset?: string;
-  protocol?: string;
-  protocolType?: string;
-  term?: string;
 };
 type ApiProbe = {
   mode: PlatformApiMode;
@@ -62,24 +59,6 @@ type CapabilityScope = {
   productApi: ApiProbe;
   holdingApi: ApiProbe;
 };
-type SupplementalAssetProbe = {
-  asset: string;
-  status: ProbeStatus;
-  rowCount: number | null;
-  rows: SafeApiRow[];
-  complete?: boolean | null;
-  note?: string;
-};
-type SupplementalProbe = {
-  accountId: string;
-  id: "okx-onchain-earn-offers";
-  category: "onchain_earn";
-  endpoint: "/api/v5/finance/staking-defi/offers";
-  mode: "authenticated";
-  note: string;
-  assets: SupplementalAssetProbe[];
-};
-
 const reportIdLimit = 40;
 
 /**
@@ -101,23 +80,6 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
     productApi: initialApi(capability.productApi, capability.productDailySync, credentialReady(capability.accountId)),
     holdingApi: initialApi(capability.holdingApi, capability.holdingDailySync, credentialReady(capability.accountId)),
   }));
-  const okxCredentialReady = credentialReady("okx-global");
-  const supplementalProbes: SupplementalProbe[] = [{
-    accountId: "okx-global",
-    id: "okx-onchain-earn-offers",
-    category: "onchain_earn",
-    endpoint: "/api/v5/finance/staking-defi/offers",
-    mode: "authenticated",
-    note: "单次独立检查 OKX On-chain Earn 并按四币整理；不代表普通活期/定期 Savings 产品能力，也不会启用常规同步。",
-    assets: monitoredAssets.map((asset) => ({
-      asset,
-      status: okxCredentialReady ? "not_checked" : "not_configured",
-      rowCount: null,
-      rows: [],
-      ...(!okxCredentialReady ? { note: "未配置 OKX API 凭证，本次未请求。" } : {}),
-    })),
-  }];
-
   const findScope = (accountId: string, asset: string, productType: CapabilityProductType) => scopes.find((scope) => (
     scope.accountId === accountId && scope.asset === asset && scope.productType === productType
   ));
@@ -431,39 +393,6 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
         } catch {
           for (const asset of availableApiAssetsFor("okx-global", "flexible", "holdingApi")) setResult("okx-global", asset, "flexible", "holdingApi", { status: "error", complete: false });
         }
-        try {
-          const result = await fetchOkxOnchainOffers(okxCredentials);
-          for (let index = 0; index < monitoredAssets.length; index += 1) {
-            const asset = monitoredAssets[index];
-            const offerResult = result.byAsset[asset];
-            const complete = offerResult.rowCount === offerResult.rows.length;
-            supplementalProbes[0].assets[index] = {
-              asset,
-              status: !complete ? "partial" : offerResult.rowCount ? "returned" : "empty",
-              rowCount: offerResult.rowCount,
-              rows: sanitizeApiRows(
-                offerResult.rows as unknown as Array<Record<string, unknown>>,
-                "id",
-                false,
-              ),
-              complete,
-              note: complete
-                ? "一次请求返回 On-chain Earn offers；不是普通 Savings 产品目录。"
-                : `接口共返回 ${offerResult.rowCount} 行；报告仅展示前 ${offerResult.rows.length} 行，且不是普通 Savings 产品目录。`,
-            };
-          }
-        } catch {
-          for (let index = 0; index < monitoredAssets.length; index += 1) {
-            supplementalProbes[0].assets[index] = {
-              asset: monitoredAssets[index],
-              status: "error",
-              rowCount: null,
-              rows: [],
-              complete: false,
-              note: "请求失败；安全错误摘要见 apiFailureSummary。",
-            };
-          }
-        }
       }));
     }
 
@@ -488,7 +417,6 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
       ...(guardedProbe.retryAfterSeconds !== undefined ? { retryAfterSeconds: guardedProbe.retryAfterSeconds } : {}),
     },
     checks,
-    additionalProbes: supplementalProbes,
     apiFailureSummary: summarizePlatformApiFailures(captured),
   };
 }
@@ -931,9 +859,6 @@ function sanitizeApiRows(rows: Array<Record<string, unknown>>, idKey: string, ho
     if (typeof row.period === "string" || typeof row.period === "number") safe.period = String(row.period);
     if (typeof row.duration === "string" || typeof row.duration === "number") safe.duration = String(row.duration);
     if (typeof row.asset === "string") safe.asset = row.asset;
-    if (typeof row.protocol === "string") safe.protocol = row.protocol;
-    if (typeof row.protocolType === "string") safe.protocolType = row.protocolType;
-    if (typeof row.term === "string" || typeof row.term === "number") safe.term = String(row.term);
     if (!holding) {
       const tierCount = countRateTiers(row);
       const tieredRateReturned = hasRateInTiers(row, rateKind);

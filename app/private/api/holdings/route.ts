@@ -5,7 +5,7 @@ import type { HoldingMap } from "@/lib/domain";
 import { type ProductOverrideMap } from "@/lib/product-overrides";
 import { parseProductOverride } from "@/lib/product-override-input";
 import { loadUserProducts, prepareUserProductStatements, productToUserProduct, sanitizeUserProducts, userProductInputToProduct } from "@/lib/user-products";
-import { isLocalPreviewRequest, localPrivateHoldingsPreview } from "@/lib/local-preview";
+import { isLocalPreviewRequest, localPreviewTime, localPrivateHoldingsPreview } from "@/lib/local-preview";
 import { loadCatalogProducts } from "@/lib/product-catalog";
 import {
   buildManualChangeEvents,
@@ -33,11 +33,11 @@ export async function GET(request: Request) {
     }
     return NextResponse.json(scenario
       ? { holdings: {}, overrides: {}, manualProducts: [], hiddenProductIds: [], found: false }
-      : localPrivateHoldingsPreview(), { headers: privateResponseHeaders });
+      : localPrivateHoldingsPreview(localPreviewTime(request.url)), { headers: privateResponseHeaders });
   }
 
   const db = await getDatabase();
-  const [catalogProducts, manualProducts, holdingResult, positionResult, overrideResult, limitResult, termResult, hiddenResult, hiddenCatalogResult] = await Promise.all([
+  const [catalogProducts, manualProducts, holdingResult, positionResult, overrideResult, limitResult, termResult, hiddenResult, hiddenCatalogResult, syncSnapshotResult] = await Promise.all([
     loadCatalogProducts(db, userId),
     loadUserProducts(db, userId),
     db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
@@ -50,6 +50,7 @@ export async function GET(request: Request) {
       FROM product_override_terms WHERE user_id = ? ORDER BY product_id`).bind(userId).all<TermRow>(),
     db.prepare("SELECT product_id FROM hidden_seed_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
     db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
+    db.prepare("SELECT payload FROM sync_snapshots WHERE owner_id = ? AND cache_key = 'private-products'").bind(userId).all<{ payload: string | null }>(),
   ]);
   const removableProducts = new Set([...catalogProducts, ...manualProducts].map((product) => product.id));
   const storedHiddenProductIds = [...new Set([
@@ -59,9 +60,13 @@ export async function GET(request: Request) {
   const holdingAmounts = new Map(holdingResult.results.map((row) => [row.product_id, Number(row.amount)]));
   const positionAmounts = new Map<string, number>();
   for (const row of positionResult.results) positionAmounts.set(row.product_id, (positionAmounts.get(row.product_id) ?? 0) + Number(row.amount));
+  const snapshot = parseSyncSnapshot(syncSnapshotResult.results[0]?.payload);
   // Hiding an opportunity must never hide a positive position. The position
   // remains visible until it is genuinely zero, even if the user hid the row.
-  const hiddenProductIds = storedHiddenProductIds.filter((productId) => (holdingAmounts.get(productId) ?? 0) <= 0 && (positionAmounts.get(productId) ?? 0) <= 0);
+  const hiddenProductIds = storedHiddenProductIds.filter((productId) => {
+    const freshAmount = trustedSnapshotAmount(snapshot, productId);
+    return (freshAmount ?? holdingAmounts.get(productId) ?? 0) <= 0 && (positionAmounts.get(productId) ?? 0) <= 0;
+  });
   const hiddenProductIdSet = new Set(hiddenProductIds);
   const productIds = new Set([...catalogProducts.filter((product) => !hiddenProductIdSet.has(product.id)), ...manualProducts].map((product) => product.id));
   const limits = new Map(limitResult.results.map((row) => [row.product_id, row.first_tier_limit]));
@@ -141,7 +146,6 @@ export async function PUT(request: Request) {
   // Hiding is a presentation choice, never a way to conceal an active
   // position. Re-check both the aggregate and detailed positions on the
   // server; a client cannot bypass this by sending a crafted hidden list.
-  const holdingAmounts = new Map(holdingResult.results.map((row) => [row.product_id, Number(row.amount)]));
   const positionAmounts = new Map<string, number>();
   for (const row of positionResult.results) positionAmounts.set(row.product_id, (positionAmounts.get(row.product_id) ?? 0) + Number(row.amount));
   const snapshot = parseSyncSnapshot(syncSnapshotResult.results[0]?.payload);
@@ -149,14 +153,9 @@ export async function PUT(request: Request) {
   if (hiddenProductsProvided) {
     for (const productId of hiddenProductIds) {
       if (!hiddenCatalogIds.has(productId)) continue;
-      const amount = holdingAmounts.get(productId);
       const positions = positionAmounts.get(productId) ?? 0;
-      const snapshotAmount = snapshot?.holdingUpdates?.[productId];
-      const syncState = snapshot?.holdingSyncStates?.[productId];
-      const trustedSync = syncState === "synced";
-      const knownZero = trustedSync && (amount !== undefined
-        ? amount <= 0
-        : Number.isFinite(Number(snapshotAmount)) && Number(snapshotAmount) <= 0);
+      const snapshotAmount = trustedSnapshotAmount(snapshot, productId);
+      const knownZero = snapshotAmount !== undefined && snapshotAmount <= 0;
       if (!knownZero || positions > 0) {
         return NextResponse.json({ error: "有持仓或暂时无法确认持仓的 API 产品不能移除。" }, { status: 409, headers: privateResponseHeaders });
       }
@@ -170,8 +169,12 @@ export async function PUT(request: Request) {
   }
   const entries = changedHoldingProductIds.flatMap((productId) => {
     const rawAmount = (candidate as Record<string, unknown>)[productId];
-    const amount = typeof rawAmount === "number" ? rawAmount : Number(rawAmount);
-    return productIds.has(productId) && Number.isFinite(amount) && amount >= 0 && amount <= 1e15 ? [[productId, amount] as const] : [];
+    const amount = typeof rawAmount === "number" ? rawAmount : Number.NaN;
+    const product = allProducts.find((item) => item.id === productId);
+    const trustedAmount = product?.holdingDataMode === "api" ? trustedSnapshotAmount(snapshot, productId) : undefined;
+    return product && Number.isFinite(amount) && amount >= 0 && amount <= 1e15
+      && (product.holdingDataMode !== "api" || trustedAmount === amount)
+      ? [[productId, amount] as const] : [];
   });
   if (entries.length !== changedHoldingProductIds.length) return NextResponse.json({ error: "持仓数据格式不正确。" }, { status: 400, headers: privateResponseHeaders });
   const overrideCandidate = typeof payload?.overrides === "object" && payload.overrides !== null && !Array.isArray(payload.overrides)
@@ -305,4 +308,11 @@ function parseSyncSnapshot(payload: string | null | undefined) {
   } catch {
     return null;
   }
+}
+
+function trustedSnapshotAmount(snapshot: ReturnType<typeof parseSyncSnapshot>, productId: string) {
+  if (snapshot?.holdingSyncStates?.[productId] !== "synced") return undefined;
+  if (!Object.hasOwn(snapshot.holdingUpdates ?? {}, productId)) return undefined;
+  const amount = snapshot.holdingUpdates?.[productId];
+  return typeof amount === "number" && Number.isFinite(amount) && amount >= 0 ? amount : undefined;
 }

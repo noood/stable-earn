@@ -106,7 +106,7 @@ const knownPaths = new Set([
   "/sapi/v1/simple-earn/locked/list", "/sapi/v1/simple-earn/locked/position",
   "/v5/earn/product", "/v5/earn/position", "/v5/earn/fixed-term/product", "/v5/earn/fixed-term/position",
   "/api/v2/earn/savings/product", "/api/v2/earn/savings/assets", "/api/v2/public/time",
-  "/api/v5/finance/savings/balance", "/api/v5/finance/staking-defi/offers",
+  "/api/v5/finance/savings/balance",
 ]);
 
 async function fetchWithDiagnostics(input: string, init: RequestInit | undefined, requestAttempt: number) {

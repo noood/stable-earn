@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
-import { freshHoldingIdsForSave } from "../lib/holding-cache.ts";
 
 // Exercise the actual refresh and PUT-body construction inside Dashboard,
 // with React state setters and network boundaries replaced by test doubles.
@@ -44,16 +43,16 @@ test("daily opening and manual refresh use POST; ordinary cache polling stays GE
 });
 
 for (const scenario of [
-  { name: "partial result", state: "updated", fallbacks: { bitget: "2026-09-05T00:56:15.064Z" }, saved: ["binance"] },
-  { name: "ordinary cache read", state: "fresh", fallbacks: {}, saved: [] },
-  { name: "opening cache read preserves daily opportunity without writing holdings", state: "fresh", fallbacks: {}, daily: true, cacheOnly: true, saved: [] },
-  { name: "total failure carrying old synced flags", state: "error", fallbacks: {}, saved: [] },
-  { name: "silent cache polling", state: "updated", fallbacks: {}, silent: true, saved: [] },
-  { name: "daily refresh resumed after background wait", state: "updated", fallbacks: {}, silent: true, daily: true, saved: ["bitget", "binance"] },
-  { name: "recovery with unchanged amount", state: "updated", fallbacks: {}, saved: ["bitget", "binance"] },
-  { name: "personal data unavailable", state: "updated", fallbacks: {}, personalReady: false, saved: [] },
+  { name: "partial result", state: "updated", fallbacks: { bitget: "2026-09-05T00:56:15.064Z" } },
+  { name: "ordinary cache read", state: "fresh", fallbacks: {} },
+  { name: "opening cache read preserves daily opportunity without writing holdings", state: "fresh", fallbacks: {}, daily: true, cacheOnly: true },
+  { name: "total failure carrying old synced flags", state: "error", fallbacks: {} },
+  { name: "silent cache polling", state: "updated", fallbacks: {}, silent: true },
+  { name: "daily refresh resumed after background wait", state: "updated", fallbacks: {}, silent: true, daily: true },
+  { name: "recovery with unchanged amount", state: "updated", fallbacks: {} },
+  { name: "personal data unavailable", state: "updated", fallbacks: {}, personalReady: false },
 ]) {
-  test(`dashboard saves only fresh holdings: ${scenario.name}`, async () => {
+  test(`dashboard displays API holdings without a second browser save: ${scenario.name}`, async () => {
     const writes = [];
     let displayed;
     const data = {
@@ -62,7 +61,7 @@ for (const scenario of [
       holdingSyncStates: { bitget: "synced", binance: "partial" }, cache: { state: scenario.state }, rates: [],
     };
     const deps = {
-      freshHoldingIdsForSave, isDemo: false, productsEndpoint: "/products", holdingsEndpoint: "/holdings",
+      isDemo: false, productsEndpoint: "/products", holdingsEndpoint: "/holdings",
       hiddenProductIdsRef: { current: [] }, productOverridesRef: { current: {} }, manualProductsRef: { current: [] },
       personalDataReadyRef: { current: scenario.personalReady !== false },
       holdingsRef: { current: {} },
@@ -80,7 +79,6 @@ for (const scenario of [
     assert.equal(read, true);
     if (scenario.cacheOnly) assert.equal(deps.dailyRefreshPendingRef.current, true);
     assert.deepEqual(displayed, data.holdingUpdates);
-    assert.deepEqual(writes.flatMap((body) => Object.keys(body.holdings)), scenario.saved);
-    assert.deepEqual(writes.flatMap((body) => body.changedHoldingProductIds), scenario.saved);
+    assert.deepEqual(writes, []);
   });
 }
