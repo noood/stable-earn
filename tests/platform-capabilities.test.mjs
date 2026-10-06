@@ -59,7 +59,9 @@ test("each capability scope has endpoint metadata and explicit holding-zero sema
   assert.equal(capabilityApiReference("binance-global", "USDT", "flexible", "productApi").path, "/sapi/v1/simple-earn/flexible/list");
   assert.equal(capabilityApiReference("bybit-eu", "USDT", "flexible", "holdingApi").path, null);
   assert.equal(capabilityApiReference("bybit-global", "USDGO", "flexible", "holdingApi").emptyHoldingMeansZero, "no");
-  assert.equal(capabilityApiReference("okx-global", "USDC", "flexible", "holdingApi").emptyHoldingMeansZero, "no");
+  const okxUsdcHolding = capabilityApiReference("okx-global", "USDC", "flexible", "holdingApi");
+  assert.equal(okxUsdcHolding.emptyHoldingMeansZero, "yes");
+  assert.match(okxUsdcHolding.emptyHoldingEvidence, /每个受监控币种只跟踪一条活期产品/);
   assert.equal(capabilityApiReference("bitget-global", "BTC", "fixed", "holdingApi").emptyHoldingMeansZero, "yes");
   assert.match(capabilityApiReference("bybit-global", "USDT", "flexible", "holdingApi").emptyHoldingEvidence, /全部赎回/);
   assert.match(capabilityApiReference("bybit-global", "USDT", "fixed", "holdingApi").emptyHoldingEvidence, /Active positions/);
@@ -69,7 +71,12 @@ test("each capability scope has endpoint metadata and explicit holding-zero sema
   assert.ok(bybitZeroScopes.includes("bybit-global:USDT:flexible"));
   assert.ok(bybitZeroScopes.includes("bybit-global:USDGO:fixed"));
   assert.ok(!bybitZeroScopes.includes("bybit-global:USDGO:flexible"));
-  assert.deepEqual(authoritativeEmptyHoldingScopeKeys(["okx-global"]), []);
+  const okxZeroScopes = authoritativeEmptyHoldingScopeKeys(["okx-global"]);
+  assert.deepEqual(okxZeroScopes, [
+    "okx-global:USDT:flexible",
+    "okx-global:USDC:flexible",
+    "okx-global:BTC:flexible",
+  ]);
   assert.deepEqual(authoritativeEmptyHoldingScopeKeys(["bybit-eu", "mexc-ph", "mexc-uk"]), []);
 });
 

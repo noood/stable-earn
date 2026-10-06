@@ -122,7 +122,7 @@ function loadProbe({ malformedNumbers = false } = {}) {
       probeBybitFixedHoldings: async () => [{ productId: "eu-fixed-1", coin: "USDC", duration: "90d", status: "InProgress", hasPositiveHolding: true }],
     },
     "@/lib/integrations/okx": {
-      fetchOkxSavingsHoldings: async () => ({ holdings: {}, observedAssets: ["USDT", "USDGO"], invalidAssets: ["USDT"] }),
+      fetchOkxSavingsHoldings: async () => ({ holdings: {}, observedAssets: ["USDT", "USDGO"], invalidAssets: ["USDT"], snapshotComplete: false }),
       fetchOkxOnchainOffers: async () => ({ byAsset: {
         USDT: { rowCount: 1, rows: [{ id: "offer-1", asset: "USDT", protocol: "Example Staking", protocolType: "staking", status: "available", term: "0", apy: "4.2" }] },
         USDC: { rowCount: 0, rows: [] }, USDGO: { rowCount: 0, rows: [] }, BTC: { rowCount: 0, rows: [] },
@@ -226,9 +226,10 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   assert.equal(scope("okx-global", "USDGO", "flexible").holdingApi.status, "unsupported");
   assert.equal(scope("okx-global", "USDT", "flexible").productApi.status, "unsupported");
   assert.equal(scope("okx-global", "USDT", "flexible").holdingApi.status, "partial");
+  assert.equal(scope("okx-global", "USDC", "flexible").holdingApi.status, "partial");
   assert.equal(check("binance-global", "USDT", "flexible", "product_apr").api.path, "/sapi/v1/simple-earn/flexible/list");
   assert.equal(check("binance-global", "USDT", "flexible", "holding").holdingEmptyMeansZero, "yes");
-  assert.equal(check("okx-global", "USDT", "flexible", "holding").holdingEmptyMeansZero, "no");
+  assert.equal(check("okx-global", "USDT", "flexible", "holding").holdingEmptyMeansZero, "yes");
   assert.equal(check("bybit-eu", "USDT", "flexible", "holding").api.path, null);
   const okxOffers = result.additionalProbes.find((entry) => entry.id === "okx-onchain-earn-offers");
   assert.equal(okxOffers.assets.find((entry) => entry.asset === "USDT").status, "returned");

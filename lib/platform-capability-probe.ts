@@ -412,16 +412,20 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
         };
         try {
           const result = await fetchOkxSavingsHoldings(okxCredentials);
+          const snapshotIncomplete = result.snapshotComplete === false || (result.invalidAssets?.length ?? 0) > 0;
           for (const asset of availableApiAssetsFor("okx-global", "flexible", "holdingApi")) {
             const present = result.observedAssets.includes(asset);
             const unreadableAmount = result.invalidAssets?.includes(asset) ?? false;
             setResult("okx-global", asset, "flexible", "holdingApi", {
-              status: unreadableAmount ? "partial" : present ? "returned" : "empty",
+              status: unreadableAmount || snapshotIncomplete ? "partial" : present ? "returned" : "empty",
               ids: present ? [asset] : [],
               rowCount: present ? 1 : 0,
+              complete: !snapshotIncomplete,
               note: unreadableAmount
                 ? "返回了该币种，但余额字段无法读取；未据此更新持仓金额。"
-                : "余额接口；只报告币种是否出现，不报告金额。",
+                : snapshotIncomplete
+                  ? "回包包含无法完整识别的持仓行；本次缺行不按零处理。"
+                  : "余额接口；只报告币种是否出现，不报告金额。",
             });
           }
         } catch {

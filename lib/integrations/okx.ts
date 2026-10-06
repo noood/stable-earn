@@ -48,55 +48,100 @@ const okxApiBases = ["https://openapi.okx.com", "https://www.okx.com"] as const;
 
 export async function fetchOkxSavingsHoldings(credentials: OkxCredentials) {
   const body = await signedGet("/api/v5/finance/savings/balance", credentials);
-  const responseRows = Array.isArray(body.data) ? body.data : [];
+  if (!Array.isArray(body.data)) {
+    syncDiagnostic("okx_holding_response", {
+      endpoint: "/api/v5/finance/savings/balance",
+      dataFieldPresent: Object.hasOwn(body, "data"),
+      dataIsArray: false,
+      rowCount: 0,
+      snapshotComplete: false,
+      assetChecks: [],
+      unclassifiedRowCount: 0,
+    }, true);
+    throw new Error("OKX savings balance data is not a list");
+  }
+  const responseRows = body.data;
+
+  const holdings: Record<string, number> = {};
+  const observedAssets = new Set<string>();
+  const invalidAssets = new Set<string>();
+  const duplicateAssets = new Set<string>();
+  const rowCounts = new Map<string, number>();
+  let unreadableCurrencyRowCount = 0;
+
+  for (const row of responseRows) {
+    const asset = normalizedCurrency(row);
+    if (!asset) {
+      unreadableCurrencyRowCount += 1;
+      continue;
+    }
+    observedAssets.add(asset);
+    const productId = productIds[asset as keyof typeof productIds];
+    if (!productId) continue;
+    const rowCount = (rowCounts.get(asset) ?? 0) + 1;
+    rowCounts.set(asset, rowCount);
+    if (rowCount > 1) {
+      duplicateAssets.add(asset);
+      delete holdings[productId];
+      continue;
+    }
+    const amount = parseExchangeNumber(row.amt);
+    if (amount === undefined || amount < 0) {
+      invalidAssets.add(asset);
+      continue;
+    }
+    holdings[productId] = amount;
+  }
+  for (const asset of invalidAssets) delete holdings[productIds[asset as keyof typeof productIds]];
+  for (const asset of duplicateAssets) delete holdings[productIds[asset as keyof typeof productIds]];
+
   const assetChecks = Object.keys(productIds).map((asset) => {
-    const matchingRows = responseRows.filter((row) => safeCurrencyCode(row.ccy)?.toUpperCase() === asset);
+    const matchingRows = responseRows.filter((row) => normalizedCurrency(row) === asset);
     const parsedAmounts = matchingRows.map((row) => parseExchangeNumber(row.amt));
+    const assetIsUnambiguous = matchingRows.length === 1
+      && !invalidAssets.has(asset)
+      && !duplicateAssets.has(asset);
     return {
       asset,
       rowCount: matchingRows.length,
       returnedCurrencyCodes: [...new Set(matchingRows.map((row) => safeCurrencyCode(row.ccy) ?? "unreadable"))].slice(0, 5),
       amountFieldPresentCount: matchingRows.filter((row) => Object.hasOwn(row, "amt")).length,
       amountValidCount: parsedAmounts.filter((amount) => amount !== undefined && amount >= 0).length,
-      adapterRecognizedCount: matchingRows.filter((row) => row.ccy === asset).length,
-      usableByAdapterCount: matchingRows.filter((row) => row.ccy === asset && (parseExchangeNumber(row.amt) ?? -1) >= 0).length,
+      adapterRecognizedCount: matchingRows.length,
+      usableByAdapterCount: assetIsUnambiguous && (parsedAmounts[0] ?? -1) >= 0 ? 1 : 0,
     };
   });
+  const snapshotComplete = unreadableCurrencyRowCount === 0
+    && invalidAssets.size === 0
+    && duplicateAssets.size === 0;
   syncDiagnostic("okx_holding_response", {
     endpoint: "/api/v5/finance/savings/balance",
     dataFieldPresent: Object.hasOwn(body, "data"),
-    dataIsArray: Array.isArray(body.data),
+    dataIsArray: true,
     rowCount: responseRows.length,
     assetChecks,
     unclassifiedRowCount: responseRows.length - assetChecks.reduce((total, item) => total + item.rowCount, 0),
+    unreadableCurrencyRowCount,
+    duplicateAssetCodes: [...duplicateAssets],
+    snapshotComplete,
   });
-  if (body.data !== undefined && body.data !== null && !Array.isArray(body.data)) {
-    throw new Error("OKX savings balance data is not a list");
-  }
-
-  const holdings: Record<string, number> = {};
-  const observedAssets = new Set<string>();
-  const invalidAssets = new Set<string>();
-
-  for (const row of responseRows) {
-    if (row.ccy) observedAssets.add(row.ccy.toUpperCase());
-    const productId = row.ccy ? productIds[row.ccy as keyof typeof productIds] : undefined;
-    if (!productId) continue;
-    const amount = parseExchangeNumber(row.amt);
-    if (amount === undefined || amount < 0) {
-      invalidAssets.add(row.ccy!.toUpperCase());
-      continue;
-    }
-    holdings[productId] = amount;
-  }
-  for (const asset of invalidAssets) delete holdings[productIds[asset as keyof typeof productIds]];
-  return { holdings, observedAssets: [...observedAssets], invalidAssets: [...invalidAssets] };
+  return {
+    holdings,
+    observedAssets: [...observedAssets],
+    invalidAssets: [...invalidAssets],
+    snapshotComplete,
+  };
 }
 
 function safeCurrencyCode(value: unknown) {
   if (typeof value !== "string") return null;
   const code = value.trim();
   return /^[A-Za-z0-9]{1,16}$/.test(code) ? code : null;
+}
+
+function normalizedCurrency(row: unknown) {
+  if (!row || typeof row !== "object") return null;
+  return safeCurrencyCode((row as OkxSavingsRow).ccy)?.toUpperCase() ?? null;
 }
 
 /**

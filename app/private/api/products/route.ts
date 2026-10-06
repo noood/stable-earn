@@ -439,12 +439,16 @@ async function buildPrivatePayload(
     okxJob,
   ]);
   const okxInvalidAssets = okxResult.snapshot?.invalidAssets ?? [];
-  const okxStatus: PrivateStatus = okxResult.status === "synced" && okxInvalidAssets.length > 0
+  const okxSnapshotIncomplete = okxResult.status === "synced"
+    && okxResult.snapshot?.snapshotComplete !== true;
+  const okxStatus: PrivateStatus = okxResult.status === "synced" && (okxInvalidAssets.length > 0 || okxSnapshotIncomplete)
     ? "partial"
     : okxResult.status;
   const okxDiagnostic = okxInvalidAssets.length > 0
     ? `unreadable_balance:${okxInvalidAssets.join(",")}`
-    : okxResult.diagnostic;
+    : okxSnapshotIncomplete
+      ? "incomplete_balance_response"
+      : okxResult.diagnostic;
   const publicRates = publicSnapshot.rates;
   const publicFailures = publicSnapshot.failures;
   const publicPartials = publicSnapshot.partials ?? [];
@@ -518,9 +522,10 @@ async function buildPrivatePayload(
     // complete only after every assets page has been read, so an absent
     // flexible offer is then an authoritative zero.
     bitgetStatus === "synced" && bitget?.sync.products && bitget?.sync.holdings ? "bitget-global" : null,
-    // OKX returns only coin-level active-holding balances, not product-scoped
-    // positions. Do not mark its catalogue scopes authoritative for zero or
-    // archive an individual product when a balance row is absent.
+    // OKX returns coin-level balances without product IDs, but this project
+    // tracks one active Savings product per monitored coin. Only a complete,
+    // unambiguous response makes missing coin rows authoritative zeroes.
+    okxStatus === "synced" && okxResult.snapshot?.snapshotComplete === true ? "okx-global" : null,
   ].filter((accountId): accountId is string => Boolean(accountId));
   const completeScopeKeys = authoritativeEmptyHoldingScopeKeys(completeAccountIds);
   // Catalog zero/absence evidence must stay inside the configured asset ×

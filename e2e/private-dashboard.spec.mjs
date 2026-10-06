@@ -202,7 +202,7 @@ test("API settings modal keeps its three sections, truthful account copy, and re
           { id: "binance-bahrain", label: "Binance Bahrain", configured: false, requiresPassphrase: false, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
           { id: "bybit-global", label: "Bybit.com", configured: false, requiresPassphrase: false, syncDescription: "产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓自动同步" },
           { id: "bitget-global", label: "Bitget", configured: false, requiresPassphrase: true, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
-          { id: "okx-global", label: "OKX", configured: false, requiresPassphrase: true, syncDescription: "同步活期持仓余额（USDT、USDC、BTC；按币种汇总，不区分产品）；产品 APR 需手动维护" },
+          { id: "okx-global", label: "OKX", configured: false, requiresPassphrase: true, syncDescription: "同步 USDT、USDC、BTC 活期持仓；每币种对应一条跟踪产品，成功完整回包缺少币种行按 0；产品 APR 需手动维护" },
         ],
         manualSources: [
           { id: "bybit-eu", label: "Bybit EU", statusLabel: "手动维护", syncDescription: "产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓需手动维护" },
@@ -282,6 +282,8 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(euRow.getByRole("button", { name: "添加" })).toHaveCount(0);
     const bybitRow = connectionList.locator(".api-connection-row").filter({ hasText: "Bybit.com" });
     await expect(bybitRow).toContainText("产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓自动同步");
+    const okxRow = connectionList.locator(".api-connection-row").filter({ hasText: "OKX" });
+    await expect(okxRow).toContainText("每币种对应一条跟踪产品，成功完整回包缺少币种行按 0");
 
     await expect(dialog.getByRole("heading", { name: "API 检测" })).toBeVisible();
     const checkButton = dialog.getByRole("button", { name: "检测 API" });
@@ -327,8 +329,11 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(dialog.getByRole("button", { name: "检测 API" })).toBeVisible({ timeout: 5_000 });
     await expect(downloadButton).toBeVisible();
 
-    for (const width of [719, 536]) {
+    for (const width of [719, 536, 375]) {
       await page.setViewportSize({ width, height: 832 });
+      const pageWidths = await page.evaluate(() => ({ viewport: window.innerWidth, document: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
+      expect(pageWidths.document).toBeLessThanOrEqual(pageWidths.viewport);
+      expect(pageWidths.body).toBeLessThanOrEqual(pageWidths.viewport);
       for (const rowIndex of [0, 1]) {
         const row = dialog.locator(".api-settings-split-row").nth(rowIndex);
         await expect(row).toHaveCSS("column-gap", width <= 639 ? "16px" : "32px");

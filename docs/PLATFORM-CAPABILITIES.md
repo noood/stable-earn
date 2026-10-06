@@ -10,7 +10,7 @@
 
 **“是否支持 API”的口径：**依据项目已核验并配置的接口能力与适用范围；有可用接口即标“支持”，没有项目可用接口才标“不支持”。某次请求为空、未配置凭证、暂时失败或只返回部分数据，不会改变这项能力结论；这些情况单独记录在“最近结果”。产品/APR 行中，`有数据` 后分项列产品 APR、档位边界、额度字段和资格；成功但空统一写“没有返回该币种产品”。
 
-持仓接口返回的账户数据会把持仓金额关联到币种、期限和产品，用于计算收益、额度占用，并在完整的产品级快照中判断是否归零。OKX 这里只返回币种汇总，不能关联到具体产品。持仓行的“最近结果”只记录接口状态，不写入金额、条数或产品明细：“完整读取”表示本次列表读完且字段检查通过，不代表账户有持仓；部分数据和请求失败会分别标明。未接入的范围仍注明“未查询：项目无可用接口”。
+持仓接口数据用于计算收益、额度占用，并在完整快照中判断是否归零。OKX 接口只返回币种汇总、不提供产品 ID；但项目每个受监控币种只跟踪一条 OKX 活期产品，因此完整有效的币种结果可一对一映射，缺少币种行按零持仓处理。持仓行的“最近结果”只记录接口状态，不写入金额、条数或产品明细：“完整读取”表示本次列表读完且字段检查通过，不代表账户有持仓；部分数据和请求失败会分别标明。未接入的范围仍注明“未查询：项目无可用接口”。
 
 | 平台/地区 | 币种 | 期限 | 信息项 | 是否支持 API | 最近结果 | 最近检查/依据日期 | 接口方式 | 查询地址（方法 + 主机 + 路径） | 所需权限 | 官方文档/地区依据 | 日常接入状态 | 持仓空结果能否判零及依据 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -95,11 +95,11 @@
 | Bitget Global（Global） | BTC | 定期 | 产品/APR | 支持 | 没有返回该币种产品 | 2026-10-05（产品回包） | 鉴权 API | GET api.bitget.com/api/v2/earn/savings/product | 鉴权 API：API Key + Secret + Passphrase；只读 Savings/资产权限，关闭交易/提现权限 | [官方文档](https://www.bitget.com/docs/catalog/earn-classic-savings/classic-earn-savings) | 已接入日常同步 | — |
 | Bitget Global（Global） | BTC | 定期 | 持仓 | 支持 | 完整读取（不展示持仓明细） | 2026-10-04 01:09 CST | 鉴权 API | GET api.bitget.com/api/v2/earn/savings/assets | 鉴权 API：API Key + Secret + Passphrase；只读 Savings/资产权限，关闭交易/提现权限 | [官方文档](https://www.bitget.com/docs/catalog/earn-classic-savings/classic-earn-savings) | 已接入日常同步 | 可以；仅在本次请求范围正确、完整读取全部分页、没有解析/身份错误时成立；这些端点按币种与活期/定期返回产品级持仓行并含稳定产品 ID，完整快照中缺少该产品可视为该产品当前无持仓。 |
 | OKX Global（Global） | USDT | 活期 | 产品/APR | 不支持 | 项目没有可用接口 | 2026-10-04：官方接口范围核对；该项未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product) | 不适用／人工维护 | — |
-| OKX Global（Global） | USDT | 活期 | 持仓 | 支持 | 完整读取（不展示持仓明细） | 2026-10-04 01:09 CST：余额接口实测（币种级） | 鉴权 API | GET openapi.okx.com / www.okx.com/api/v5/finance/savings/balance | 鉴权 API：API Key + Secret + Passphrase；只读金融产品权限，关闭交易/提现权限 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product-get-savings-balance) | 已接入日常同步 | 不可以；OKX 活期持仓接口返回币种汇总，而非产品级持仓；币种行缺失不能证明任一具体产品为零。 |
+| OKX Global（Global） | USDT | 活期 | 持仓 | 支持 | 完整读取（不展示持仓明细） | 2026-10-04 01:09 CST：余额接口实测（币种级） | 鉴权 API | GET openapi.okx.com / www.okx.com/api/v5/finance/savings/balance | 鉴权 API：API Key + Secret + Passphrase；只读金融产品权限，关闭交易/提现权限 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product-get-savings-balance) | 已接入日常同步 | 可以；项目在该币种只跟踪一条 OKX 活期产品，完整、有效回包中缺少币种行按该产品持仓为零；回包结构异常、币种无法识别、该币种重复行或金额无效时不成立。 |
 | OKX Global（Global） | USDT | 定期 | 产品/APR | 不支持 | 项目没有可用接口 | 2026-10-04：官方接口范围核对；该项未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product) | 不适用／人工维护 | — |
 | OKX Global（Global） | USDT | 定期 | 持仓 | 不支持 | 未查询：项目无可用接口 | 2026-10-04：官方接口范围核对；该项未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product-get-savings-balance) | 不适用／人工维护 | 不可以；项目没有可用的产品级持仓接口，不能用空结果推断具体产品为零。 |
 | OKX Global（Global） | USDC | 活期 | 产品/APR | 不支持 | 项目没有可用接口 | 2026-10-04：官方接口范围核对；该项未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product) | 不适用／人工维护 | — |
-| OKX Global（Global） | USDC | 活期 | 持仓 | 支持 | 完整读取（不展示持仓明细） | 2026-10-04 01:09 CST | 鉴权 API | GET openapi.okx.com / www.okx.com/api/v5/finance/savings/balance | 鉴权 API：API Key + Secret + Passphrase；只读金融产品权限，关闭交易/提现权限 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product-get-savings-balance) | 已接入日常同步 | 不可以；OKX 活期持仓接口返回币种汇总，而非产品级持仓；币种行缺失不能证明任一具体产品为零。 |
+| OKX Global（Global） | USDC | 活期 | 持仓 | 支持 | 完整读取（不展示持仓明细） | 2026-10-04 01:09 CST | 鉴权 API | GET openapi.okx.com / www.okx.com/api/v5/finance/savings/balance | 鉴权 API：API Key + Secret + Passphrase；只读金融产品权限，关闭交易/提现权限 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product-get-savings-balance) | 已接入日常同步 | 可以；项目在该币种只跟踪一条 OKX 活期产品，完整、有效回包中缺少币种行按该产品持仓为零；回包结构异常、币种无法识别、该币种重复行或金额无效时不成立。 |
 | OKX Global（Global） | USDC | 定期 | 产品/APR | 不支持 | 项目没有可用接口 | 2026-10-04：官方接口范围核对；该项未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product) | 不适用／人工维护 | — |
 | OKX Global（Global） | USDC | 定期 | 持仓 | 不支持 | 未查询：项目无可用接口 | 2026-10-04：官方接口范围核对；该项未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product-get-savings-balance) | 不适用／人工维护 | 不可以；项目没有可用的产品级持仓接口，不能用空结果推断具体产品为零。 |
 | OKX Global（Global） | USDGO | 活期 | 产品/APR | 不支持 | 项目没有可用接口 | 2026-10-04：官方接口范围核对；该项未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product) | 不适用／人工维护 | — |
@@ -107,7 +107,7 @@
 | OKX Global（Global） | USDGO | 定期 | 产品/APR | 不支持 | 项目没有可用接口 | 2026-10-04：官方接口范围核对；该项未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product) | 不适用／人工维护 | — |
 | OKX Global（Global） | USDGO | 定期 | 持仓 | 不支持 | 未查询：项目无可用接口 | 2026-10-04：官方接口范围核对；该项未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product-get-savings-balance) | 不适用／人工维护 | 不可以；项目没有可用的产品级持仓接口，不能用空结果推断具体产品为零。 |
 | OKX Global（Global） | BTC | 活期 | 产品/APR | 不支持 | 项目没有可用接口 | 2026-10-04：官方接口范围核对；该项未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product) | 不适用／人工维护 | — |
-| OKX Global（Global） | BTC | 活期 | 持仓 | 支持 | 完整读取（不展示持仓明细） | 2026-10-04 01:09 CST：余额接口实测（币种级） | 鉴权 API | GET openapi.okx.com / www.okx.com/api/v5/finance/savings/balance | 鉴权 API：API Key + Secret + Passphrase；只读金融产品权限，关闭交易/提现权限 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product-get-savings-balance) | 已接入日常同步 | 不可以；OKX 活期持仓接口返回币种汇总，而非产品级持仓；币种行缺失不能证明任一具体产品为零。 |
+| OKX Global（Global） | BTC | 活期 | 持仓 | 支持 | 完整读取（不展示持仓明细） | 2026-10-04 01:09 CST：余额接口实测（币种级） | 鉴权 API | GET openapi.okx.com / www.okx.com/api/v5/finance/savings/balance | 鉴权 API：API Key + Secret + Passphrase；只读金融产品权限，关闭交易/提现权限 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product-get-savings-balance) | 已接入日常同步 | 可以；项目在该币种只跟踪一条 OKX 活期产品，完整、有效回包中缺少币种行按该产品持仓为零；回包结构异常、币种无法识别、该币种重复行或金额无效时不成立。 |
 | OKX Global（Global） | BTC | 定期 | 产品/APR | 不支持 | 项目没有可用接口 | 2026-10-04：官方接口范围核对；该项未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product) | 不适用／人工维护 | — |
 | OKX Global（Global） | BTC | 定期 | 持仓 | 不支持 | 未查询：项目无可用接口 | 2026-10-04：官方接口范围核对；该项未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [官方文档](https://www.okx.com/docs-v5/en/#financial-product-get-savings-balance) | 不适用／人工维护 | 不可以；项目没有可用的产品级持仓接口，不能用空结果推断具体产品为零。 |
 | MEXC（PH/UK） | USDT | 活期 | 产品/APR | 不支持 | 项目没有可用接口 | 2026-10-04：PH/UK 官方目录核对；没有可用 API，未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [PH 官方目录](https://www.mexc.com/api-docs/spot-v3/introduction)；[UK 官方目录](https://www.mexc.com/api-docs/spot-v3/introduction) | 不适用／人工维护 | — |
@@ -129,7 +129,7 @@
 
 ＊ Bybit 定期 USDGO：未筛选产品目录请求成功但没有产品行；显式传入 USDGO 参数时接口拒绝。MEXC PH 与 UK 分别检查了官方 API 目录，没有本项目可用的 Earn/Savings API，因此未发送 API 请求。OKX 普通 Savings APR 没有本项目可用接口；On-chain Earn 不属于这 112 项，见下方规则说明。
 
-“持仓空结果能否判零”的依据按接口分别限定：Binance Simple Earn position 返回产品 ID 和持仓量；Bitget Savings assets 返回币种、期限类型、产品 ID 和持仓量；Bybit Global 活期官方说明已全部赎回的 Flexible Saving position 仍会返回，定期接口则只返回活动中的 position、排除已结算记录。只有请求范围正确、所有分页读完、必要字段/产品身份校验通过时，这些产品级快照才允许把缺行解释为当前零持仓。OKX 返回的是币种汇总余额，不能用来给具体产品判零；Bybit EU 与 MEXC 没有本项目可用的产品级持仓接口。
+“持仓空结果能否判零”的依据按接口分别限定：Binance Simple Earn position 返回产品 ID 和持仓量；Bitget Savings assets 返回币种、期限类型、产品 ID 和持仓量；Bybit Global 活期官方说明已全部赎回的 Flexible Saving position 仍会返回，定期接口则只返回活动中的 position、排除已结算记录。只有请求范围正确、所有分页读完、必要字段/产品身份校验通过时，这些完整快照才允许把缺行解释为当前零持仓。OKX 虽只返回币种汇总，但本项目每个币种只跟踪一条 OKX 活期产品，因此在回包为数组、币种身份可读、受监控币种没有重复行且金额有效时，缺少该币种行可映射为该产品持仓为零；回包失败或不完整时不成立。Bybit EU 与 MEXC 没有本项目可用的产品级持仓接口。
 ## 空、部分、失败及目录处理规则
 
 以下是适配器、API 检查器和前端共用的验收口径：
@@ -147,16 +147,16 @@
 
 1. 产品和持仓是两种独立能力，分别配置、分别记录状态；一边成功不替另一边背书。
 2. 有正持仓且产品身份可识别时，即便产品列表成功为空，也保留/创建对应行，缺失资料按“APR 待填写”“活动期限待填写”等现有文案补齐；资料完整前不计收益。
-3. 只有币种汇总余额、不能识别具体产品时，不把余额拆到多行，避免重复计算。
+3. 只有币种汇总余额且同币种有多条产品时，不能识别具体产品，不把余额拆到多行；若当前项目该币种只跟踪一条产品且汇总范围匹配，可一对一映射。
 4. VIP、下线或未达到机会门槛的无持仓产品不进入有效机会目录；正持仓优先保留并标明资格/状态。
 5. 只有完整、权威的持仓结果能确认零持仓；只有完整结果确认零持仓且产品不再符合展示条件时才归档。归档保留历史，不物理删除。失败、部分、未配置或身份不明均不能作为归档依据。
-6. `holdingEmptyMeansZero` 是逐端点配置的判定，不从 HTTP 200 或空数组自动推断。同步路由用同一配置生成可判零的精确“账号 × 币种 × 活期/定期”范围；未标记为“可以”的范围不会补 0，也不会据此归档。Binance、Bitget、Bybit Global 还必须满足范围正确、身份完整且所有分页完整；OKX 币种汇总余额不能作为某个具体产品为零的证据，Bybit EU/MEXC 无产品级持仓 API。
+6. `holdingEmptyMeansZero` 是逐端点配置的判定，不从 HTTP 200 或空数组自动推断。同步路由用同一配置生成可判零的精确“账号 × 币种 × 活期/定期”范围；未标记为“可以”的范围不会补 0，也不会据此归档。Binance、Bitget、Bybit Global 还必须满足范围正确、身份完整且所有分页完整；OKX 则必须返回有效数组、可识别币种、无受监控币种重复行且金额有效；Bybit EU/MEXC 无产品级持仓 API。
 
 ## 代码落实情况
 
 - **适配器与能力配置：**`lib/platform-capabilities.ts` 是日常接入状态、查询路径、权限、官方文档及持仓空结果判零依据的代码来源；新能力仍需人工审核后加入，不会自动发现未知端点。
-- **同步与目录：**Binance、Bitget、Bybit 已区分完整、部分、失败的关键接口结果；Bybit 目录/持仓扫描会跟随接口返回的 cursor，游标重复、下一页失败或字段不全都标为部分，不能当成功空。目录按稳定产品身份匹配，Bitget 和 Bybit 定期身份包含期限。归档与补零共用逐项能力配置的判零闸门：仅状态完整且该“账号 × 币种 × 活期/定期”有明确判零依据时才会执行。
-- **OKX 汇总余额：**日常同步仍更新 USDT、USDC、BTC 的币种级余额，但不再把 OKX 标成产品级完整持仓范围；因此缺少余额行不会成为某个具体产品的判零/归档证据。
+- **同步与目录：**Binance、Bitget、Bybit、OKX 已区分完整、部分、失败的关键持仓结果；Bybit 目录/持仓扫描会跟随接口返回的 cursor，游标重复、下一页失败或字段不全都标为部分，不能当成功空。目录按稳定产品身份匹配，Bitget 和 Bybit 定期身份包含期限。归档与补零共用逐项能力配置的判零闸门：仅状态完整且该“账号 × 币种 × 活期/定期”有明确判零依据时才会执行。
+- **OKX 汇总余额：**日常同步更新 USDT、USDC、BTC。虽然接口不含产品 ID，但项目每币种只跟踪一条活期产品；有效完整数组中缺少该币种时补零并解除旧缓存标记。响应字段异常、币种不可识别、目标币重复行或金额无效时不补零，沿用已知缓存并标记部分结果。
 - **检查 API：**报告现为 112 条自足 `checks` 记录，分别列出产品/APR 与持仓；每条带平台、地区、币种、期限、信息项、API 支持、最近结果、接口方式、方法/路径、权限、官方文档、检查时间、日常接入状态及持仓空结果判零依据。`apiSupport` 来自经过核验的项目接口配置，不随一次请求是否为空、是否失败或是否配置凭证而改变；最近结果单独记录。鉴权持仓只显示“接口调用成功 / 部分返回 / 请求失败”等状态，不输出是否非空、行数、持仓产品 ID、正持仓判断或金额；公开产品目录可保留产品行信息。MEXC 的 PH/UK 依据放在同一平台记录的地区子项中。检查器不自动发现未知端点，不写入产品、持仓、缓存或历史；OKX On-chain 独立放在范围外的 `additionalProbes`。
 - **API 设置弹窗：**区块顺序为“配置 API → 手动刷新频率 → API 检测”。检查按钮默认“检测 API”，报告生成后短暂显示对勾，3 秒后恢复；JSON 下载保留到下一次检查开始。整体检查失败时显示失败提示，不显示成功对勾或下载。
 - **回归测试：**自动化测试覆盖能力矩阵、分页完整性、空/部分/失败、APR/额度字段、产品身份、零值归档边界、MEXC 合并报告及 API 检测按钮状态。每次发布前按当前分支的测试结果记录本次审查，不在能力说明中保留旧测试次数或部署状态。

@@ -3,7 +3,7 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
-function fixture({ scheduledEnabled = true } = {}) {
+function fixture({ scheduledEnabled = true, includeOkxProduct = false } = {}) {
   const logs = [];
   let time = Date.parse("2026-09-05T00:56:15.064Z");
   class Clock extends Date {
@@ -34,7 +34,10 @@ function fixture({ scheduledEnabled = true } = {}) {
     id, accountId: id === "bg-usdc" ? "bitget-global" : "binance-global",
     asset: id === "bg-usdc" ? "USDC" : "USDT", productType: "flexible",
     holdingDataMode: "api", productDataMode: "api", source: { kind: "live" },
-  }));
+  })).concat(includeOkxProduct ? [{
+    id: "okx-usdt", accountId: "okx-global", asset: "USDT", productType: "flexible",
+    holdingDataMode: "api", productDataMode: "manual", source: { kind: "manual" },
+  }] : []);
   const rate = (productId) => ({ productId, apr: 6, fetchedAt: new Clock().toISOString() });
   const load = moduleLoader({
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
@@ -80,7 +83,12 @@ function fixture({ scheduledEnabled = true } = {}) {
     "@/lib/integrations/bybit": {},
     "@/lib/integrations/okx": { fetchOkxSavingsHoldings: async () => {
       if (mode === "error") throw Error("timeout");
-      return { holdings: {}, observedAssets: [], invalidAssets: [] };
+      return {
+        holdings: mode === "okx-positive" ? { "okx-usdt": 25 } : {},
+        observedAssets: mode === "okx-positive" ? ["USDT"] : [],
+        invalidAssets: [],
+        snapshotComplete: mode !== "okx-incomplete",
+      };
     } },
     "@/lib/product-catalog": {
       loadCatalogProducts: async () => [],
@@ -232,7 +240,7 @@ test("simultaneous opening and manual requests cannot overlap exchange work", as
   assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 1);
 });
 
-test("OKX coin-level balance is not used as product-scoped zero or archive evidence", async () => {
+test("OKX complete coin-balance response can prove zero only in its tracked flexible scopes", async () => {
   const f = fixture();
   await f.refresh();
   const catalogCall = f.catalogCalls.at(-1);
@@ -240,7 +248,11 @@ test("OKX coin-level balance is not used as product-scoped zero or archive evide
   assert.equal(Object.hasOwn(catalogCall[3], "okx-usdt"), false);
   assert.equal(Object.hasOwn(catalogCall[3], "okx-usdc"), false);
   assert.equal(Object.hasOwn(catalogCall[3], "okx-btc"), false);
-  assert.equal(catalogCall[5].some((scope) => scope.startsWith("okx-global:")), false);
+  assert.deepEqual(catalogCall[5].filter((scope) => scope.startsWith("okx-global:")), [
+    "okx-global:USDT:flexible",
+    "okx-global:USDC:flexible",
+    "okx-global:BTC:flexible",
+  ]);
 });
 
 test("an expired request cannot replace a newer owner's saved result or failure state", async () => {
@@ -358,6 +370,37 @@ test("complete sparse Bitget response treats an absent holding as zero", async (
   const response = await f.read();
   assert.equal(response.holdingUpdates["bg-usdc"], 0);
   assert.equal(response.holdingFallbacks["bg-usdc"], undefined);
+  assert.deepEqual(response.failures, []);
+});
+
+test("complete OKX coin-balance response treats an absent tracked currency as zero", async () => {
+  const f = fixture({ includeOkxProduct: true });
+  await f.refresh();
+  assert.equal((await f.read()).holdingUpdates["okx-usdt"], 0);
+
+  f.step("okx-positive");
+  await f.refresh();
+  assert.equal((await f.read()).holdingUpdates["okx-usdt"], 25);
+
+  f.step("success");
+  await f.refresh();
+  const response = await f.read();
+  assert.equal(response.holdingUpdates["okx-usdt"], 0);
+  assert.equal(response.holdingFallbacks["okx-usdt"], undefined);
+  assert.deepEqual(response.failures, []);
+});
+
+test("incomplete OKX coin-balance response keeps the previous holding instead of inferring zero", async () => {
+  const f = fixture({ includeOkxProduct: true });
+  f.step("okx-positive");
+  await f.refresh();
+
+  f.step("okx-incomplete");
+  await f.refresh();
+  const response = await f.read();
+  assert.equal(response.holdingUpdates["okx-usdt"], 25);
+  assert.ok(response.holdingFallbacks["okx-usdt"]);
+  assert.equal(response.holdingSyncStates["okx-usdt"], "partial");
   assert.deepEqual(response.failures, []);
 });
 

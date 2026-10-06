@@ -120,9 +120,9 @@ const accountRules: AccountRule[] = [
     accountId: "okx-global",
     exchange: "okx",
     region: "global",
-    // OKX's Savings balance is coin-level, not a per-product position. The
-    // app maps only the three known flexible balance rows; no ordinary fixed
-    // Savings product/position endpoint is available to this project.
+    // OKX returns coin-level Savings balances without product IDs. The app
+    // tracks one flexible product per monitored coin, so a complete response
+    // maps one-to-one; no ordinary fixed Savings position endpoint is available.
     flexible: rule(none, ["USDT", "USDC", "BTC"], "public", "authenticated", none, ["USDT", "USDC", "BTC"]),
     fixed: unsupported(),
   },
@@ -296,8 +296,8 @@ export function capabilityApiReference(
         ? "Bybit 官方说明 Flexible Saving 持仓响应含 coin、productId、amount，且已全部赎回的 Flexible Saving position 仍会返回；完整读取 nextPageCursor 的所有页并校验身份/金额后，未出现的产品可视为当前持仓为零。"
         : "Bybit 官方说明定期持仓接口只返回 Active positions（已结算的 position 不返回），且 productId、coin、duration、amount 可逐产品识别；完整读取 nextPageCursor 的所有页并校验身份/金额后，未出现的产品可视为当前无活动持仓。";
     } else if (exchange === "okx") {
-      emptyHoldingMeansZero = "no";
-      emptyHoldingEvidence = "OKX 活期持仓接口返回币种汇总，而非产品级持仓；币种行缺失不能证明任一具体产品为零。";
+      emptyHoldingMeansZero = "yes";
+      emptyHoldingEvidence = "OKX Savings balance 按币种汇总且不返回产品 ID；本项目每个受监控币种只跟踪一条活期产品，因此完整成功回包中未出现该币种时按该产品当前持仓为零。仅在 data 为数组、所有返回行币种可识别、受监控币种没有重复行且金额有效时成立；请求失败或响应不完整时不成立。";
     } else {
       emptyHoldingMeansZero = "no";
       emptyHoldingEvidence = exchange === "bybit"
@@ -318,7 +318,7 @@ export function capabilityApiReference(
 
 /**
  * Only scopes whose configured position endpoint is explicitly trusted to
- * represent a complete product-level snapshot may infer zero from absence.
+ * represent a complete tracked holding scope may infer zero from absence.
  * The sync route uses this as the same gate for zero updates and catalog
  * archival; API availability or a successful HTTP response alone is not enough.
  */
