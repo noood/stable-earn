@@ -28,6 +28,22 @@ export function productInformationNote(issues: ProductInformationIssue[]) {
   return `${issues.join("、")}，不参与收益计算`;
 }
 
+const firstTierCapacityIssues = new Set<ProductInformationIssue>([
+  "产品数据待获取",
+  "阶梯结构待确认",
+  "首档额度待填写",
+  "首档额度待确认",
+]);
+
+export function productCapacityIsIncomplete(product: Product, issues: ProductInformationIssue[]) {
+  const firstTier = product.tiers[0];
+  if (!firstTier || !Number.isFinite(firstTier.min) || firstTier.min < 0) return true;
+  if (firstTier.max === null
+    ? firstTier.maxStatus !== "unlimited"
+    : !Number.isFinite(firstTier.max) || firstTier.max < firstTier.min) return true;
+  return issues.some((issue) => firstTierCapacityIssues.has(issue));
+}
+
 export function productInformationIssues(
   product: Product,
   override?: ProductOverride,

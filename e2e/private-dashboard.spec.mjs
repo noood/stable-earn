@@ -71,6 +71,42 @@ test("an unknown API quota shows a red warning instead of unlimited capacity", a
   await expect(row).not.toContainText("不限额");
 });
 
+test("known quota and remaining capacity stay visible when unrelated product information is missing", async ({ page }) => {
+  await page.route("**/private/api/products**", async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== "GET" || url.searchParams.get("preview") !== "1") return route.continue();
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.holdingUpdates["okx-usdt"] = 0;
+    await route.fulfill({ response, json: payload });
+  });
+
+  await page.goto("/private");
+  const row = page.locator("tr.product-row").filter({ hasText: "OKX" }).filter({ hasText: "活动期限待填写" });
+  await expect(row).toContainText("活动期限待填写，不参与收益计算");
+  await expect(row.locator(".holding-summary")).toContainText("持仓 0.00 / 首档 500.00");
+  await expect(row.locator(".holding-summary")).toContainText("还可放 500.00 USDT");
+  await expect(row.getByRole("progressbar", { name: "OKX 首档使用进度" })).toBeVisible();
+  await expect(row.locator("td").nth(3)).toHaveText("—");
+});
+
+test("a known first tier stays visible without claiming an unknown later rate", async ({ page }) => {
+  await page.route("**/private/api/products**", async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== "GET" || url.searchParams.get("preview") !== "1") return route.continue();
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.products.find((product) => product.id === "bn-g-usdt").rateCoverage = "partial";
+    await route.fulfill({ response, json: payload });
+  });
+
+  await page.goto("/private");
+  const row = page.locator("tr.product-row").filter({ hasText: "阶梯结构不完整" });
+  await expect(row.locator(".holding-summary")).toContainText("持仓 650.00 / 首档 300.00");
+  await expect(row.locator(".holding-summary")).toContainText("超出首档 +350.00 USDT · 后续档位待确认");
+  await expect(row.locator("td").nth(3)).toHaveText("—");
+});
+
 test("complete empty sync preview shows an ordinary empty directory without an API error", async ({ page }) => {
   await page.goto("/private?syncScenario=empty");
   const table = page.getByRole("table");

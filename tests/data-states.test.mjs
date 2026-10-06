@@ -3,7 +3,7 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
 const load = moduleLoader();
-const { productInformationIssues, productParticipatesInInterest, holdingSyncNote } = load("@/lib/product-status");
+const { productCapacityIsIncomplete, productInformationIssues, productParticipatesInInterest, holdingSyncNote } = load("@/lib/product-status");
 const { bestAvailableFirstTierProduct, productHasComparableApr, productHasKnownCapacity, productKnownNotSubscribable, productShouldBeActive, totalHighYieldRemaining } = load("@/lib/opportunity-policy");
 const { remainingHighYield } = load("@/lib/domain");
 const { applyProductOverride, productTermStatus } = load("@/lib/product-overrides");
@@ -101,6 +101,7 @@ test("partial tier coverage preserves known rates but excludes whole-product cal
   };
 
   assert.deepEqual(productInformationIssues(partial), ["阶梯结构不完整"]);
+  assert.equal(productCapacityIsIncomplete(partial, productInformationIssues(partial)), false);
   assert.equal(productParticipatesInInterest(partial, 1500), false);
   assert.equal(remainingHighYield(partial, 1500), 0);
   assert.equal(totalHighYieldRemaining([partial], { [partial.id]: 1500 }, () => true), 0);
@@ -130,7 +131,11 @@ test("manual missing fields, maturity and eligibility do not invent a holding st
   const manual = { ...base, productDataMode: "manual", manualKind: "limited", termDays: 180 };
   const override = { apr: 10, firstTierLimit: 500, purchaseDate: null };
   const product = applyProductOverride(manual, override);
-  assert.deepEqual(productInformationIssues(product, override), ["买入日待填写"]);
+  const issues = productInformationIssues(product, override);
+  assert.deepEqual(issues, ["买入日待填写"]);
+  assert.equal(productCapacityIsIncomplete(product, issues), false);
+  assert.equal(productCapacityIsIncomplete(product, ["首档额度待确认"]), true);
+  assert.equal(productCapacityIsIncomplete({ ...product, tiers: [{ ...product.tiers[0], max: null }] }, issues), true);
   assert.equal(productHasKnownCapacity(product), true);
   const held = { ...base, productType: "fixed", termDays: 180, eligibilityStatus: "ineligible", availability: "unavailable" };
   assert.equal(productParticipatesInInterest(held, 100, { purchaseDate: "2026-01-01" }), true);

@@ -11,7 +11,7 @@ import { ProductHistory, type ProductHistoryPage } from "@/app/components/produc
 import { AccountBadge, ActionButton, HoldingSummary, Metric, MetricSkeleton, ModalFrame, TableCell } from "@/app/components/ui";
 import { effectiveApr, formatAmount, type Account, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent } from "@/lib/domain";
 import { applyProductOverride, dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
-import { holdingSyncNote, productInformationIssues, productInformationNote, productParticipatesInInterest } from "@/lib/product-status";
+import { holdingSyncNote, productCapacityIsIncomplete, productInformationIssues, productInformationNote, productParticipatesInInterest, type ProductInformationIssue } from "@/lib/product-status";
 import { apiFieldCapability } from "@/lib/api-capabilities";
 import { freshHoldingIdsForSave } from "@/lib/holding-cache";
 import { completedDataSummary, dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
@@ -1034,14 +1034,16 @@ function formatFactDate(value: string) {
   return parsed ? `${parsed.getUTCFullYear()}/${String(parsed.getUTCMonth() + 1).padStart(2, "0")}/${String(parsed.getUTCDate()).padStart(2, "0")}` : "待获取";
 }
 
-function ProductHolding({ product, account, holding, holdingAvailable, holdingSyncState, editing, editable, saving, holdingFallbackAt, productInfoIssues, onHoldingChange }: { product: Product; account: Account; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; holdingFallbackAt?: string; productInfoIssues: string[]; onHoldingChange: (value: number) => void }) {
+function ProductHolding({ product, account, holding, holdingAvailable, holdingSyncState, editing, editable, saving, holdingFallbackAt, productInfoIssues, onHoldingChange }: { product: Product; account: Account; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; holdingFallbackAt?: string; productInfoIssues: ProductInformationIssue[]; onHoldingChange: (value: number) => void }) {
   const firstTier = product.tiers[0];
-  const firstTierCapacity = firstTier.max === null ? null : firstTier.max - firstTier.min;
+  const firstTierCapacity = firstTier?.max == null ? null : firstTier.max - firstTier.min;
   const usedInFirstTier = firstTierCapacity === null ? holding : Math.max(0, Math.min(firstTierCapacity, holding - firstTier.min));
   const firstTierProgress = firstTierCapacity ? Math.min(100, usedInFirstTier / firstTierCapacity * 100) : 100;
   const overflow = overflowFromFirstTier(product, holding);
   const nextApr = product.tiers[1]?.apr;
   const capacityLabel = product.productType === "fixed" ? "申购额度" : "首档";
+  const capacityIncomplete = productCapacityIsIncomplete(product, productInfoIssues);
+  const laterTierIncomplete = productInfoIssues.some((issue) => issue === "阶梯结构待确认" || issue === "阶梯结构不完整" || issue === "阶梯额度待确认");
   const holdingAmountClassName = editing ? undefined : "holding-summary-amount";
   const holdingDetailClassName = editing ? undefined : "holding-summary-detail";
   const holdingLabel = (detail?: string) => <><span className={holdingAmountClassName}>持仓 {formatAmount(holding)}</span>{detail && <span className={holdingDetailClassName}> / {detail}</span>}</>;
@@ -1050,10 +1052,9 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
   let summary: ReactNode = null;
   if (!holdingAvailable) {
     summary = <HoldingSummary muted compact label={editing ? undefined : <span className={holdingAmountClassName}>持仓未获取</span>} note={holdingSyncNote(holdingSyncState)} />;
-  } else if (productInfoIssues.length > 0) {
-    // Incomplete product data owns the warning in the APR column. View mode
-    // still shows the known holding, but never invents quota/progress details;
-    // edit mode keeps the input as the sole holding value.
+  } else if (capacityIncomplete) {
+    // A missing first-tier boundary hides dependent quota details. Missing
+    // dates or later-tier details do not hide a known first-tier limit.
     summary = editing
       ? (holdingCacheNote ? <HoldingSummary muted compact cacheNote={holdingCacheNote} /> : null)
       : <HoldingSummary compact label={holdingLabel()} cacheNote={holdingCacheNote} />;
@@ -1061,7 +1062,7 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
     summary = <HoldingSummary compact label={holdingLabel(`${capacityLabel}不限额`)} cacheNote={holdingCacheNote} />;
   } else {
     const note = overflow > 0
-      ? `超出${capacityLabel} +${formatAmount(overflow)} ${product.asset}${nextApr !== undefined ? ` · 按 ${nextApr.toFixed(2)}%` : " · 不再计入本产品"}`
+      ? `超出${capacityLabel} +${formatAmount(overflow)} ${product.asset}${laterTierIncomplete ? " · 后续档位待确认" : nextApr !== undefined ? ` · 按 ${nextApr.toFixed(2)}%` : " · 不再计入本产品"}`
       : `${product.productType === "fixed" ? "还可申购" : "还可放"} ${formatAmount(Math.max(0, firstTierCapacity - usedInFirstTier))} ${product.asset}`;
     summary = <HoldingSummary label={holdingLabel(`${capacityLabel} ${formatAmount(firstTierCapacity)}`)} cacheNote={holdingCacheNote} note={note} progress={firstTierProgress} progressLabel={`${account.name} ${capacityLabel}使用进度`} noteTone={overflow > 0 ? "danger" : "default"} compact={editing} />;
   }

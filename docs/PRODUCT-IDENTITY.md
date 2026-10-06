@@ -2,7 +2,7 @@
 
 这份文档是产品身份、数据库行 ID 和平台外部 ID 的唯一说明。代码实现分别位于 `lib/product-identity.ts`、`lib/product-catalog.ts` 和 `lib/platform-capabilities.ts`。
 
-## 四种 ID，各自只做一件事
+## 三种 ID，各自只做一件事
 
 | 名称 | 作用 | 是否用于展示/匹配 | 是否允许随 APR 变化 |
 |---|---|---:|---:|
