@@ -33,8 +33,10 @@ function render(part, overrides = {}) {
   };
   props.scheduledRefreshFailed ??= false;
   props.hasSyncFailure ??= false;
-  props.showSyncFailureRefresh ??= !props.dataBlocked && !props.isDemo && !props.updating
-    && !props.scheduledRefreshFailed && props.hasSyncFailure;
+  props.manualRefreshInProgress ??= false;
+  props.preserveManualRefreshButton ??= false;
+  props.showSyncFailureRefresh ??= (props.manualRefreshInProgress && props.preserveManualRefreshButton)
+    || (!props.dataBlocked && !props.isDemo && !props.updating && !props.scheduledRefreshFailed && props.hasSyncFailure);
   const code = ts.transpileModule(`${parts.empty}\nreturn (${parts[part]});`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React },
   }).outputText;
@@ -109,6 +111,32 @@ test("page read errors override exchange warnings and dates", () => {
       assert.doesNotMatch(html, /下次更新将重试/);
     }
   }
+});
+
+test("manual refresh keeps the visible recovery button busy until the request settles", () => {
+  const inFlight = render("notice", {
+    dataBlocked: false, updating: true, hasSyncFailure: false,
+    manualRefreshInProgress: true, preserveManualRefreshButton: true,
+    currentDataSummary: "", openingLoading: false, loading: true, refreshingExchange: true,
+    failureSummary: "", manualRefreshCooling: false, handleManualRefresh() {},
+  });
+  assert.match(inFlight, /<button[^>]*aria-label="正在刷新"[^>]*aria-busy="true"[^>]*>\s*<span class="loading-spinner" aria-hidden="true"><\/span>\s*<\/button>/);
+
+  const succeeded = render("notice", {
+    dataBlocked: false, updating: false, hasSyncFailure: false,
+    manualRefreshInProgress: false, preserveManualRefreshButton: false,
+    currentDataSummary: "", openingLoading: false, loading: false, refreshingExchange: false,
+    failureSummary: "", manualRefreshCooling: false, handleManualRefresh() {},
+  });
+  assert.doesNotMatch(succeeded, /sync-notice-refresh/);
+
+  const failed = render("notice", {
+    dataBlocked: false, updating: false, hasSyncFailure: true,
+    manualRefreshInProgress: false, preserveManualRefreshButton: false,
+    currentDataSummary: "", openingLoading: false, loading: false, refreshingExchange: false,
+    failureSummary: "同步失败", manualRefreshCooling: false, handleManualRefresh() {},
+  });
+  assert.match(failed, /class="[^"]*sync-notice-refresh[^"]*"[^>]*>\s*手动刷新\s*<\/button>/);
 });
 
 const complete = { isDemo: false, opening: false, requesting: false, backgroundUpdating: false,

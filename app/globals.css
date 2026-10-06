@@ -724,13 +724,16 @@ input:focus-visible,
 .api-connection-row { padding: .875rem 1rem; }
 .api-connection-row-divided { border-top: var(--hairline) solid var(--border); }
 .api-check-actions { display: grid; justify-items: end; gap: .25rem; }
-.api-check-button {
+.api-check-button,
+.sync-notice-refresh {
   width: 6rem;
+}
+.api-check-button {
   height: var(--button-default-height);
   min-height: var(--button-default-height);
   padding-inline: var(--button-default-padding-x);
 }
-.api-check-spinner {
+.loading-spinner {
   display: inline-block;
   width: .9rem;
   height: .9rem;
@@ -739,7 +742,7 @@ input:focus-visible,
   border: 2px solid currentColor;
   border-right-color: transparent;
   border-radius: 50%;
-  animation: api-check-spin .75s linear infinite;
+  animation: loading-spin .75s linear infinite;
 }
 .api-check-success-icon {
   display: block;
@@ -752,9 +755,10 @@ input:focus-visible,
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.api-check-button .api-check-spinner,
+.api-check-button .loading-spinner,
+.sync-notice-refresh .loading-spinner,
 .api-check-button .api-check-success-icon { margin: 0; }
-@keyframes api-check-spin { to { transform: rotate(360deg); } }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
 .api-credential-form { border-top: var(--hairline) solid var(--border); padding-top: var(--space-4); }
 .secret-input {
   width: 100%;

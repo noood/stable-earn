@@ -161,6 +161,8 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const [syncFailures, setSyncFailures] = useState<string[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [refreshingExchange, setRefreshingExchange] = useState(false);
+  const [manualRefreshInProgress, setManualRefreshInProgress] = useState(false);
+  const [preserveManualRefreshButton, setPreserveManualRefreshButton] = useState(false);
   const [syncCache, setSyncCache] = useState<ApiResult["cache"]>();
   const [productSnapshotReady, setProductSnapshotReady] = useState(false);
   const [openingLoading, setOpeningLoading] = useState(!isDemo);
@@ -169,6 +171,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const [clock, setClock] = useState(() => Date.now());
   const dailyRefreshPendingRef = useRef(!isDemo && !localPreview);
   const refreshInFlightRef = useRef(false);
+  const manualRefreshInFlightRef = useRef(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const productOverridesRef = useRef<ProductOverrideMap>({});
   const manualProductsRef = useRef<Product[]>([]);
@@ -706,11 +709,22 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         ? completedDataSummary(formatSyncDateTime(lastUpdated), { scheduledRefreshFailed, scheduledSyncDisabled, nextRefresh: automaticRefreshSummary, hasSyncFailure })
         : scheduledRefreshFailed ? "" : hasSyncFailure ? "暂无成功数据，" : "暂无成功数据。";
   const failureSummary = syncFailureSummary(syncFailures);
-  const showSyncFailureRefresh = !dataBlocked && !isDemo && !updating && !scheduledRefreshFailed && hasSyncFailure;
+  const showSyncFailureRefresh = (manualRefreshInProgress && preserveManualRefreshButton)
+    || (!dataBlocked && !isDemo && !updating && !scheduledRefreshFailed && hasSyncFailure);
 
-  function handleManualRefresh() {
-    if (holdingsReady) void refreshRates(activeHoldings, { manual: true });
-    else void retryPersonalData();
+  async function handleManualRefresh() {
+    if (manualRefreshInFlightRef.current) return;
+    manualRefreshInFlightRef.current = true;
+    setPreserveManualRefreshButton(showSyncFailureRefresh);
+    setManualRefreshInProgress(true);
+    try {
+      if (holdingsReady) await refreshRates(activeHoldings, { manual: true });
+      else await retryPersonalData();
+    } finally {
+      manualRefreshInFlightRef.current = false;
+      setPreserveManualRefreshButton(false);
+      setManualRefreshInProgress(false);
+    }
   }
 
   return (
@@ -739,7 +753,11 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
               ? <p className="text-danger font-semibold">{serverReadFailureMessage}</p>
             : <p className="sync-notice-message min-w-0 flex-1 text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-secondary font-normal">数据正在更新中，请稍候。</span>}{scheduledRefreshFailed && <span className="text-danger font-semibold">{scheduledFailureLabel}</span>}{!scheduledRefreshFailed && hasSyncFailure && <span className="text-danger font-semibold">{failureSummary}</span>}</p>}
           </div>
-          {showSyncFailureRefresh && <ActionButton size="small" className="shrink-0 sync-notice-refresh" disabled={openingLoading || loading || refreshingExchange || manualRefreshCooling} onClick={handleManualRefresh}>手动刷新</ActionButton>}
+          {showSyncFailureRefresh && <ActionButton size="small" className="shrink-0 sync-notice-refresh" aria-label={manualRefreshInProgress && preserveManualRefreshButton ? "正在刷新" : undefined} aria-busy={manualRefreshInProgress && preserveManualRefreshButton} disabled={openingLoading || loading || refreshingExchange || manualRefreshInProgress || manualRefreshCooling} onClick={handleManualRefresh}>
+            {manualRefreshInProgress && preserveManualRefreshButton
+              ? <span className="loading-spinner" aria-hidden="true" />
+              : "手动刷新"}
+          </ActionButton>}
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
         </div>
         <section className="metrics-panel card mb-4 grid overflow-hidden sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6" aria-busy={initialLoading}>

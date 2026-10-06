@@ -362,7 +362,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
               onClick={() => void probeCapabilities()}
             >
               {probingCapabilities
-                ? <span className="api-check-spinner" aria-hidden="true" />
+                ? <span className="loading-spinner" aria-hidden="true" />
                 : retryWaitSeconds > 0
                   ? retryWaitLabel
                 : apiCheckState.phase === "complete"
