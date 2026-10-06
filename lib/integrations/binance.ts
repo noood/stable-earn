@@ -4,6 +4,7 @@ import type { LiveRate } from "@/lib/live-rates";
 import type { HoldingPosition, Product } from "@/lib/domain";
 import { diagnosticErrorKind, syncDiagnostic } from "@/lib/sync-diagnostics";
 import { apiAssetsFor, monitoredAssets } from "@/lib/platform-capabilities";
+import { parseExchangeNumber } from "@/lib/exchange-number";
 
 type Credentials = {
   apiKey: string;
@@ -13,33 +14,33 @@ type Credentials = {
 
 type FlexibleProductRow = {
   asset?: string;
-  latestAnnualPercentageRate?: string | number;
+  latestAnnualPercentageRate?: string | number | null;
   tierAnnualPercentageRate?: unknown;
   productId?: string;
 };
 
 type FlexiblePositionRow = FlexibleProductRow & {
-  totalAmount?: string;
+  totalAmount?: string | null;
 };
 
 type LockedProductDetail = {
   asset?: string;
-  apr?: string | number;
-  apy?: string | number;
-  annualPercentageRate?: string | number;
-  interestRate?: string | number;
-  duration?: string | number;
+  apr?: string | number | null;
+  apy?: string | number | null;
+  annualPercentageRate?: string | number | null;
+  interestRate?: string | number | null;
+  duration?: string | number | null;
   status?: string;
   isSoldOut?: boolean;
-  subscriptionStartTime?: string | number;
+  subscriptionStartTime?: string | number | null;
 };
 
 type LockedProductRow = {
   projectId?: string;
   detail?: LockedProductDetail;
   quota?: {
-    minimum?: string | number;
-    totalPersonalQuota?: string | number;
+    minimum?: string | number | null;
+    totalPersonalQuota?: string | number | null;
   };
 };
 
@@ -47,15 +48,15 @@ type LockedPositionRow = {
   positionId?: string | number;
   projectId?: string;
   asset?: string;
-  amount?: string | number;
-  principal?: string | number;
-  apy?: string | number;
-  apr?: string | number;
-  annualPercentageRate?: string | number;
-  interestRate?: string | number;
-  duration?: string | number;
-  purchaseTime?: string | number;
-  redeemDate?: string | number;
+  amount?: string | number | null;
+  principal?: string | number | null;
+  apy?: string | number | null;
+  apr?: string | number | null;
+  annualPercentageRate?: string | number | null;
+  interestRate?: string | number | null;
+  duration?: string | number | null;
+  purchaseTime?: string | number | null;
+  redeemDate?: string | number | null;
   status?: string;
 };
 
@@ -74,6 +75,7 @@ type BinanceTier = {
   min: number;
   max: number | null;
   apr: number;
+  maxStatus?: "unlimited";
 };
 
 type BinanceTierSchedule = {
@@ -114,6 +116,7 @@ export type BinanceFlexibleTierDiagnostic = {
       min?: number;
       max?: number;
       aprParsed: boolean;
+      bonusAprPercent: number | null;
       aprPercent: number | null;
     }>;
     tierScheduleComplete: boolean;
@@ -248,12 +251,15 @@ export async function fetchBinanceFlexibleSnapshot(
       productRows: productRows.map((row) => {
         const schedule = parseBinanceTiers(asset, row.latestAnnualPercentageRate, row.tierAnnualPercentageRate);
         const hasApr = hasBinanceApr(row);
+        const baseAprPercent = parseBinanceApr(row.latestAnnualPercentageRate);
+        const bonusTiers = parseBinanceBonusTiers(asset, row.tierAnnualPercentageRate);
         return {
           productId: String(row.productId ?? "").trim() || null,
           asset: row.asset ?? null,
-          latestAnnualPercentageRate: row.latestAnnualPercentageRate ?? null,
+          baseAprPercent: Number.isFinite(baseAprPercent) ? baseAprPercent : null,
           rateShape: !hasApr ? "no_rate" : schedule.hasReportedTiers ? "tiered_rate" : "single_rate",
-          tierAnnualPercentageRate: schedule.tiers,
+          bonusTiers,
+          tiers: schedule.tiers,
           tierScheduleComplete: schedule.complete,
         };
       }),
@@ -336,13 +342,15 @@ export async function fetchBinanceFlexibleSnapshot(
         ...identity,
         ...(!hasProductRow || !hasApr ? { productDataMode: "manual" as const } : {}),
         apr: tiers[0]?.apr ?? 0,
+        ...(hasApr ? { baseApr: parseBinanceApr(rateSource?.latestAnnualPercentageRate) } : {}),
+        bonusTiers: parseBinanceBonusTiers(asset, rateSource?.tierAnnualPercentageRate),
         rateShape: !hasApr ? "no_rate" : schedule.hasReportedTiers ? "tiered_rate" : "single_rate",
         tiers,
         fetchedAt,
         sourceLabel: hasProductRow
           ? accountConfig.sourceLabel
           : accountConfig.sourceLabel.replace("账户 API", "账户持仓 API；产品资料待填写"),
-        rateCoverage: !hasApr ? "unavailable" : !schedule.hasReportedTiers ? "base_only" : schedule.complete ? "complete" : "base_only",
+        rateCoverage: !hasApr ? "unavailable" : schedule.complete ? "complete" : "base_only",
         catalog: {
           accountId,
           exchange: "binance" as const,
@@ -583,7 +591,10 @@ function describeFlexibleTierRow(row: FlexibleProductRow, asset: string): Binanc
       rangeParsed: Boolean(bounds),
       ...(bounds ?? {}),
       aprParsed: Number.isFinite(parsedApr),
-      aprPercent: Number.isFinite(parsedApr) ? Number(parsedApr.toFixed(8)) : null,
+      bonusAprPercent: Number.isFinite(parsedApr) ? Number(parsedApr.toFixed(8)) : null,
+      aprPercent: Number.isFinite(parsedApr) && Number.isFinite(parseBinanceApr(row.latestAnnualPercentageRate))
+        ? Number((parsedApr + parseBinanceApr(row.latestAnnualPercentageRate)).toFixed(8))
+        : null,
     };
   });
   const schedule = parseBinanceTiers(asset, row.latestAnnualPercentageRate, rawTiers);
@@ -602,7 +613,7 @@ function describeFlexibleTierRow(row: FlexibleProductRow, asset: string): Binanc
     tierFieldState,
     tierEntryCount: entries.length,
     tiers: parsedEntries,
-    tierScheduleComplete: entries.length > 0 && schedule.complete,
+    tierScheduleComplete: schedule.complete,
     tierScheduleIssue,
   };
 }
@@ -723,6 +734,9 @@ export async function fetchBinanceLockedSnapshot(
         asset,
         duration: positiveNumber(detail?.duration),
         apr: parseBinanceApr(detail?.apr ?? detail?.apy ?? detail?.annualPercentageRate ?? detail?.interestRate),
+        minAmount: finiteOptional(row.quota?.minimum) ?? null,
+        maxAmount: finiteOptional(row.quota?.totalPersonalQuota) ?? null,
+        maxAmountStatus: row.quota?.totalPersonalQuota === undefined ? "not_returned" : "limited",
         status: detail?.status ?? null,
         isSoldOut: detail?.isSoldOut ?? null,
       }] : [];
@@ -866,13 +880,22 @@ function lockedRate(
   });
   const maximum = finiteOptional(quota?.totalPersonalQuota);
   const minimum = finiteOptional(quota?.minimum);
+  const rawMaximum = quota?.totalPersonalQuota;
+  const maximumStatus: NonNullable<LiveRate["subscriptionMaximumStatus"]> = rawMaximum === undefined
+    ? "unlimited"
+    : maximum === undefined ? "unreadable"
+      : maximum === -1 ? "unlimited" : "limited";
   return {
     productId: identity.identityKey,
     ...identity,
     name: `Simple Earn Locked · ${formatLockedDuration(duration)}`,
     apr,
     rateShape: "single_rate",
-    tiers: [{ min: 0, max: maximum && maximum > 0 ? maximum : null, apr }],
+    tiers: [{ min: 0, max: maximum && maximum > 0 ? maximum : null, apr,
+      ...(rawMaximum === undefined || maximum === -1 ? { maxStatus: "unlimited" as const } : {}) }],
+    subscriptionMaximum: maximum === undefined || maximum === -1 ? null : maximum,
+    subscriptionMaximumStatus: maximumStatus,
+    subscriptionMaximumSource: rawMaximum === undefined ? "not_returned" : "api",
     fetchedAt,
     sourceLabel: accountConfig.sourceLabel.replace("账户 API", "定期账户 API"),
     productType: "fixed",
@@ -880,8 +903,8 @@ function lockedRate(
     minimumAmount: minimum && minimum > 0 ? minimum : undefined,
     subscriptionStartsAt: timestampIso(detail?.subscriptionStartTime),
     availability: detail?.isSoldOut || /sold.?out|unavailable|off.?line/i.test(detail?.status ?? "") ? "unavailable" : "available",
-    rateCoverage: maximum === undefined ? "base_only" : "complete",
-    capacitySource: maximum === undefined ? "cache" : "live",
+    rateCoverage: "complete",
+    capacitySource: rawMaximum === undefined ? undefined : maximum === undefined ? "cache" : "live",
     catalog: {
       accountId,
       exchange: "binance",
@@ -895,11 +918,11 @@ function lockedRate(
 
 function parseBinanceTiers(
   asset: string,
-  rawBaseApr: string | number | undefined,
+  rawBaseApr: string | number | null | undefined,
   rawTiers: unknown,
 ): BinanceTierSchedule {
   const baseApr = parseBinanceApr(rawBaseApr);
-  const baseOnlyTier = { min: 0, max: null, apr: baseApr };
+  const baseOnlyTier = { min: 0, max: null, apr: baseApr, maxStatus: "unlimited" as const };
   if (rawTiers === undefined || rawTiers === null) {
     return { tiers: [baseOnlyTier], hasReportedTiers: false, complete: true };
   }
@@ -909,34 +932,45 @@ function parseBinanceTiers(
   const entries = rawTiers && typeof rawTiers === "object" && !Array.isArray(rawTiers)
     ? Object.entries(rawTiers as Record<string, number | string>)
     : [];
-  if (entries.length === 0) {
-    return {
-      tiers: [baseOnlyTier],
-      hasReportedTiers: false,
-      complete: true,
-    };
-  }
+  if (entries.length === 0) return { tiers: [baseOnlyTier], hasReportedTiers: false, complete: true };
 
-  // Binance documents tierAnnualPercentageRate values as the APR for each
-  // amount range. They are final tier APRs, not bonuses to add to the latest
-  // product APR. Use only the ranges actually returned; do not invent an
-  // unlimited base-rate tier after the final reported range.
-  const tiers = entries.flatMap(([label, rawApr]) => {
-    const bounds = parseTierBounds(label, asset);
-    const apr = parseBinanceApr(rawApr);
-    return bounds && Number.isFinite(apr)
-      ? [{ ...bounds, apr }]
-      : [];
-  }).sort((left, right) => left.min - right.min);
-  const complete = tiers.length === entries.length
-    && tiers.length > 0
-    && tiers[0].min === 0
-    && tiers.every((tier, index) => index === 0 || tiers[index - 1].max === tier.min);
+  // Binance's flexible product fields are two parts of the rate: the latest
+  // APR is the base rate, and tierAnnualPercentageRate is an extra reward.
+  // Add them while the reward applies, then keep the base rate for amounts
+  // beyond the final reward band.
+  const bonusTiers = parseBinanceBonusTiers(asset, rawTiers);
+  const finalBonusTiers = bonusTiers.flatMap((tier) => Number.isFinite(baseApr)
+    ? [{ ...tier, apr: baseApr + tier.apr }]
+    : []);
+  const completeBonusBands = finalBonusTiers.length === entries.length
+    && finalBonusTiers.length > 0
+    && finalBonusTiers[0].min === 0
+    && finalBonusTiers.every((tier, index) => index === 0 || finalBonusTiers[index - 1].max === tier.min);
+  const tiers = completeBonusBands && Number.isFinite(baseApr)
+    ? [
+      ...finalBonusTiers,
+      { min: finalBonusTiers[finalBonusTiers.length - 1]!.max!, max: null, apr: baseApr, maxStatus: "unlimited" as const },
+    ]
+    : finalBonusTiers.length > 0 ? finalBonusTiers : [baseOnlyTier];
+  const complete = completeBonusBands && Number.isFinite(baseApr);
   return {
-    tiers: tiers.length > 0 ? tiers : [{ min: 0, max: null, apr: baseApr }],
+    tiers,
     hasReportedTiers: true,
     complete,
   };
+}
+
+function parseBinanceBonusTiers(asset: string, rawTiers: unknown) {
+  if (!rawTiers || typeof rawTiers !== "object" || Array.isArray(rawTiers)) return [];
+  return Object.entries(rawTiers as Record<string, unknown>).flatMap(([label, rawApr]) => {
+    const bounds = parseTierBounds(label, asset);
+    const bonusApr = typeof rawApr === "string" || typeof rawApr === "number"
+      ? parseBinanceApr(rawApr)
+      : Number.NaN;
+    return bounds && Number.isFinite(bonusApr)
+      ? [{ ...bounds, apr: bonusApr }]
+      : [];
+  }).sort((left, right) => left.min - right.min);
 }
 
 function parseTierBounds(label: string, asset: string) {
@@ -1053,9 +1087,8 @@ async function hmacHex(payload: string, secret: string) {
   return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function finiteNumber(value: string | number | undefined) {
-  const parsed = typeof value === "number" ? value : Number.parseFloat(value ?? "0");
-  return Number.isFinite(parsed) ? parsed : 0;
+function finiteNumber(value: string | number | null | undefined) {
+  return parseExchangeNumber(value) ?? 0;
 }
 
 function aggregateSnapshotStatus(statuses: Array<"complete" | "partial" | "error">) {
@@ -1064,10 +1097,7 @@ function aggregateSnapshotStatus(statuses: Array<"complete" | "partial" | "error
 }
 
 function parseStrictFinite(value: unknown) {
-  if (typeof value !== "string" && typeof value !== "number") return undefined;
-  if (typeof value === "string" && !value.trim()) return undefined;
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  return parseExchangeNumber(value);
 }
 
 function normalizeBinanceProductId(value: string | undefined) {
@@ -1079,32 +1109,29 @@ function hasBinanceApr(row: FlexibleProductRow | undefined): row is FlexibleProd
   latestAnnualPercentageRate: string | number;
 } {
   if (!row || row.latestAnnualPercentageRate === undefined || row.latestAnnualPercentageRate === null) return false;
-  const apr = typeof row.latestAnnualPercentageRate === "number"
-    ? row.latestAnnualPercentageRate
-    : Number.parseFloat(row.latestAnnualPercentageRate);
+  const apr = parseBinanceApr(row.latestAnnualPercentageRate);
   return Number.isFinite(apr) && apr >= 0;
 }
 
-function finiteOptional(value: string | number | undefined) {
-  if (value === undefined || value === null || value === "") return undefined;
-  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value));
-  return Number.isFinite(parsed) ? parsed : undefined;
+function finiteOptional(value: string | number | null | undefined) {
+  return parseExchangeNumber(value);
 }
 
-function positiveNumber(value: string | number | undefined) {
+function positiveNumber(value: string | number | null | undefined) {
   const parsed = finiteOptional(value);
   return parsed !== undefined && parsed > 0 ? parsed : undefined;
 }
 
-function parseBinanceApr(value: string | number | undefined) {
-  const parsed = finiteOptional(value);
+function parseBinanceApr(value: string | number | null | undefined) {
+  const explicitPercent = typeof value === "string" && value.trim().endsWith("%");
+  const parsed = parseExchangeNumber(value, { allowPercentSuffix: true });
   if (parsed === undefined || parsed < 0) return Number.NaN;
   // Binance normally returns a decimal fraction (for example 0.0673), but
-  // tolerate percentage-form responses as well.
-  return parsed <= 1 ? parsed * 100 : parsed;
+  // percentage-form responses are already percentages.
+  return explicitPercent ? parsed : parsed <= 1 ? parsed * 100 : parsed;
 }
 
-function timestampIso(value: string | number | undefined) {
+function timestampIso(value: string | number | null | undefined) {
   const timestamp = finiteOptional(value);
   return timestamp !== undefined && timestamp > 0 ? new Date(timestamp).toISOString() : undefined;
 }

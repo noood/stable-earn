@@ -960,7 +960,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingPosit
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
     {!editing && manualTerm && <ProductFact label="活动期限" value={durationDays ? formatTerm(durationDays) : "待填写"} />}
     {sourceText && <ProductMeta text={sourceText} danger={Boolean(rateFallbackAt || product.capacitySource === "cache")} />}
-    {incompleteText && <ProductMeta text={incompleteText} danger={holding > 0 || (apiManaged && productInfoIssues.some((issue) => issue === "首档额度待确认" || issue === "阶梯额度待确认"))} />}
+    {incompleteText && <ProductMeta text={incompleteText} danger={product.rateCoverage === "partial" || holding > 0 || (apiManaged && productInfoIssues.some((issue) => issue === "首档额度待确认" || issue === "阶梯额度待确认"))} />}
     {editing && (manualApr || manualLimit || manualTerm || manualProductTerm || (productNeedsPurchaseDate(product) && Boolean(durationDays))) && <div className="manual-fields">
       {manualLimit && <ManualLimitInput value={manualSettings?.firstTierLimit ?? null} asset={product.asset} disabled={saving} onChange={(firstTierLimitValue) => onOverrideChange({ firstTierLimit: firstTierLimitValue })} />}
       {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
@@ -1008,6 +1008,13 @@ function rateHeadlineFor(product: Product, apiManaged: boolean) {
   }
   if (product.rateCoverage === "max_only") {
     return { label: "官网最高", value: `最高 ${firstTier?.apr.toFixed(2) ?? "0.00"}%` };
+  }
+  if (product.rateCoverage === "partial") {
+    return {
+      label: firstTier ? `${capacityName} · ${tierLabel(firstTier.min, firstTier.max)}` : "档位范围待确认",
+      value: `${firstTier?.apr.toFixed(2) ?? "0.00"}%`,
+      muted: true,
+    };
   }
   if (product.rateCoverage === "base_only" || (apiManaged && firstTier?.max === null && firstTier.maxStatus !== "unlimited")) {
     return { label: apiManaged ? `${capacityName} · 上限待确认` : `${capacityName}额度待填写`, value: `${firstTier?.apr.toFixed(2) ?? "0.00"}%` };

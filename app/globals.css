@@ -618,7 +618,7 @@ input:focus-visible,
 .product-history-trigger:hover,
 .product-history-trigger[aria-expanded="true"] { background: var(--surface-subtle); color: var(--text-primary); }
 .product-history-dot { position: absolute; top: .4rem; right: .4rem; display: block; box-sizing: border-box; width: .5rem; height: .5rem; flex: 0 0 .5rem; border: 1px solid var(--surface); border-radius: 50%; background: var(--danger-text); }
-.product-history-popover { position: fixed; z-index: 50; width: max-content; min-width: 15rem; max-width: calc(100vw - 1.5rem); max-height: min(22rem, calc(100vh - 1.5rem)); overflow: auto; padding: var(--space-4); }
+.product-history-popover { position: fixed; z-index: 50; width: max-content; min-width: 15rem; max-width: calc(100vw - 1.5rem); max-height: min(22rem, calc(100vh - 1.5rem)); overflow: auto; overscroll-behavior: contain; padding: var(--space-4); }
 .product-history-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); border-bottom: var(--hairline) solid var(--border); padding-bottom: var(--space-3); }
 .product-history-title { margin: 0; color: var(--text-muted); font-size: var(--type-micro); font-weight: 400; line-height: var(--leading-micro); letter-spacing: .08em; text-transform: uppercase; }
 .product-history-empty { margin: var(--space-4) 0 var(--space-1); color: var(--text-secondary); font-size: var(--type-caption); }
@@ -685,6 +685,7 @@ input:focus-visible,
   align-items: flex-end;
   justify-content: center;
   background: var(--overlay);
+  overscroll-behavior: contain;
 }
 .modal-panel {
   width: 100%;
@@ -705,7 +706,7 @@ input:focus-visible,
 .modal-close:hover:not(:disabled) { color: var(--text-primary); }
 .modal-close:disabled { cursor: not-allowed; opacity: .5; }
 .modal-close svg { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.7; }
-.modal-body { max-height: calc(90vh - 5rem); overflow-y: auto; padding: var(--space-5); }
+.modal-body { max-height: calc(90vh - 5rem); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-5); }
 .api-settings-body { height: min(40rem, calc(90vh - 5rem)); }
 .api-settings-split-row {
   display: grid;

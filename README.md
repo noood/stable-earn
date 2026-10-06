@@ -38,29 +38,50 @@ npm run test:e2e # 启动本地预览并运行 Playwright 浏览器检查
 
 ## 自托管部署
 
-生产部署需要：
+### 需要准备
 
-- Cloudflare Workers
-- Cloudflare D1
-- Cloudflare Access（保护 `/private/*`）
-- Cloudflare Queues（用于定时同步）
-- 只读权限的交易所 API Key
+- Cloudflare 账号，以及已登录的 Wrangler（`npx wrangler login`）。
+- 一个 D1 数据库，名称使用 `stablecoin-earn-monitor`。
+- 一个 Queue，名称使用 `stable-earn-sync`。
+- Cloudflare Access 应用，保护网站的 `/private/*` 路径。
+- 交易所只读 API Key；关闭交易、转账、申购、赎回和提现权限。
 
-部署配置使用以下环境变量和 Worker Secret。只提交变量名，不要提交真实值：
+### 第一次部署
+
+1. 在 Cloudflare 创建 D1 数据库和 Queue：
+
+```bash
+npx wrangler d1 create stablecoin-earn-monitor
+npx wrangler queues create stable-earn-sync
+```
+
+将 D1 返回的数据库 ID、Cloudflare 账号 ID、Access 团队域名和 Access 应用的 Audience 分别配置为私密环境变量：
 
 ```text
 CLOUDFLARE_ACCOUNT_ID
 D1_DATABASE_ID
 TEAM_DOMAIN
 POLICY_AUD
-CREDENTIAL_ENCRYPTION_KEY
 ```
 
-运行：
+这些值由 `npm run deploy` 生成部署配置时读取；生成的配置文件不会提交到 Git。
+
+2. 安装依赖并部署：
 
 ```bash
+npm ci
 npm run deploy
 ```
+
+3. 在 Cloudflare Worker 的 Settings → Variables and Secrets 中添加 `CREDENTIAL_ENCRYPTION_KEY` Secret。它必须是 **32 字节随机密钥的 Base64 编码**；例如可在本机用 `openssl rand -base64 32` 生成，再直接填入 Cloudflare Secret。不要把密钥写进代码、README、`.env.example` 或 GitHub Issue。之后确认 Access 已保护 `/private/*`，再开始使用应用。
+
+### 数据库说明
+
+第一次访问需要数据库的功能时，应用会自动创建缺少的数据表和索引。当前仓库没有版本化的 D1 迁移脚本：`CREATE TABLE IF NOT EXISTS` 不会替已有表添加或修改列。升级已有部署前，应先备份 D1，并逐项核对 `db/schema.ts` 与现有表结构；若结构有变化，先准备并验证对应的数据库迁移，再部署新代码。不要把生产数据库 ID 或数据提交到仓库。
+
+部署环境变量和 Worker Secret 只保存在本机私密环境或 Cloudflare，不要提交真实值。
+
+`wrangler.jsonc` 默认将 `SCHEDULED_SYNC_ENABLED` 设为 `false`，因此不会启用每日队列同步；每日首次打开和手动刷新仍可使用。若要启用定时同步，应先确认 Cloudflare Queues 已创建并绑定，再按自己的请求额度评估后修改该设置并重新部署。
 
 ## 安全
 

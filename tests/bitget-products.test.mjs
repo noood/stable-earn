@@ -17,6 +17,7 @@ test("Bitget keeps separate offers and assigns holdings by productId", async () 
         if (parsed.pathname.endsWith("/savings/assets")) {
           return JSON.stringify({ code: "00000", data: { resultList: [
             { productId: "bg-usdt-standard", productCoin: "USDT", periodType: "flexible", holdAmount: "300", productLevel: "normal", apy: [{ minApy: "0", maxApy: "300", currentApy: "8.06" }] },
+            { productId: "bg-usdt-open", productCoin: "USDT", periodType: "flexible", holdAmount: "0", productLevel: "normal", apy: [{ minApy: "0", maxApy: "300", currentApy: "8" }, { minApy: "300", currentApy: "3" }] },
             { productId: "bg-usdt-promo", productCoin: "USDT", periodType: "flexible", holdAmount: "0", productLevel: "normal", apy: [{ minApy: "0", maxApy: "100000", currentApy: "10" }] },
             { productId: "bg-usdt-vip-held", productCoin: "USDT", periodType: "flexible", holdAmount: "25", productLevel: "VIP", apy: [{ minApy: "0", maxApy: "1000", currentApy: "9" }] },
             { productId: "bg-usdt-vip-empty", productCoin: "USDT", periodType: "flexible", holdAmount: "0", productLevel: "VIP", apy: [{ minApy: "0", maxApy: "1000", currentApy: "9" }] },
@@ -29,6 +30,7 @@ test("Bitget keeps separate offers and assigns holdings by productId", async () 
         const rows = coin === "USDT"
           ? [
             { productId: "bg-usdt-standard", coin: "USDT", periodType: "flexible", status: "available", apyList: [{ minStepVal: "0", maxStepVal: "300", currentApy: "8.06" }] },
+            { productId: "bg-usdt-open", coin: "USDT", periodType: "flexible", status: "available", apyList: [{ minStepVal: "0", maxStepVal: "300", currentApy: "8" }, { minStepVal: "300", currentApy: "3" }] },
             { productId: "bg-usdt-promo", coin: "USDT", periodType: "flexible", status: "available", apyList: [{ minStepVal: "0", maxStepVal: "100000", currentApy: "10" }] },
             { productId: "bg-usdt-vip-held", coin: "USDT", periodType: "flexible", status: "available", productLevel: "VIP", apyList: [{ minStepVal: "0", maxStepVal: "1000", currentApy: "9" }] },
             { productId: "bg-usdt-vip-empty", coin: "USDT", periodType: "flexible", status: "available", productLevel: "VIP", apyList: [{ minStepVal: "0", maxStepVal: "1000", currentApy: "9" }] },
@@ -49,8 +51,14 @@ test("Bitget keeps separate offers and assigns holdings by productId", async () 
   const result = await fetchBitgetSavingsSnapshot({ apiKey: "key", apiSecret: "secret", passphrase: "pass" });
 
   const usdtRates = result.rates.filter((rate) => rate.catalog?.asset === "USDT");
-  assert.equal(usdtRates.length, 4);
-  assert.deepEqual(usdtRates.map((rate) => rate.externalProductId).sort(), ["bg-usdt-promo", "bg-usdt-standard", "bg-usdt-vip-held", "bg-usdt-vip-no-rate"]);
+  assert.equal(usdtRates.length, 5);
+  assert.deepEqual(usdtRates.map((rate) => rate.externalProductId).sort(), ["bg-usdt-open", "bg-usdt-promo", "bg-usdt-standard", "bg-usdt-vip-held", "bg-usdt-vip-no-rate"]);
+  const openEndedRate = usdtRates.find((rate) => rate.externalProductId === "bg-usdt-open");
+  assert.equal(openEndedRate.rateCoverage, "complete");
+  assert.deepEqual(openEndedRate.tiers, [
+    { min: 0, max: 300, apr: 8 },
+    { min: 300, max: null, apr: 3, maxStatus: "unlimited" },
+  ]);
   const vipRate = usdtRates.find((rate) => rate.externalProductId === "bg-usdt-vip-held");
   assert.equal(vipRate.eligibilityRequired, true);
   assert.equal(vipRate.eligibilityStatus, "unknown");
@@ -157,4 +165,114 @@ test("Bitget follows assets endId pagination before treating an absent offer as 
   assert.equal(result.sync.holdings, true);
   assert.equal(result.holdings["bitget-global:USDT:flexible:bg-usdt-standard"], 300);
   assert.equal(result.holdings["bitget-global:USDT:flexible:bg-usdt-promo"], 0);
+});
+
+test("Bitget labels single APY offers correctly and rejects a ladder with a missing range", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url }),
+      readExchangeText: async (response) => {
+        const parsed = new URL(response.url);
+        if (parsed.pathname.endsWith("/savings/assets")) {
+          return JSON.stringify({ code: "00000", data: { resultList: [], endId: "" } });
+        }
+        return JSON.stringify({ code: "00000", data: [
+          { productId: "single", coin: "USDT", periodType: "flexible", apyType: "single", status: "available", apyList: [{ rateLevel: "0", minStepVal: "0", maxStepVal: "1000", currentApy: "8" }] },
+          { productId: "gap", coin: "USDT", periodType: "flexible", apyType: "ladder", status: "available", apyList: [
+            { rateLevel: "0", minStepVal: "0", maxStepVal: "300", currentApy: "8" },
+            { rateLevel: "1", minStepVal: "400", maxStepVal: "1000", currentApy: "3" },
+          ] },
+          { productId: "open", coin: "USDT", periodType: "flexible", apyType: "ladder", status: "available", apyList: [
+            { rateLevel: "0", minStepVal: "0", maxStepVal: "300", currentApy: "8" },
+            { rateLevel: "1", minStepVal: "300", currentApy: "3" },
+          ] },
+          { productId: "explicit-open", coin: "USDT", periodType: "flexible", apyType: "ladder", status: "available", apyList: [
+            { rateLevel: "0", minStepVal: "0", maxStepVal: "-1", currentApy: "3" },
+          ] },
+          { productId: "bad-bound", coin: "USDT", periodType: "flexible", apyType: "ladder", status: "available", apyList: [
+            { rateLevel: "0", minStepVal: "0", maxStepVal: "not-a-number", currentApy: "3" },
+          ] },
+        ] });
+      },
+      readExchangeJson: async () => ({ code: "00000", data: { serverTime: "1" } }),
+      logExchangePayload: () => {},
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { probeBitgetAssets } = load("@/lib/integrations/bitget");
+  const [result] = await probeBitgetAssets({ apiKey: "key", apiSecret: "secret", passphrase: "pass" }, ["USDT"]);
+
+  assert.equal(result.productApi.status, "partial");
+  assert.equal(result.productApi.rows.find((row) => row.productId === "single").rateShape, "single_rate");
+  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "single").tiers, [{ min: 0, max: 1000, apr: 8 }]);
+  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "gap").tiers, []);
+  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "open").tiers, [
+    { min: 0, max: 300, apr: 8 },
+    { min: 300, max: null, apr: 3, maxStatus: "unlimited" },
+  ]);
+  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "explicit-open").tiers, [
+    { min: 0, max: null, apr: 3, maxStatus: "unlimited" },
+  ]);
+  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "bad-bound").tiers, []);
+});
+
+test("Bitget marks a single-rate product with multiple APY rows as partial", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url }),
+      readExchangeText: async (response) => {
+        const parsed = new URL(response.url);
+        if (parsed.pathname.endsWith("/savings/assets")) {
+          return JSON.stringify({ code: "00000", data: { resultList: [], endId: "" } });
+        }
+        return JSON.stringify({ code: "00000", data: [
+          { productId: "shape-mismatch", coin: "USDT", periodType: "flexible", apyType: "single", status: "available", apyList: [
+            { rateLevel: "0", minStepVal: "0", maxStepVal: "300", currentApy: "8" },
+            { rateLevel: "1", minStepVal: "300", maxStepVal: "1000", currentApy: "3" },
+          ] },
+        ] });
+      },
+      readExchangeJson: async () => ({ code: "00000", data: { serverTime: "1" } }),
+      logExchangePayload: () => {},
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { probeBitgetAssets } = load("@/lib/integrations/bitget");
+  const [result] = await probeBitgetAssets({ apiKey: "key", apiSecret: "secret", passphrase: "pass" }, ["USDT"]);
+
+  assert.equal(result.productApi.status, "partial");
+  const product = result.productApi.rows.find((row) => row.productId === "shape-mismatch");
+  assert.equal(product.rateShape, "no_rate");
+  assert.deepEqual(product.tiers, []);
+});
+
+test("Bitget treats null APR as missing and rejects numeric prefixes", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url, text: async () => "" }),
+      readExchangeText: async (response) => {
+        const parsed = new URL(response.url);
+        if (parsed.pathname.endsWith("/savings/assets")) {
+          return JSON.stringify({ code: "00000", data: { resultList: [], endId: "" } });
+        }
+        return JSON.stringify({ code: "00000", data: [
+          { productId: "null-apr", coin: "USDT", periodType: "flexible", apyType: "single", status: "available", apyList: [{ minStepVal: "0", maxStepVal: "1000", currentApy: null }] },
+          { productId: "malformed-apr", coin: "USDT", periodType: "flexible", apyType: "single", status: "available", apyList: [{ minStepVal: "0", maxStepVal: "1000", currentApy: "8abc" }] },
+          { productId: "null-open-boundary", coin: "USDT", periodType: "flexible", apyType: "ladder", status: "available", apyList: [{ minStepVal: "0", maxStepVal: null, currentApy: "3" }] },
+        ] });
+      },
+      readExchangeJson: async () => ({ code: "00000", data: { serverTime: "1" } }),
+      logExchangePayload: () => {},
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { probeBitgetAssets } = load("@/lib/integrations/bitget");
+  const [result] = await probeBitgetAssets({ apiKey: "key", apiSecret: "secret", passphrase: "pass" }, ["USDT"]);
+
+  assert.equal(result.productApi.status, "partial");
+  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "null-apr").tiers, []);
+  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "malformed-apr").tiers, []);
+  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "null-open-boundary").tiers, [
+    { min: 0, max: null, apr: 3, maxStatus: "unlimited" },
+  ]);
 });

@@ -7,9 +7,9 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "vinext dev",
+    "dev": "vinext dev --host localhost --port 3000 --strictPort",
     "build": "vinext build",
-    "start": "vinext start",
+    "start": "vinext start --hostname localhost --port 3000",
     "deploy": "node scripts/deploy.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "tsc --noEmit",

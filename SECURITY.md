@@ -4,9 +4,7 @@
 
 请不要在公开 issue、讨论区或 pull request 中提交漏洞细节、API Key、Secret、Access 配置或个人数据。
 
-截至 2026-10-05，只读检查确认 `noood/stable-earn` 尚未启用 GitHub 私下漏洞报告。另截至 2026-10-03，仓库所有者公开资料没有列出电子邮箱或网站。维护者公开征集报告前，应先启用该功能或在此补充经过确认的私下联系方式。当前本文件尚未提供可直接提交漏洞细节的私下渠道；请勿在公开 issue、讨论区或 pull request 中披露漏洞细节。报告时尽量包含：
-
-维护者可在仓库 GitHub 页面进入 **Settings → Security → Code security and analysis → Private vulnerability reporting → Enable** 开启私下报告；需要有仓库管理权限。开启后，到仓库 **Security** 页面确认出现 **Report a vulnerability** 入口，并再更新本文件中的状态说明。
+仓库已启用 GitHub 私下漏洞报告。请前往仓库的 **Security** 页面，使用 **Report a vulnerability** 私下提交漏洞详情；不要在公开 issue、讨论区或 pull request 中披露漏洞细节。报告时尽量包含：
 
 - 受影响的版本或提交；
 - 可复现步骤；

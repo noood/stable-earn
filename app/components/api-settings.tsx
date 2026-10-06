@@ -26,6 +26,7 @@ type PreferencesResult = { manualRefreshCooldownMinutes: ManualRefreshCooldownMi
 type CapabilityReport = {
   generatedAt: string;
   dataChangesCommitted: false;
+  cooldownRecorded?: boolean;
   includesHoldingAmounts: false;
   checkedScopeCount: number;
   checkedItemCount: number;
@@ -217,6 +218,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
         result = {
           generatedAt: new Date().toISOString(),
           dataChangesCommitted: false,
+          cooldownRecorded: true,
           includesHoldingAmounts: false,
           checkedScopeCount: 56,
           checkedItemCount: 112,
@@ -301,19 +303,6 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
   return (
     <ModalFrame ariaLabel="API 设置" title="API 设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-8">
       <section>
-        <div className="api-settings-split-row">
-          <SectionIntro title="手动刷新频率" description="仅限制手动刷新；当天首次打开页面时仍会自动更新。设置同步至此邮箱所有设备。" />
-          <div className="cooldown-options" role="radiogroup" aria-label="手动刷新冷却时间" aria-busy={cooldownMinutes === null || savingCooldown}>
-            {([{ value: 0, label: "无" }, { value: 30, label: "30 分钟" }] as const).map((option) => (
-              <button key={option.value} type="button" role="radio" aria-checked={cooldownMinutes === option.value} className="cooldown-option" disabled={cooldownMinutes === null || savingCooldown} onClick={() => void updateCooldown(option.value)}>
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-      {message && <div className="muted-panel type-caption px-3 py-2.5 font-normal">{message}</div>}
-      <section>
         <SectionIntro title="配置 API" description="Key 和 Secret 由服务器加密保存；完整密钥不会返回浏览器。" />
         {statusError && <div className="error-panel type-caption mb-3 px-3 py-2.5" role="alert">配置状态读取失败，请重试。<ActionButton variant="text" size="small" onClick={() => { setStatusError(false); void loadStatus(); }}>重试</ActionButton></div>}
         <div className="api-connection-list">
@@ -348,6 +337,19 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
           })}
         </div>
       </section>
+      {message && <div className="muted-panel type-caption px-3 py-2.5 font-normal">{message}</div>}
+      <section>
+        <div className="api-settings-split-row">
+          <SectionIntro title="手动刷新频率" description="仅限制手动刷新；当天首次打开页面时仍会自动更新。设置同步至此邮箱所有设备。" />
+          <div className="cooldown-options" role="radiogroup" aria-label="手动刷新冷却时间" aria-busy={cooldownMinutes === null || savingCooldown}>
+            {([{ value: 0, label: "无" }, { value: 30, label: "30 分钟" }] as const).map((option) => (
+              <button key={option.value} type="button" role="radio" aria-checked={cooldownMinutes === option.value} className="cooldown-option" disabled={cooldownMinutes === null || savingCooldown} onClick={() => void updateCooldown(option.value)}>
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
       <section>
         <div className="api-settings-split-row">
           <SectionIntro title="API 检测" description="只读检查已知接口，不写入产品、持仓或历史；报告不含持仓金额或密钥。OKX On-chain Earn 单独检查。" />
@@ -371,7 +373,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
               && apiCheckState.downloadable
               && !rateLimitDetected
               && capabilityReport.requestSafety?.stopReason == null && <>
-              <ActionButton variant="text" size="small" onClick={downloadCapabilityReport}>下载 JSON（{new Date(capabilityReport.generatedAt).toLocaleDateString("zh-CN")}）</ActionButton>
+              <ActionButton variant="text" size="small" onClick={downloadCapabilityReport}>下载 JSON · {new Date(capabilityReport.generatedAt).toLocaleDateString("zh-CN")}</ActionButton>
             </>}
           </div>
         </div>
@@ -383,7 +385,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
         {!rateLimitDetected && capabilityReport?.requestSafety && <p className="type-caption text-muted mt-3" role="status">
           {capabilityReport.requestSafety.stopReason === "request_limit"
             ? `已达到单次 ${capabilityReport.requestSafety.requestLimit} 次请求的保护上限，后续探测已停止；本报告可能不完整。`
-            : `本次最多同时发出 ${capabilityReport.requestSafety.concurrencyLimit} 次只读请求，共发出 ${capabilityReport.requestSafety.requestsStarted} 次。`}
+            : `最多 ${capabilityReport.requestSafety.concurrencyLimit} 个只读请求同时进行；本次共发起 ${capabilityReport.requestSafety.requestsStarted} 个请求。`}
         </p>}
         {apiCheckState.error && <p className="error-panel type-caption mt-3 px-3 py-2" role="alert">{apiCheckState.error}</p>}
       </section>

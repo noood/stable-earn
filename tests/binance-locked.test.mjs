@@ -34,6 +34,9 @@ test("Binance locked snapshot maps available products and held positions", async
   assert.ok(Math.abs(result.rates[0].apr - 6.73) < 1e-9);
   assert.equal(result.rates[0].tiers[0].min, 0);
   assert.equal(result.rates[0].tiers[0].max, 1000);
+  assert.equal(result.rates[0].subscriptionMaximum, 1000);
+  assert.equal(result.rates[0].subscriptionMaximumStatus, "limited");
+  assert.equal(result.rates[0].subscriptionMaximumSource, "api");
   assert.ok(Math.abs(result.rates[0].tiers[0].apr - 6.73) < 1e-9);
   assert.equal(result.holdings["USDT001"], undefined);
   assert.equal(result.holdings["api:binance-global:USDT:USDT001"], 123.45);
@@ -42,6 +45,26 @@ test("Binance locked snapshot maps available products and held positions", async
   assert.equal(result.positions[0].accountId, "binance-global");
   assert.equal(result.productListComplete, true);
   assert.equal(result.positionListComplete, true);
+});
+
+test("a Binance locked single-rate product with no returned quota is treated as unlimited", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), path: new URL(url).pathname, text: async () => "{}" }),
+      readExchangeJson: async (response) => response.path.endsWith("/locked/list")
+        ? { total: 1, rows: [{ projectId: "USDC001", detail: { asset: "USDC", apr: "0.02", duration: 7 } }] }
+        : { total: 0, rows: [] },
+    },
+  });
+  const { fetchBinanceLockedSnapshot } = load("@/lib/integrations/binance");
+  const result = await fetchBinanceLockedSnapshot({ apiKey: "key", apiSecret: "secret" }, "global", ["USDC"]);
+
+  assert.equal(result.rates[0].rateCoverage, "complete");
+  assert.deepEqual(result.rates[0].tiers, [{ min: 0, max: null, apr: 2, maxStatus: "unlimited" }]);
+  assert.equal(result.rates[0].subscriptionMaximum, null);
+  assert.equal(result.rates[0].subscriptionMaximumStatus, "unlimited");
+  assert.equal(result.rates[0].subscriptionMaximumSource, "not_returned");
+  assert.equal(result.rates[0].capacitySource, undefined);
 });
 
 test("Binance locked snapshot fetches past the first page before marking products complete", async () => {

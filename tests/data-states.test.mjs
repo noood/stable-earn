@@ -13,7 +13,7 @@ const { localPrivateProductsPreview, localSyncScenarioPreview } = load("@/lib/lo
 const base = localPrivateProductsPreview().products.find((p) => p.id === "bn-g-usdt");
 
 test("product completeness and holdings remain independent", () => {
-  for (const rateCoverage of ["unavailable", "base_only", "max_only"]) {
+  for (const rateCoverage of ["unavailable", "base_only", "max_only", "partial"]) {
     const product = { ...base, rateCoverage };
     assert.ok(productInformationIssues(product).length);
     assert.equal(productParticipatesInInterest(product, 100), false);
@@ -88,6 +88,23 @@ test("high-yield remaining sums unused capacity from every APR-qualified tier", 
   assert.equal(totalHighYieldRemaining([unknown, finite], { finite: 40 }, () => true), 60);
   assert.equal(totalHighYieldRemaining([unknown, finite], { finite: 40 }, (item) => item.id !== "finite"), 0);
   assert.equal(totalHighYieldRemaining([unknown, unlimited], {}, () => false), Number.POSITIVE_INFINITY);
+});
+
+test("partial tier coverage preserves known rates but excludes whole-product calculations", () => {
+  const partial = {
+    ...base,
+    rateCoverage: "partial",
+    tiers: [
+      { min: 0, max: 300, apr: 8 },
+      { min: 300, max: 1000, apr: 3 },
+    ],
+  };
+
+  assert.deepEqual(productInformationIssues(partial), ["阶梯结构不完整"]);
+  assert.equal(productParticipatesInInterest(partial, 1500), false);
+  assert.equal(remainingHighYield(partial, 1500), 0);
+  assert.equal(totalHighYieldRemaining([partial], { [partial.id]: 1500 }, () => true), 0);
+  assert.equal(bestAvailableFirstTierProduct([partial], { [partial.id]: 0 }, () => true), null);
 });
 
 test("maturity history uses one resolved date instead of a before/after pair", () => {

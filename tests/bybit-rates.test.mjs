@@ -31,10 +31,49 @@ test("Bybit public flexible APR keeps all product IDs and each complete tier lad
                   { min: "200", max: "-1", estimateApr: "2.44%" },
                 ],
               }, {
+                productId: "partial-finite-limit",
+                coin,
+                status: "Available",
+                estimateApr: "2%",
+                maxStakeAmount: "2000",
+                tierAprDetails: [{ min: "0", max: "1000", estimateApr: "7%" }],
+              }, {
+                productId: "partial-unlimited-limit",
+                coin,
+                status: "Available",
+                estimateApr: "2%",
+                maxStakeAmount: "-1",
+                tierAprDetails: [{ min: "0", max: "1000", estimateApr: "7%" }],
+              }, {
+                productId: "partial-unreadable-limit",
+                coin,
+                status: "Available",
+                estimateApr: "2%",
+                maxStakeAmount: "unknown",
+                tierAprDetails: [{ min: "0", max: "1000", estimateApr: "7%" }],
+              }, {
                 productId: "unknown-cap",
                 coin,
                 status: "Available",
                 tierAprDetails: [{ min: "0", estimateApr: "7%" }],
+              }, {
+                productId: "unreadable-product-cap",
+                coin,
+                status: "Available",
+                estimateApr: "2%",
+                maxStakeAmount: "unknown",
+                tierAprDetails: [{ min: "0", estimateApr: "7%" }],
+              }, {
+                productId: "malformed-product-cap",
+                coin,
+                status: "Available",
+                estimateApr: "2%",
+                maxStakeAmount: "1000abc",
+              }, {
+                productId: "malformed-product-apr",
+                coin,
+                status: "Available",
+                estimateApr: "2%oops",
               }]
               : [
                 {
@@ -76,10 +115,124 @@ test("Bybit public flexible APR keeps all product IDs and each complete tier lad
     { min: 200, max: null, apr: 2.44, maxStatus: "unlimited" },
   ]);
   const unknown = result.rates.find((item) => item.externalProductId === "unknown-cap");
-  assert.deepEqual(unknown?.tiers, [{ min: 0, max: null, apr: 7 }]);
+  assert.equal(unknown.rateCoverage, "complete");
+  assert.deepEqual(unknown.tiers, [{ min: 0, max: null, apr: 7, maxStatus: "unlimited" }]);
+  const unreadableCap = result.rates.find((item) => item.externalProductId === "unreadable-product-cap");
+  assert.equal(unreadableCap.rateCoverage, "partial");
+  assert.deepEqual(unreadableCap.tiers, [{ min: 0, max: null, apr: 2 }]);
+  const malformedCap = result.rates.find((item) => item.externalProductId === "malformed-product-cap");
+  assert.equal(malformedCap.rateCoverage, "complete");
+  assert.equal(malformedCap.subscriptionMaximum, null);
+  assert.equal(malformedCap.subscriptionMaximumStatus, "unreadable");
+  assert.deepEqual(malformedCap.tiers, [{ min: 0, max: null, apr: 2 }]);
+  assert.equal(result.rates.some((item) => item.externalProductId === "malformed-product-apr"), false);
+  assert.equal(result.partials.includes("Bybit.com USDC 公共 APR"), true);
   assert.equal(rate.capacitySource, "live");
   assert.ok(rate.capacityFetchedAt);
+  for (const productId of ["partial-finite-limit", "partial-unlimited-limit", "partial-unreadable-limit"]) {
+    const partialRate = result.rates.find((item) => item.externalProductId === productId);
+    assert.equal(partialRate.rateCoverage, "partial");
+    assert.deepEqual(partialRate.tiers, [{ min: 0, max: 1000, apr: 7 }]);
+  }
   assert.ok(result.rates.find((item) => item.identityKey === "bybit-eu:USDT:flexible:eu-usdt"));
+});
+
+test("Bybit treats null tier boundaries as omitted, but rejects malformed APR text", () => {
+  const load = moduleLoader();
+  const { parseBybitFlexibleTiers } = load("@/lib/integrations/bybit");
+
+  const open = parseBybitFlexibleTiers([{ min: "0", max: null, estimateApr: "7%" }]);
+  assert.equal(open.complete, true);
+  assert.deepEqual(open.tiers, [{ min: 0, max: null, apr: 7, maxStatus: "unlimited", maxSource: "api" }]);
+
+  const malformed = parseBybitFlexibleTiers([{ min: "0", max: "-1", estimateApr: "7%oops" }]);
+  assert.equal(malformed.complete, false);
+  assert.deepEqual(malformed.tiers, []);
+});
+
+test("Bybit can use a returned product maximum only to fill a missing final tier boundary", () => {
+  const load = moduleLoader();
+  const { parseBybitFlexibleTiers } = load("@/lib/integrations/bybit");
+  const tiers = [
+    { min: "0", max: "200", estimateApr: "7%" },
+    { min: "200", estimateApr: "2%" },
+  ];
+
+  assert.deepEqual(parseBybitFlexibleTiers(tiers, 1000), {
+    tiers: [
+      { min: 0, max: 200, apr: 7, maxSource: "api" },
+      { min: 200, max: 1000, apr: 2, maxSource: "product_limit" },
+    ],
+    complete: true,
+    hasTiers: true,
+  });
+  assert.deepEqual(parseBybitFlexibleTiers(tiers), {
+    tiers: [
+      { min: 0, max: 200, apr: 7, maxSource: "api" },
+      { min: 200, max: null, apr: 2, maxStatus: "unlimited", maxSource: "api" },
+    ],
+    complete: true,
+    hasTiers: true,
+  });
+  assert.equal(parseBybitFlexibleTiers(tiers, 100).complete, false);
+  assert.equal(parseBybitFlexibleTiers(tiers, undefined, true).complete, false);
+
+  const finiteKnownTiers = [
+    { min: "0", max: "300", estimateApr: "8%" },
+    { min: "300", max: "1000", estimateApr: "3%" },
+  ];
+  for (const productMaximum of [2000, -1]) {
+    const schedule = parseBybitFlexibleTiers(finiteKnownTiers, productMaximum);
+    assert.equal(schedule.complete, false);
+    assert.deepEqual(schedule.tiers.map(({ min, max, apr }) => ({ min, max, apr })), [
+      { min: 0, max: 300, apr: 8 },
+      { min: 300, max: 1000, apr: 3 },
+    ]);
+  }
+  assert.equal(parseBybitFlexibleTiers([
+    { min: "0", max: "300", estimateApr: "8%" },
+    { min: "300", max: "-1", estimateApr: "3%" },
+  ], -1).complete, true);
+
+});
+
+test("Bybit fixed scan marks known tiers partial when the product limit extends beyond them", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url }),
+      readExchangeJson: async () => ({ retCode: 0, result: { list: [
+        { productId: "fixed-finite-limit", coin: "USDT", duration: "7d", maxStakeAmount: "2000", tieredApyList: [{ min: "0", max: "1000", apy: "7%" }] },
+        { productId: "fixed-unlimited-limit", coin: "USDC", duration: "7d", maxStakeAmount: "-1", tieredApyList: [{ min: "0", max: "1000", apy: "7%" }] },
+        { productId: "fixed-unreadable-limit", coin: "USDGO", duration: "7d", maxStakeAmount: "unknown", tieredApyList: [{ min: "0", max: "1000", apy: "7%" }] },
+        { productId: "fixed-covered", coin: "BTC", duration: "7d", maxStakeAmount: "-1", tieredApyList: [{ min: "0", max: "-1", apy: "7%" }] },
+        { productId: "fixed-no-limit", coin: "USDGO", duration: "30d", tieredApyList: [{ min: "0", apy: "6%" }] },
+        { productId: "fixed-fill-from-total", coin: "USDT", duration: "30d", maxStakeAmount: "2000", tieredApyList: [{ min: "0", max: "500", apy: "8%" }, { min: "500", apy: "3%" }] },
+        { productId: "fixed-unreadable-open-limit", coin: "USDC", duration: "30d", maxStakeAmount: "unknown", tieredApyList: [{ min: "0", apy: "6%" }] },
+        { productId: "fixed-bad-tier-bound", coin: "BTC", duration: "30d", tieredApyList: [{ min: "0", max: "not-a-number", apy: "6%" }] },
+      ] } }),
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { scanBybitFixedProducts } = load("@/lib/integrations/bybit");
+  const result = await scanBybitFixedProducts("bybit-global");
+
+  assert.equal(result.rows.find((row) => row.externalProductId === "fixed-finite-limit@7d").rateCoverage, "partial");
+  assert.equal(result.rows.find((row) => row.externalProductId === "fixed-unlimited-limit@7d").rateCoverage, "partial");
+  assert.equal(result.rows.find((row) => row.externalProductId === "fixed-unreadable-limit@7d").rateCoverage, "partial");
+  assert.deepEqual(result.rows.find((row) => row.externalProductId === "fixed-unreadable-limit@7d").tiers, [{ min: 0, max: 1000, apy: 7 }]);
+  assert.equal(result.rows.find((row) => row.externalProductId === "fixed-covered@7d").rateCoverage, "complete");
+  const noLimit = result.rows.find((row) => row.externalProductId === "fixed-no-limit@30d");
+  assert.equal(noLimit.rateCoverage, "complete");
+  assert.deepEqual(noLimit.tiers, [{ min: 0, max: null, apy: 6, maxStatus: "unlimited" }]);
+  const filledFromTotal = result.rows.find((row) => row.externalProductId === "fixed-fill-from-total@30d");
+  assert.equal(filledFromTotal.rateCoverage, "complete");
+  assert.deepEqual(filledFromTotal.tiers, [{ min: 0, max: 500, apy: 8 }, { min: 500, max: 2000, apy: 3 }]);
+  const unreadableOpenLimit = result.rows.find((row) => row.externalProductId === "fixed-unreadable-open-limit@30d");
+  assert.equal(unreadableOpenLimit.rateCoverage, "partial");
+  assert.deepEqual(unreadableOpenLimit.tiers, [{ min: 0, max: null, apy: 6 }]);
+  const badTierBound = result.rows.find((row) => row.externalProductId === "fixed-bad-tier-bound@30d");
+  assert.equal(badTierBound.rateCoverage, "partial");
+  assert.deepEqual(badTierBound.tiers, [{ min: 0, max: null, apy: 6 }]);
 });
 
 test("Bybit EU fixed product probe checks the public endpoint once and distinguishes reused IDs by duration", async () => {
@@ -114,6 +267,41 @@ test("Bybit EU fixed product probe checks the public endpoint once and distingui
   assert.deepEqual(rows[0].tiers, [{ min: 0, max: 100, apy: 7 }]);
   assert.deepEqual(rows[1].tiers, [{ min: 0, max: null, apy: 4, maxStatus: "unlimited" }]);
   assert.equal(JSON.stringify(rows).includes("7%"), false);
+});
+
+test("Bybit fixed APY uses the product coin only and never sums other reward coins", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url }),
+      readExchangeJson: async () => ({ retCode: 0, result: { list: [
+        {
+          productId: "usdt-own-coin",
+          coin: "USDT",
+          duration: "7d",
+          status: "Available",
+          maxStakeAmount: "1000",
+          tieredApyList: [],
+          interestCoinApyList: [{ coin: "USDT", apy: "2%" }, { coin: "BTC", apy: "50%" }],
+        },
+        {
+          productId: "usdc-other-coin-only",
+          coin: "USDC",
+          duration: "7d",
+          status: "Available",
+          tieredApyList: [],
+          interestCoinApyList: [{ coin: "BTC", apy: "50%" }],
+        },
+      ] } }),
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { scanBybitFixedProducts } = load("@/lib/integrations/bybit");
+  const scan = await scanBybitFixedProducts("bybit-global");
+
+  assert.equal(scan.complete, false);
+  assert.equal(scan.rows.find((row) => row.coin === "USDT").apy, 2);
+  assert.deepEqual(scan.rows.find((row) => row.coin === "USDT").tiers, [{ min: 0, max: 1000, apy: 2 }]);
+  assert.equal(scan.rows.find((row) => row.coin === "USDC").rateShape, "no_rate");
 });
 
 test("Bybit flexible public scan follows advertised cursors and keeps later-page products", async () => {
@@ -327,7 +515,9 @@ test("Bybit capability probe can check any monitored flexible coin on global and
   assert.equal(globalRows[0].apr, 2.15);
   assert.equal(globalRows[0].minAmount, 1);
   assert.equal(globalRows[0].maxAmount, null);
-  assert.deepEqual(globalRows[0].tiers, [{ min: 0, max: null, apr: 2.15 }]);
+  assert.deepEqual(globalRows[0].tiers, [{ min: 0, max: null, apr: 2.15, maxStatus: "unlimited", maxSource: "api" }]);
+  assert.equal(globalRows[0].maxAmountStatus, "unlimited");
+  assert.equal(globalRows[0].maxAmountSource, "api");
   assert.equal(globalRows[1].rateShape, "single_rate");
   assert.equal(globalRows[1].tierCount, 0);
   assert.equal(globalRows[2].rateShape, "no_rate");

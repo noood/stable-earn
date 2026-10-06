@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
-function loadProbe() {
+function loadProbe({ malformedNumbers = false } = {}) {
   const accountId = (region) => region === "global" ? "binance-global" : "binance-bahrain";
   const load = moduleLoader({
     "@/lib/integrations/binance": {
@@ -11,22 +11,28 @@ function loadProbe() {
         const rates = assets.map((asset) => ({
           externalProductId: `bn-flex-${region}-${asset}`,
           apr: 6.4,
+          baseApr: 2.4,
+          bonusTiers: [{ min: 0, max: 300, apr: 4 }],
           rateShape: "tiered_rate",
           tiers: [{ min: 0, max: 300, apr: 6.4 }, { min: 300, max: null, apr: 3.1 }],
           minimumAmount: 1,
-          catalog: { asset },
+          productType: "flexible",
+          catalog: { asset, exchange: "binance" },
         }));
         const holdings = Object.fromEntries(rates.map((rate) => [`api:${account}:${rate.catalog.asset}:flexible:${rate.externalProductId}`, 123.456]));
         return { rates, holdings, productListsComplete: true, positionListsComplete: true, productApiStatus: "complete", positionApiStatus: "complete" };
       },
       fetchBinanceLockedSnapshot: async (_credential, region) => {
         const account = accountId(region);
-        const rates = ["USDT", "USDC", "USDGO", "BTC"].map((asset) => ({
+        const rates = ["USDT"].map((asset) => ({
           externalProductId: `bn-fixed-${region}-${asset}`,
           apr: 3.2,
           rateShape: "single_rate",
           tiers: [{ min: 0, max: 5000, apr: 3.2 }],
           minimumAmount: 10,
+          subscriptionMaximum: 5000,
+          subscriptionMaximumStatus: "limited",
+          subscriptionMaximumSource: "api",
           catalog: { asset },
         }));
         const positions = rates.map((rate) => ({
@@ -38,14 +44,24 @@ function loadProbe() {
       },
     },
     "@/lib/integrations/bitget": {
-      probeBitgetAssets: async (_credential, assets) => assets.map((asset) => ({
+      probeBitgetAssets: async (_credential, assets) => assets.map((asset) => {
+        const malformed = malformedNumbers && asset === "USDT";
+        return {
           asset,
           productApi: {
             status: "returned",
             rowCount: 2,
             eligibleFlexibleCount: 1,
             rows: [
-              { productId: `bg-flex-${asset}`, periodType: "flexible", eligibleForMonitoring: true, tiers: [{ min: 0, max: 300, apr: 7.79 }, { min: 300, max: null, apr: 3.13 }] },
+              {
+                productId: `bg-flex-${asset}`,
+                periodType: "flexible",
+                eligibleForMonitoring: true,
+                ...(malformed ? { apy: "7.79%", minAmount: "2%", maxAmount: "1000abc", productPoolRemainingAmount: "1,2" } : {}),
+                tiers: malformed
+                  ? [{ min: "0", max: "1,00", currentApy: "7.79%" }]
+                  : [{ min: 0, max: 300, apr: 7.79 }, { min: 300, max: null, apr: 3.13 }],
+              },
               { productId: `bg-fixed-${asset}`, periodType: "fixed", period: "7d", eligibleForMonitoring: false, tiers: [{ min: 0, max: 5000, apr: 2.5 }] },
             ],
           },
@@ -63,7 +79,8 @@ function loadProbe() {
             rowCount: 1,
             rows: [{ productId: `bg-fixed-${asset}`, periodType: "fixed", period: "7d", hasPositiveHolding: true, tiers: [] }],
           },
-        })),
+        };
+      }),
     },
     "@/lib/integrations/bybit": {
       bybitGlobalApiBases: ["https://api.bybit.com"],
@@ -105,7 +122,7 @@ function loadProbe() {
       probeBybitFixedHoldings: async () => [{ productId: "eu-fixed-1", coin: "USDC", duration: "90d", status: "InProgress", hasPositiveHolding: true }],
     },
     "@/lib/integrations/okx": {
-      fetchOkxSavingsHoldings: async () => ({ holdings: { "okx-usdt": 0 }, observedAssets: ["USDT", "USDGO"] }),
+      fetchOkxSavingsHoldings: async () => ({ holdings: {}, observedAssets: ["USDT", "USDGO"], invalidAssets: ["USDT"] }),
       fetchOkxOnchainOffers: async () => ({ byAsset: {
         USDT: { rowCount: 1, rows: [{ id: "offer-1", asset: "USDT", protocol: "Example Staking", protocolType: "staking", status: "available", term: "0", apy: "4.2" }] },
         USDC: { rowCount: 0, rows: [] }, USDGO: { rowCount: 0, rows: [] }, BTC: { rowCount: 0, rows: [] },
@@ -134,6 +151,7 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   const result = await probe(credentials);
   const json = JSON.stringify(result);
   assert.equal(result.dataChangesCommitted, false);
+  assert.equal(result.cooldownRecorded, false);
   assert.equal(result.includesHoldingAmounts, false);
   assert.equal(result.checkedScopeCount, 56);
   assert.equal(result.checkedItemCount, 112);
@@ -168,8 +186,18 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   assert.equal(check("binance-global", "BTC", "flexible", "product_apr").apiSupport, "支持");
   assert.equal(scope("binance-global", "USDT", "flexible").productApi.rows[0].rateShape, "tiered_rate");
   assert.equal(scope("binance-global", "USDT", "flexible").productApi.rows[0].tierCount, 2);
+  assert.equal(scope("binance-global", "USDT", "flexible").productApi.rows[0].apr, 6.4);
+  assert.equal(scope("binance-global", "USDT", "flexible").productApi.rows[0].tiers[0].apr, 6.4);
+  assert.equal(scope("binance-global", "USDT", "flexible").productApi.rows[0].rateCalculation, "base_plus_bonus");
+  assert.equal(scope("binance-global", "USDT", "flexible").productApi.rows[0].baseApr, 2.4);
+  assert.equal(scope("binance-global", "USDT", "flexible").productApi.rows[0].bonusTiers[0].apr, 4);
+  assert.equal("subscriptionMaximum" in scope("binance-global", "USDT", "flexible").productApi.rows[0], false);
   assert.equal(scope("binance-global", "USDT", "flexible").productApi.rateSummary.tieredRateRows, 1);
   assert.equal(scope("binance-global", "USDT", "fixed").productApi.rows[0].rateShape, "single_rate");
+  assert.equal(scope("binance-global", "USDT", "fixed").productApi.rows[0].subscriptionMaximum, 5000);
+  assert.equal(scope("binance-global", "USDT", "fixed").productApi.rows[0].subscriptionMaximumStatus, "limited");
+  assert.equal(scope("binance-global", "BTC", "fixed").productApi.status, "empty");
+  assert.equal(scope("binance-global", "BTC", "fixed").productApi.label, "没有返回该币种产品");
   assert.equal(scope("bybit-global", "USDGO", "flexible").productApi.status, "unsupported");
   assert.equal(scope("bybit-global", "USDGO", "flexible").holdingApi.status, "unsupported");
   assert.equal(check("bybit-global", "USDGO", "flexible", "product_apr").apiSupport, "不支持");
@@ -191,11 +219,13 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   assert.equal(scope("bitget-global", "USDT", "flexible").productApi.rows[0].rateShape, "tiered_rate");
   assert.equal(scope("bitget-global", "USDT", "flexible").productApi.rows[0].tierCount, 2);
   assert.equal("apy" in scope("bitget-global", "USDT", "flexible").productApi.rows[0], false);
+  assert.equal(scope("bitget-global", "USDT", "flexible").productApi.rows[0].tiers[0].apy, 7.79);
   assert.equal(scope("bitget-global", "USDT", "fixed").holdingApi.status, "checked");
   assert.equal(scope("bitget-global", "USDT", "fixed").holdingApi.rowCount, null);
   assert.deepEqual(scope("bitget-global", "USDT", "fixed").holdingApi.rows, []);
   assert.equal(scope("okx-global", "USDGO", "flexible").holdingApi.status, "unsupported");
   assert.equal(scope("okx-global", "USDT", "flexible").productApi.status, "unsupported");
+  assert.equal(scope("okx-global", "USDT", "flexible").holdingApi.status, "partial");
   assert.equal(check("binance-global", "USDT", "flexible", "product_apr").api.path, "/sapi/v1/simple-earn/flexible/list");
   assert.equal(check("binance-global", "USDT", "flexible", "holding").holdingEmptyMeansZero, "yes");
   assert.equal(check("okx-global", "USDT", "flexible", "holding").holdingEmptyMeansZero, "no");
@@ -203,7 +233,7 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   const okxOffers = result.additionalProbes.find((entry) => entry.id === "okx-onchain-earn-offers");
   assert.equal(okxOffers.assets.find((entry) => entry.asset === "USDT").status, "returned");
   assert.equal(okxOffers.assets.find((entry) => entry.asset === "USDT").rows[0].rateShape, "single_rate");
-  assert.equal("apy" in okxOffers.assets.find((entry) => entry.asset === "USDT").rows[0], false);
+  assert.equal(okxOffers.assets.find((entry) => entry.asset === "USDT").rows[0].apy, 4.2);
   assert.equal(okxOffers.assets.find((entry) => entry.asset === "USDC").status, "empty");
   assert.match(okxOffers.note, /不代表普通活期\/定期/);
   assert.equal(scope("mexc-ph", "USDT", "flexible").productApi.status, "unsupported");
@@ -223,6 +253,25 @@ test("capability probe returns all scopes without exposing holding amounts or cr
   assert.equal(unconfiguredBinanceHolding.apiSupport, "支持");
   const okxOffersWithoutCredential = withoutCredentials.additionalProbes.find((entry) => entry.id === "okx-onchain-earn-offers");
   assert.equal(okxOffersWithoutCredential.assets.every((entry) => entry.status === "not_configured"), true);
+});
+
+test("capability report accepts a trailing percent on APY but rejects malformed amounts", async () => {
+  const { probePlatformCapabilities: probe } = loadProbe({ malformedNumbers: true });
+  const credentials = Object.fromEntries([
+    "binance-global", "binance-bahrain", "bybit-global", "bitget-global", "okx-global",
+  ].map((accountId) => [accountId, { apiKey: "key", apiSecret: "secret", passphrase: "pass" }]));
+  const result = await probe(credentials);
+  const row = result.checks.find((entry) => (
+    entry.accountId === "bitget-global" && entry.asset === "USDT" && entry.productType === "flexible" && entry.item === "product_apr"
+  )).result.rows[0];
+
+  assert.equal(row.apy, 7.79);
+  assert.equal(row.tiers[0].apy, 7.79);
+  assert.equal(row.tiers[0].max, null);
+  assert.equal("subscriptionMinimum" in row, false);
+  assert.equal(row.subscriptionMaximum, null);
+  assert.equal(row.subscriptionMaximumStatus, "unreadable");
+  assert.equal("productPoolRemaining" in row, false);
 });
 
 test("API support follows reviewed endpoint capability, not account response contents", () => {

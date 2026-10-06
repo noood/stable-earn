@@ -88,10 +88,12 @@ test("rate-limited capability checks enter a short per-user cooldown", async () 
     report: { requestSafety: { stopReason: "rate_limited" }, checkedItemCount: 112 },
   });
   const first = await post(request());
+  const firstBody = await first.json();
   const second = await post(request());
   const secondBody = await second.json();
 
   assert.equal(first.status, 200);
+  assert.equal(firstBody.cooldownRecorded, true);
   assert.equal(second.status, 429);
   assert.match(second.headers.get("Retry-After"), /^60$/);
   assert.match(secondBody.error, /触发了平台限流/);

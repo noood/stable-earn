@@ -3,6 +3,7 @@ import { probeBitgetAssets } from "@/lib/integrations/bitget";
 import { bybitGlobalApiBases, fetchBybitFlexibleHoldings, scanBybitFixedHoldings, scanBybitFixedProducts, scanBybitFlexibleProducts } from "@/lib/integrations/bybit";
 import { fetchOkxOnchainOffers, fetchOkxSavingsHoldings } from "@/lib/integrations/okx";
 import { withCapabilityProbeRequestGuard } from "@/lib/exchange-fetch";
+import { parseExchangeNumber } from "@/lib/exchange-number";
 import type { LiveRate } from "@/lib/live-rates";
 import { apiAssetsFor, availableApiAssetsFor, capabilityApiReference, monitoredAssets, platformCapabilities, type CapabilityProductType, type PlatformApiMode } from "@/lib/platform-capabilities";
 import { collectSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
@@ -19,6 +20,20 @@ type SafeApiRow = {
   duration?: string;
   tierCount?: number;
   rateShape?: RateShape;
+  apr?: number;
+  apy?: number;
+  baseApr?: number;
+  bonusTiers?: Array<{ min: number; max: number; apr: number }>;
+  tiers?: Array<{ min: number; max: number | null; apr?: number; apy?: number; maxStatus?: "unlimited"; maxSource?: "api" | "product_limit" }>;
+  rateCalculation?: "base_plus_bonus" | "direct";
+  tierScheduleComplete?: boolean;
+  subscriptionMinimum?: number;
+  subscriptionMaximum?: number | null;
+  subscriptionMaximumStatus?: "limited" | "unlimited" | "not_returned" | "unreadable";
+  subscriptionMaximumSource?: "api" | "not_returned";
+  productPoolRemaining?: number;
+  apyType?: string;
+  limitFieldsComplete?: boolean;
   eligibleForMonitoring?: boolean;
   isVip?: boolean;
   specialUserGroupRequired?: boolean;
@@ -73,6 +88,7 @@ const reportIdLimit = 40;
  * holdings, cache entries, or history.
  */
 export async function probePlatformCapabilities(credentials: Partial<Record<string, ProbeCredential>>) {
+  const generatedAt = new Date().toISOString();
   const credentialReady = (accountId: string) => {
     const credential = credentials[accountId];
     if (!credential?.apiKey || !credential.apiSecret) return false;
@@ -130,7 +146,7 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
       rows,
       ...(!isPrivateHolding ? { rateSummary: summarizeRateShapes(allRows) } : {}),
       complete: result.complete ?? (status === "returned" || status === "empty" || status === "checked"),
-      checkedAt: new Date().toISOString(),
+      checkedAt: generatedAt,
       ...(result.note ? { note: result.note } : {}),
     };
   };
@@ -160,6 +176,17 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
                 ...(row.status ? { status: row.status } : {}),
                 ...(row.tierCount !== undefined ? { tierCount: row.tierCount } : {}),
                 rateShape: row.rateShape ?? (row.tiers?.length ? "tiered_rate" : row.apr !== undefined || row.apy !== undefined ? "single_rate" : "no_rate"),
+                ...(row.apr !== undefined ? { apr: row.apr } : {}),
+                ...(row.apy !== undefined ? { apy: row.apy } : {}),
+                ...(row.tiers ? { tiers: row.tiers } : {}),
+                ...(row.minAmount !== undefined ? { subscriptionMinimum: row.minAmount } : {}),
+                ...(row.maxAmount !== undefined ? { subscriptionMaximum: row.maxAmount } : {}),
+                ...(row.maxAmountStatus ? { subscriptionMaximumStatus: row.maxAmountStatus } : {}),
+                ...(row.maxAmountSource ? { subscriptionMaximumSource: row.maxAmountSource } : {}),
+                ...(row.productPoolRemainingAmount !== undefined ? { productPoolRemaining: row.productPoolRemainingAmount } : {}),
+                ...(row.tierScheduleComplete !== undefined ? { tierScheduleComplete: row.tierScheduleComplete } : {}),
+                ...(row.limitFieldsComplete !== undefined ? { limitFieldsComplete: row.limitFieldsComplete } : {}),
+                rateCalculation: "direct" as const,
               })),
               rowCount: scan.rowCount,
               complete: scan.complete,
@@ -188,6 +215,12 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
                 duration: row.duration,
                 tierCount: row.tierCount,
                 rateShape: row.rateShape ?? (row.tierCount > 0 ? "tiered_rate" : row.apy !== undefined ? "single_rate" : "no_rate"),
+                ...(row.apy !== undefined ? { apy: row.apy } : {}),
+                ...(row.tiers ? { tiers: row.tiers } : {}),
+                ...(row.minAmount !== undefined ? { subscriptionMinimum: row.minAmount } : {}),
+                ...(row.maxAmount !== undefined ? { subscriptionMaximum: row.maxAmount } : {}),
+                ...(row.maxAmount !== undefined ? { subscriptionMaximumStatus: row.maxAmount === null ? "unlimited" as const : "limited" as const } : {}),
+                rateCalculation: "direct" as const,
                 isVip: row.isVip,
                 specialUserGroupRequired: row.specialUserGroupRequired,
               })),
@@ -381,11 +414,14 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
           const result = await fetchOkxSavingsHoldings(okxCredentials);
           for (const asset of availableApiAssetsFor("okx-global", "flexible", "holdingApi")) {
             const present = result.observedAssets.includes(asset);
+            const unreadableAmount = result.invalidAssets?.includes(asset) ?? false;
             setResult("okx-global", asset, "flexible", "holdingApi", {
-              status: present ? "returned" : "empty",
+              status: unreadableAmount ? "partial" : present ? "returned" : "empty",
               ids: present ? [asset] : [],
               rowCount: present ? 1 : 0,
-              note: "余额接口；只报告币种是否出现，不报告金额。",
+              note: unreadableAmount
+                ? "返回了该币种，但余额字段无法读取；未据此更新持仓金额。"
+                : "余额接口；只报告币种是否出现，不报告金额。",
             });
           }
         } catch {
@@ -434,8 +470,9 @@ export async function probePlatformCapabilities(credentials: Partial<Record<stri
   for (const record of captured) applyCapturedRecord(record, setResult);
   const checks = buildCapabilityChecks(scopes);
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     dataChangesCommitted: false,
+    cooldownRecorded: false,
     includesHoldingAmounts: false,
     checkedScopeCount: checks.length / 2,
     checkedItemCount: checks.length,
@@ -691,14 +728,15 @@ function initialApi(mode: PlatformApiMode, dailySyncEnabled: boolean, credential
   };
 }
 
-function statusLabel(status: ProbeStatus, rowCount: number) {
+function statusLabel(status: ProbeStatus, _rowCount: number) {
+  void _rowCount;
   switch (status) {
     case "unsupported": return "项目没有可用接口";
     case "not_configured": return "未配置";
     case "not_checked": return "未检查";
     case "checked": return "接口调用成功；账户结果不公开";
-    case "returned": return `有数据（${rowCount} 条）`;
-    case "empty": return "成功但空";
+    case "returned": return "有数据";
+    case "empty": return "没有返回该币种产品";
     case "partial": return "部分返回";
     case "error": return "请求失败";
   }
@@ -726,10 +764,17 @@ function applyCapturedRecord(
       const entries = rows(record[key]);
       const complete = record[completeKey] === true;
       const rowCount = typeof record[countKey] === "number" ? record[countKey] as number : entries.length;
+      const reportRows = field === "productApi"
+        ? entries.map((entry) => ({
+          ...entry,
+          apr: typeof entry.apr === "number" ? entry.apr : rows(entry.tiers)[0]?.apr,
+          rateCalculation: "base_plus_bonus",
+        }))
+        : entries;
       setResult(accountId, asset, "flexible", field, {
         status: complete ? rowCount ? "returned" : "empty" : "partial",
         ids: entries.flatMap((entry) => strings(entry.productId)),
-        rows: sanitizeApiRows(entries, "productId", field === "holdingApi"),
+        rows: sanitizeApiRows(reportRows, "productId", field === "holdingApi"),
         rowCount,
         complete,
       });
@@ -843,8 +888,18 @@ function safeLiveRateRow(rate: LiveRate): SafeApiRow {
   const row: SafeApiRow = { id: rate.externalProductId ?? null };
   if (rate.availability) row.status = rate.availability;
   row.rateShape = rate.rateShape ?? (tierCount ? "tiered_rate" : hasBaseRate ? "single_rate" : "no_rate");
-  if (tierCount) row.tierCount = tierCount;
+  if (Number.isFinite(rate.apr)) row.apr = rate.apr;
+  if (Number.isFinite(rate.baseApr)) row.baseApr = rate.baseApr;
+  if (rate.bonusTiers?.length) row.bonusTiers = rate.bonusTiers.map((tier) => ({ ...tier }));
+  if (rate.tiers?.length) row.tiers = rate.tiers.map((tier) => ({ ...tier }));
+  row.rateCalculation = rate.catalog?.exchange === "binance" && rate.productType !== "fixed" ? "base_plus_bonus" : "direct";
+  if (rate.minimumAmount !== undefined) row.subscriptionMinimum = rate.minimumAmount;
   if (rate.termDays !== undefined) row.duration = String(rate.termDays);
+  if (rate.subscriptionMaximum !== undefined) row.subscriptionMaximum = rate.subscriptionMaximum;
+  if (rate.subscriptionMaximumStatus) row.subscriptionMaximumStatus = rate.subscriptionMaximumStatus;
+  if (rate.subscriptionMaximumSource) row.subscriptionMaximumSource = rate.subscriptionMaximumSource;
+  if (rate.productPoolRemaining !== undefined) row.productPoolRemaining = rate.productPoolRemaining;
+  if (tierCount) row.tierCount = tierCount;
   return row;
 }
 
@@ -879,11 +934,56 @@ function sanitizeApiRows(rows: Array<Record<string, unknown>>, idKey: string, ho
       const tierCount = countRateTiers(row);
       const tieredRateReturned = hasRateInTiers(row, rateKind);
       const baseRateReturned = [row.apr, row.estimateApr, row.apy, row.estimateApy, row.latestAnnualPercentageRate]
-        .some((value) => safeNumber(value) !== undefined);
+        .some((value) => safeRateNumber(value) !== undefined);
       if (tierCount !== undefined) safe.tierCount = tierCount;
       safe.rateShape = row.rateShape === "single_rate" || row.rateShape === "tiered_rate" || row.rateShape === "no_rate"
         ? row.rateShape
-        : tieredRateReturned ? "tiered_rate" : baseRateReturned ? "single_rate" : "no_rate";
+        : row.apyType === "single" ? "single_rate"
+          : row.apyType === "ladder" ? "tiered_rate"
+            : tieredRateReturned ? "tiered_rate" : baseRateReturned ? "single_rate" : "no_rate";
+      const apr = safeRateNumber(row.apr ?? row.estimateApr);
+      const apy = safeRateNumber(row.apy ?? row.estimateApy);
+      const baseApr = safeRateNumber(row.baseApr ?? row.baseAprPercent);
+      if (apr !== undefined && rateKind !== "apy") safe.apr = apr;
+      if (apy !== undefined) safe.apy = apy;
+      if (rateKind === "apy" && apy === undefined && apr !== undefined) safe.apy = apr;
+      if (baseApr !== undefined) safe.baseApr = baseApr;
+      if (row.rateCalculation === "base_plus_bonus" || row.rateCalculation === "direct") safe.rateCalculation = row.rateCalculation;
+      else safe.rateCalculation = "direct";
+      const tiers = sanitizeRateTiers(row, rateKind) ?? [];
+      if (tiers.length) safe.tiers = tiers;
+      if (Array.isArray(row.bonusTiers)) {
+        safe.bonusTiers = row.bonusTiers.flatMap((value) => {
+          if (!value || typeof value !== "object") return [];
+          const tier = value as Record<string, unknown>;
+          const min = safeNumber(tier.min);
+          const max = safeNumber(tier.max);
+          const bonusApr = safeRateNumber(tier.apr);
+          return min !== undefined && max !== undefined && bonusApr !== undefined ? [{ min, max, apr: bonusApr }] : [];
+        });
+      }
+      const minAmount = safeNumber(row.subscriptionMinimum ?? row.minAmount ?? row.minStakeAmount ?? row.minimumAmount);
+      if (minAmount !== undefined) safe.subscriptionMinimum = minAmount;
+      const hasMaxAmount = Object.hasOwn(row, "subscriptionMaximum") || Object.hasOwn(row, "maxAmount") || Object.hasOwn(row, "maxStakeAmount");
+      const rawMaxAmount = Object.hasOwn(row, "subscriptionMaximum") ? row.subscriptionMaximum
+        : Object.hasOwn(row, "maxAmount") ? row.maxAmount : row.maxStakeAmount;
+      const parsedMaxAmount = safeNumber(rawMaxAmount);
+      if (hasMaxAmount) {
+        safe.subscriptionMaximum = parsedMaxAmount === -1 ? null : parsedMaxAmount ?? null;
+        safe.subscriptionMaximumSource = row.subscriptionMaximumSource === "not_returned" || row.maxAmountSource === "not_returned" ? "not_returned" : "api";
+        safe.subscriptionMaximumStatus = row.subscriptionMaximumStatus === "not_returned" || row.maxAmountStatus === "not_returned"
+          ? "not_returned"
+          : row.subscriptionMaximumStatus === "unlimited" || row.maxAmountStatus === "unlimited" || parsedMaxAmount === -1
+          ? "unlimited"
+          : row.subscriptionMaximumStatus === "unreadable" || row.maxAmountStatus === "unreadable" || parsedMaxAmount === undefined
+            ? "unreadable"
+            : "limited";
+      }
+      const poolRemaining = safeNumber(row.productPoolRemaining ?? row.productPoolRemainingAmount);
+      if (poolRemaining !== undefined) safe.productPoolRemaining = poolRemaining;
+      if (typeof row.tierScheduleComplete === "boolean") safe.tierScheduleComplete = row.tierScheduleComplete;
+      if (typeof row.limitFieldsComplete === "boolean") safe.limitFieldsComplete = row.limitFieldsComplete;
+      if (typeof row.apyType === "string") safe.apyType = row.apyType;
     }
     if (typeof row.eligibleForMonitoring === "boolean") safe.eligibleForMonitoring = row.eligibleForMonitoring;
     if (typeof row.isVip === "boolean") safe.isVip = row.isVip;
@@ -899,6 +999,8 @@ function countRateTiers(row: Record<string, unknown>) {
       ? row.tierAprDetails
       : Array.isArray(row.tieredApyList)
         ? row.tieredApyList
+        : Array.isArray(row.apyList)
+          ? row.apyList
         : Array.isArray(row.tierAnnualPercentageRate)
           ? row.tierAnnualPercentageRate
           : row.tierAnnualPercentageRate && typeof row.tierAnnualPercentageRate === "object"
@@ -914,23 +1016,50 @@ function hasRateInTiers(row: Record<string, unknown>, rateKind?: "apr" | "apy") 
       ? row.tierAprDetails
       : Array.isArray(row.tieredApyList)
         ? row.tieredApyList
+        : Array.isArray(row.apyList)
+          ? row.apyList
         : Array.isArray(row.tierAnnualPercentageRate)
           ? row.tierAnnualPercentageRate
         : [];
   return raw.some((value) => {
     if (!value || typeof value !== "object") return false;
     const tier = value as Record<string, unknown>;
-    const apr = safeNumber(tier.apr ?? tier.estimateApr);
-    const apy = safeNumber(tier.apy ?? tier.estimateApy ?? tier.currentApy);
+    const apr = safeRateNumber(tier.apr ?? tier.estimateApr);
+    const apy = safeRateNumber(tier.apy ?? tier.estimateApy ?? tier.currentApy ?? (rateKind === "apy" ? tier.apr : undefined));
     return rateKind === "apy" ? apy !== undefined || apr !== undefined : apr !== undefined || apy !== undefined;
   });
 }
 
+function sanitizeRateTiers(row: Record<string, unknown>, rateKind?: "apr" | "apy"): SafeApiRow["tiers"] {
+  const raw = Array.isArray(row.tiers) ? row.tiers
+    : Array.isArray(row.tierAprDetails) ? row.tierAprDetails
+      : Array.isArray(row.tieredApyList) ? row.tieredApyList
+        : Array.isArray(row.apyList) ? row.apyList
+          : [];
+  return raw.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const tier = value as Record<string, unknown>;
+    const min = safeNumber(tier.min ?? tier.minStepVal);
+    const rawMax = safeNumber(tier.max ?? tier.maxStepVal);
+    const apr = safeRateNumber(tier.apr ?? tier.estimateApr);
+    const apy = safeRateNumber(tier.apy ?? tier.estimateApy ?? tier.currentApy ?? (rateKind === "apy" ? tier.apr : undefined));
+    if (min === undefined || (apr === undefined && apy === undefined)) return [];
+    return [{
+      min,
+      max: rawMax === -1 ? null : rawMax ?? null,
+      ...(rateKind === "apy" ? (apy !== undefined ? { apy } : {}) : apr !== undefined ? { apr } : {}),
+      ...(tier.maxStatus === "unlimited" || rawMax === -1 ? { maxStatus: "unlimited" as const } : {}),
+      ...(tier.maxSource === "api" || tier.maxSource === "product_limit" ? { maxSource: tier.maxSource } : {}),
+    }];
+  });
+}
+
 function safeNumber(value: unknown): number | undefined {
-  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  const parsed = Number(value.replaceAll(",", "").replaceAll("%", ""));
-  return Number.isFinite(parsed) ? parsed : undefined;
+  return parseExchangeNumber(value, { allowThousandsSeparators: true });
+}
+
+function safeRateNumber(value: unknown): number | undefined {
+  return parseExchangeNumber(value, { allowPercentSuffix: true, allowThousandsSeparators: true });
 }
 
 function summarizeRateShapes(rows: SafeApiRow[]) {

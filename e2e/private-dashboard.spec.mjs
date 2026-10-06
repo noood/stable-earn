@@ -123,7 +123,7 @@ test("a sync failure has a separate brand-colored manual refresh action", async 
     await refreshButton.click();
     const refreshRequest = await refreshRequestPromise;
     expect(refreshRequest.method()).toBe("POST");
-    expect(refreshRequest.headers().origin).toBe(new URL(refreshRequest.url()).origin);
+    expect((await refreshRequest.allHeaders()).origin).toBe(new URL(refreshRequest.url()).origin);
     await expect(refreshButton).toBeVisible();
   }
 });
@@ -240,6 +240,18 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await page.goto("/private?settings=api");
     const dialog = page.getByRole("dialog", { name: "API 设置" });
     await expect(dialog).toBeVisible();
+    const sectionHeadings = await dialog.locator(".api-settings-body h3").allTextContents();
+    expect(sectionHeadings.slice(0, 3)).toEqual(["配置 API", "手动刷新频率", "API 检测"]);
+    const modalBody = dialog.locator(".api-settings-body");
+    const modalBodyBox = await modalBody.boundingBox();
+    expect(modalBodyBox).not.toBeNull();
+    const pageScrollBeforeModalWheel = await page.evaluate(() => window.scrollY);
+    await modalBody.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await page.mouse.move(modalBodyBox.x + modalBodyBox.width / 2, modalBodyBox.y + modalBodyBox.height - 16);
+    await page.mouse.wheel(0, 500);
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(pageScrollBeforeModalWheel);
+    await expect(dialog).toBeVisible();
+    await modalBody.evaluate((element) => { element.scrollTop = 0; });
     const closeButton = dialog.getByRole("button", { name: "关闭" });
     await expect(closeButton).toHaveCSS("width", "32px");
     await expect(closeButton).toHaveCSS("height", "32px");
@@ -305,9 +317,9 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(completeCheckButton).toBeVisible();
     await expect(completeCheckButton).toHaveCSS("width", checkButtonWidth);
     await expect(completeCheckButton).toHaveCSS("height", checkButtonHeight);
-    const downloadButton = dialog.getByRole("button", { name: /下载 JSON（\d{4}\/\d{1,2}\/\d{1,2}）/ });
+    const downloadButton = dialog.getByRole("button", { name: /下载 JSON · \d{4}\/\d{1,2}\/\d{1,2}/ });
     await expect(downloadButton).toBeVisible();
-    await expect(dialog.getByRole("status")).toContainText("共发出 38 次");
+    await expect(dialog.getByRole("status")).toContainText("本次共发起 38 个请求");
     await downloadButton.hover();
     await expect(downloadButton).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await expect(completeCheckButton.locator(".api-check-success-icon")).toBeVisible();
@@ -334,7 +346,7 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await page.locator(".action-menu-trigger").click();
     await page.getByRole("button", { name: "API 设置" }).click();
     const reopenedDialog = page.getByRole("dialog", { name: "API 设置" });
-    await expect(reopenedDialog.getByRole("button", { name: /下载 JSON（\d{4}\/\d{1,2}\/\d{1,2}）/ })).toBeVisible();
+    await expect(reopenedDialog.getByRole("button", { name: /下载 JSON · \d{4}\/\d{1,2}\/\d{1,2}/ })).toBeVisible();
     await reopenedDialog.getByRole("button", { name: "关闭" }).click();
     await page.getByRole("button", { name: "编辑持仓" }).click();
     const tableApiSettings = page.locator(".table-toolbar-inline-action");
@@ -344,6 +356,27 @@ test("API settings modal keeps its three sections, truthful account copy, and re
   } finally {
     releaseReport();
   }
+});
+
+test("scrolling the product history popover at its boundary does not scroll the page or close it", async ({ page }) => {
+  await page.goto("/private?asset=USDT");
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+
+  const row = page.locator("tr.product-row").filter({ hasText: "Binance.com" }).first();
+  await row.getByRole("button", { name: /查看变更记录/ }).click();
+  const popover = page.getByRole("dialog", { name: "产品变更记录" });
+  await expect(popover).toBeVisible();
+  await expect.poll(() => popover.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+
+  const pageScrollBeforePopoverWheel = await page.evaluate(() => window.scrollY);
+  const popoverBox = await popover.boundingBox();
+  expect(popoverBox).not.toBeNull();
+  await popover.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await page.mouse.move(popoverBox.x + popoverBox.width / 2, popoverBox.y + popoverBox.height - 12);
+  await page.mouse.wheel(0, 500);
+
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(pageScrollBeforePopoverWheel);
+  await expect(popover).toBeVisible();
 });
 
 test("rate-limited API report explains partial results and shows a retry countdown", async ({ page }) => {

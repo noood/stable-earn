@@ -80,7 +80,7 @@ function fixture({ scheduledEnabled = true } = {}) {
     "@/lib/integrations/bybit": {},
     "@/lib/integrations/okx": { fetchOkxSavingsHoldings: async () => {
       if (mode === "error") throw Error("timeout");
-      return { holdings: { "okx-usdt": 0, "okx-usdc": 0, "okx-btc": 0 }, observedAssets: [] };
+      return { holdings: {}, observedAssets: [], invalidAssets: [] };
     } },
     "@/lib/product-catalog": {
       loadCatalogProducts: async () => [],
@@ -237,9 +237,9 @@ test("OKX coin-level balance is not used as product-scoped zero or archive evide
   await f.refresh();
   const catalogCall = f.catalogCalls.at(-1);
   assert.ok(catalogCall);
-  assert.equal(catalogCall[3]["okx-usdt"], 0);
-  assert.equal(catalogCall[3]["okx-usdc"], 0);
-  assert.equal(catalogCall[3]["okx-btc"], 0);
+  assert.equal(Object.hasOwn(catalogCall[3], "okx-usdt"), false);
+  assert.equal(Object.hasOwn(catalogCall[3], "okx-usdc"), false);
+  assert.equal(Object.hasOwn(catalogCall[3], "okx-btc"), false);
   assert.equal(catalogCall[5].some((scope) => scope.startsWith("okx-global:")), false);
 });
 

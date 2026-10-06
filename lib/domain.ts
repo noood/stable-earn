@@ -17,7 +17,7 @@ type Tier = {
   min: number;
   max: number | null;
   apr: number;
-  /** An API must explicitly report unlimited capacity; null alone is unknown. */
+  /** Set only after the platform adapter confirms this final tier is open-ended; null alone is unknown. */
   maxStatus?: "unlimited";
 };
 
@@ -27,7 +27,7 @@ type RateSource = {
   fetchedAt?: string;
 };
 
-export type RateCoverage = "complete" | "base_only" | "max_only" | "unavailable";
+export type RateCoverage = "complete" | "base_only" | "max_only" | "partial" | "unavailable";
 
 /** Result of the latest account-holding synchronization for an API product. */
 export type HoldingSyncState = "not_configured" | "synced" | "partial" | "error";

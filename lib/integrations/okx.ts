@@ -1,4 +1,5 @@
 import { exchangeFetch, readExchangeJson } from "@/lib/exchange-fetch";
+import { parseExchangeNumber } from "@/lib/exchange-number";
 
 type OkxCredentials = {
   apiKey: string;
@@ -9,7 +10,7 @@ type OkxCredentials = {
 
 type OkxSavingsRow = {
   ccy?: string;
-  amt?: string;
+  amt?: string | null;
   loanAmt?: string;
   pendingAmt?: string;
   redemptAmt?: string;
@@ -46,17 +47,23 @@ const okxApiBases = ["https://openapi.okx.com", "https://www.okx.com"] as const;
 
 export async function fetchOkxSavingsHoldings(credentials: OkxCredentials) {
   const body = await signedGet("/api/v5/finance/savings/balance", credentials);
-  const holdings: Record<string, number> = Object.fromEntries(
-    Object.values(productIds).map((productId) => [productId, 0]),
-  );
+  const holdings: Record<string, number> = {};
   const observedAssets = new Set<string>();
+  const invalidAssets = new Set<string>();
 
   for (const row of body.data ?? []) {
     if (row.ccy) observedAssets.add(row.ccy.toUpperCase());
     const productId = row.ccy ? productIds[row.ccy as keyof typeof productIds] : undefined;
-    if (productId) holdings[productId] = finiteNumber(row.amt);
+    if (!productId) continue;
+    const amount = parseExchangeNumber(row.amt);
+    if (amount === undefined || amount < 0) {
+      invalidAssets.add(row.ccy!.toUpperCase());
+      continue;
+    }
+    holdings[productId] = amount;
   }
-  return { holdings, observedAssets: [...observedAssets] };
+  for (const asset of invalidAssets) delete holdings[productIds[asset as keyof typeof productIds]];
+  return { holdings, observedAssets: [...observedAssets], invalidAssets: [...invalidAssets] };
 }
 
 /**
@@ -152,11 +159,6 @@ function bytesToBase64(bytes: Uint8Array) {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
-}
-
-function finiteNumber(value: string | number | undefined) {
-  const parsed = typeof value === "number" ? value : Number.parseFloat(value ?? "0");
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function safeIdentifier(value: string | number | undefined) {

@@ -35,6 +35,8 @@ test("private route serves a static shell and keeps account data client-loaded",
   const privateClient = readFileSync(new URL("../app/private/private-dashboard-client.tsx", import.meta.url), "utf8");
   const dashboard = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
   const history = readFileSync(new URL("../app/components/product-history.tsx", import.meta.url), "utf8");
+  const apiSettings = readFileSync(new URL("../app/components/api-settings.tsx", import.meta.url), "utf8");
+  const styles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(privatePage, /dynamic = "force-static"/);
   assert.match(privatePage, /<PrivateDashboardClient \/>/);
   assert.doesNotMatch(privatePage, /searchParams|<Dashboard/);
@@ -44,5 +46,8 @@ test("private route serves a static shell and keeps account data client-loaded",
   assert.match(dashboard, /loadHistoryPage=\{isDemo \|\| localPreview \? undefined/);
   assert.match(history, /product-history-loading/);
   assert.match(history, /暂无变更记录/);
+  assert.ok(apiSettings.indexOf('<SectionIntro title="配置 API"') < apiSettings.indexOf('<SectionIntro title="手动刷新频率"'));
+  assert.match(styles, /\.modal-body\s*\{[^}]*overscroll-behavior:\s*contain/s);
+  assert.match(styles, /\.product-history-popover\s*\{[^}]*overscroll-behavior:\s*contain/s);
   assert.match(dashboard, /const emptyHoldings: HoldingMap = \{\};/);
 });

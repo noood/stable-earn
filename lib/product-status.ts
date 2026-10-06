@@ -13,6 +13,7 @@ export type ProductInformationIssue =
   | "产品数据待获取"
   | "APR 待填写"
   | "阶梯结构待确认"
+  | "阶梯结构不完整"
   | "首档额度待填写"
   | "首档额度待确认"
   | "阶梯额度待确认"
@@ -38,6 +39,7 @@ export function productInformationIssues(
   if (product.rateCoverage === "unavailable" && apiManaged) return ["产品数据待获取"];
   if (product.rateCoverage === "unavailable") issues.push("APR 待填写");
   if (product.rateCoverage === "max_only") issues.push("阶梯结构待确认");
+  if (product.rateCoverage === "partial") issues.push("阶梯结构不完整");
   if (apiManaged && product.rateCoverage === "base_only") issues.push("首档额度待确认");
   if (apiManaged && product.rateCoverage === "complete" && productHasUnknownTierCapacity(product)) {
     issues.push(product.tiers[0]?.max == null && product.tiers[0].maxStatus !== "unlimited" ? "首档额度待确认" : "阶梯额度待确认");

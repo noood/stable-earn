@@ -35,7 +35,7 @@ test("Binance flexible complete empty responses remain a successful empty result
   assert.equal(routineResult.positionListsComplete, true);
 });
 
-test("Binance tier APR fields are final rates with only the API-reported quota ranges", async () => {
+test("Binance adds bonus APR to the base rate and continues at the base rate after bonus bands", async () => {
   const load = moduleLoader({
     "@/lib/exchange-fetch": {
       exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), path: new URL(url).pathname }),
@@ -62,14 +62,15 @@ test("Binance tier APR fields are final rates with only the API-reported quota r
 
   assert.equal(result.productApiStatus, "complete");
   assert.equal(result.positionApiStatus, "complete");
-  assert.equal(rate.apr, 5);
+  assert.equal(rate.apr, 10);
   assert.deepEqual(rate.tiers, [
-    { min: 0, max: 5, apr: 5 },
-    { min: 5, max: 10, apr: 3 },
+    { min: 0, max: 5, apr: 10 },
+    { min: 5, max: 10, apr: 8 },
+    { min: 10, max: null, apr: 5, maxStatus: "unlimited" },
   ]);
   assert.equal(rate.rateCoverage, "complete");
   assert.equal(productHasUnknownTierCapacity({ tiers: rate.tiers }), false);
-  assert.ok(Math.abs(effectiveApr({ tiers: rate.tiers }, 7) - (31 / 7)) < 1e-9);
+  assert.ok(Math.abs(effectiveApr({ tiers: rate.tiers }, 7) - (66 / 7)) < 1e-9);
   const product = {
     id: rate.productId,
     accountId: "binance-global",
@@ -88,6 +89,25 @@ test("Binance tier APR fields are final rates with only the API-reported quota r
   };
   assert.deepEqual(productInformationIssues(product), []);
   assert.equal(productParticipatesInInterest(product, 7), true);
+});
+
+test("a Binance base APR with no bonus bands is a complete single-rate schedule", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), path: new URL(url).pathname }),
+      readExchangeJson: async (response) => response.path.endsWith("/flexible/list")
+        ? { total: 1, rows: [{ asset: "USDC", productId: "base-only", latestAnnualPercentageRate: "0.02" }] }
+        : { total: 0, rows: [] },
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { fetchBinanceFlexibleSnapshot } = load("@/lib/integrations/binance");
+  const result = await fetchBinanceFlexibleSnapshot({ apiKey: "key", apiSecret: "secret" }, "global", ["USDC"]);
+
+  assert.equal(result.productApiStatus, "complete");
+  assert.equal(result.rates[0].apr, 2);
+  assert.equal(result.rates[0].rateCoverage, "complete");
+  assert.deepEqual(result.rates[0].tiers, [{ min: 0, max: null, apr: 2, maxStatus: "unlimited" }]);
 });
 
 test("Binance distinguishes a failed endpoint from a complete empty response", async () => {
@@ -203,9 +223,10 @@ test("Binance USDC tier diagnosis reads one product-list page only and redacts i
   assert.equal(result.rows[0].tierFieldState, "object");
   assert.equal(result.rows[0].tierScheduleIssue, "complete");
   assert.deepEqual(result.rows[0].tiers.map(({ rangeLabel, min, max, aprPercent }) => ({ rangeLabel, min, max, aprPercent })), [
-    { rangeLabel: "0-10000USDC", min: 0, max: 10000, aprPercent: 2.152679 },
-    { rangeLabel: "10000-50000USDC", min: 10000, max: 50000, aprPercent: 1.8 },
+    { rangeLabel: "0-10000USDC", min: 0, max: 10000, aprPercent: 4.305358 },
+    { rangeLabel: "10000-50000USDC", min: 10000, max: 50000, aprPercent: 3.952679 },
   ]);
+  assert.deepEqual(result.rows[0].tiers.map((tier) => tier.bonusAprPercent), [2.152679, 1.8]);
   assert.doesNotMatch(JSON.stringify(result), /private-product-id|secret-key|secret/);
 });
 
@@ -251,4 +272,25 @@ test("malformed Binance tier container makes product data partial instead of imp
   assert.equal(result.productApiStatus, "partial");
   assert.equal(result.rates[0].rateShape, "tiered_rate");
   assert.equal(result.rates[0].rateCoverage, "base_only");
+});
+
+test("Binance APR parser accepts a complete percent value and rejects trailing junk", async () => {
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url) => ({ ok: true, status: 200, headers: new Headers(), url, path: new URL(url).pathname }),
+      readExchangeJson: async (response) => response.path.endsWith("/flexible/list")
+        ? { total: 2, rows: [
+          { asset: "USDC", productId: "explicit-percent", latestAnnualPercentageRate: "2.5%" },
+          { asset: "USDC", productId: "malformed-percent", latestAnnualPercentageRate: "2.5%oops" },
+        ] }
+        : { total: 0, rows: [] },
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+  });
+  const { fetchBinanceFlexibleSnapshot } = load("@/lib/integrations/binance");
+  const result = await fetchBinanceFlexibleSnapshot({ apiKey: "key", apiSecret: "secret" }, "global", ["USDC"]);
+
+  assert.equal(result.productApiStatus, "partial");
+  assert.equal(result.rates.find((rate) => rate.externalProductId === "explicit-percent").apr, 2.5);
+  assert.equal(result.rates.find((rate) => rate.externalProductId === "malformed-percent").rateCoverage, "unavailable");
 });

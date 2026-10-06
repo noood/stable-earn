@@ -438,6 +438,13 @@ async function buildPrivatePayload(
     bitgetJob,
     okxJob,
   ]);
+  const okxInvalidAssets = okxResult.snapshot?.invalidAssets ?? [];
+  const okxStatus: PrivateStatus = okxResult.status === "synced" && okxInvalidAssets.length > 0
+    ? "partial"
+    : okxResult.status;
+  const okxDiagnostic = okxInvalidAssets.length > 0
+    ? `unreadable_balance:${okxInvalidAssets.join(",")}`
+    : okxResult.diagnostic;
   const publicRates = publicSnapshot.rates;
   const publicFailures = publicSnapshot.failures;
   const publicPartials = publicSnapshot.partials ?? [];
@@ -602,7 +609,7 @@ async function buildPrivatePayload(
     binanceBahrain: binanceBahrainStatus,
     bybitGlobal: bybitGlobalStatus,
     bitget: bitgetStatus,
-    okx: okxResult.status,
+    okx: okxStatus,
   };
   const holdingSyncStates = Object.fromEntries(catalog.products.flatMap((product) => {
     const state = productHoldingSyncState(product, privateStatus);
@@ -613,7 +620,7 @@ async function buildPrivatePayload(
     binanceBahrain: binanceBahrainDiagnostic,
     bybitGlobal: bybitGlobalDiagnostic,
     bitget: bitgetDiagnostic,
-    okx: okxResult.diagnostic,
+    okx: okxDiagnostic,
   };
   const configuredError = Object.values(privateStatus).some((status) => status === "error" || status === "partial");
   const holdingFallbacks = Object.fromEntries(Object.entries(cachedHoldingTimes(

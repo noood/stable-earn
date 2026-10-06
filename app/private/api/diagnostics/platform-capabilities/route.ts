@@ -66,6 +66,7 @@ export async function POST(request: Request) {
         Math.ceil(((persisted?.cooldown_until ?? cooldownUntil) - Date.now()) / 1000));
       return NextResponse.json({
         ...report,
+        cooldownRecorded: true,
         requestSafety: { ...report.requestSafety, retryAfterSeconds: effectiveCooldownSeconds },
       }, { headers: privateResponseHeaders });
     }

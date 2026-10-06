@@ -1,8 +1,9 @@
 import type { EligibilityStatus, Product, ProductAvailability, RateCoverage } from "@/lib/domain";
 import { buildPlatformProductIdentity } from "@/lib/product-identity";
+import { parseExchangeNumber } from "@/lib/exchange-number";
 import { syncDiagnostic } from "@/lib/sync-diagnostics";
 import { publicProductAssetsFor } from "@/lib/platform-capabilities";
-import { fetchBybitFlexibleProductRows, scanBybitFixedProducts } from "@/lib/integrations/bybit";
+import { fetchBybitFlexibleProductRows, parseBybitFlexibleTiers, scanBybitFixedProducts } from "@/lib/integrations/bybit";
 
 export type LiveRate = {
   productId: string;
@@ -14,6 +15,10 @@ export type LiveRate = {
   apr: number;
   /** Shape of the rate data returned by the product API, for diagnostics. */
   rateShape?: "single_rate" | "tiered_rate" | "no_rate";
+  /** Binance flexible base APR, before its optional bonus tiers. */
+  baseApr?: number;
+  /** Binance flexible bonus APR bands, kept separate from the final APR tiers. */
+  bonusTiers?: Array<{ min: number; max: number; apr: number }>;
   tierAprs?: number[];
   tiers?: Array<{ min: number; max: number | null; apr: number; maxStatus?: "unlimited" }>;
   fetchedAt: string;
@@ -21,6 +26,10 @@ export type LiveRate = {
   productType?: "flexible" | "fixed";
   termDays?: number;
   minimumAmount?: number;
+  subscriptionMaximum?: number | null;
+  subscriptionMaximumStatus?: "limited" | "unlimited" | "not_returned" | "unreadable";
+  subscriptionMaximumSource?: "api" | "not_returned";
+  productPoolRemaining?: number;
   subscriptionStartsAt?: string;
   subscriptionEndsAt?: string;
   availability?: ProductAvailability;
@@ -57,18 +66,21 @@ type BybitEndpoint = {
 type BybitFlexibleRow = {
   productId?: string;
   coin?: string;
-  estimateApr?: string | number;
-  estimateApy?: string | number;
-  apr?: string | number;
-  apy?: string | number;
-  bonusApr?: string | number;
-  extraApr?: string | number;
+  estimateApr?: string | number | null;
+  estimateApy?: string | number | null;
+  apr?: string | number | null;
+  apy?: string | number | null;
+  bonusApr?: string | number | null;
+  extraApr?: string | number | null;
   tierAprDetails?: Array<{
     min?: string | number | null;
     max?: string | number | null;
     estimateApr?: string | number | null;
     apr?: string | number | null;
+    estimateApy?: string | number | null;
+    apy?: string | number | null;
   }>;
+  maxStakeAmount?: string | number | null;
   status?: string;
   [key: string]: unknown;
 };
@@ -132,7 +144,7 @@ async function fetchBybitEuFixedRates(): Promise<{ rates: LiveRate[]; partial: b
       eligibilityRequired,
       eligibilityLabel: row.isVip ? "VIP 用户" : row.specialUserGroupRequired ? "需满足特殊用户组资格" : undefined,
       eligibilityStatus: eligibilityRequired ? "unknown" : undefined,
-      rateCoverage: tiers.length ? "complete" : "unavailable",
+      rateCoverage: row.rateCoverage ?? (tiers.length ? "complete" : "unavailable"),
       catalog: {
         accountId: "bybit-eu",
         exchange: "bybit",
@@ -202,8 +214,34 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
       for (const item of scopedCandidates) {
         const externalProductId = item.productId?.trim();
         if (!externalProductId) continue;
-        const baseApr = parsePercent(item.estimateApr);
-        const tiers = parseBybitTiers(item.tierAprDetails);
+        const rawMaximum = parseFiniteAmount(item.maxStakeAmount);
+        const productMaximumUnreadable = item.maxStakeAmount !== undefined
+          && (rawMaximum === undefined || (rawMaximum !== -1 && rawMaximum <= 0));
+        const baseApr = parsePercent(item.estimateApr ?? item.apr);
+        const tierSchedule = parseBybitFlexibleTiers(item.tierAprDetails, rawMaximum, productMaximumUnreadable);
+        const rateScheduleComplete = tierSchedule.complete && !(productMaximumUnreadable && tierSchedule.hasTiers);
+        if (!rateScheduleComplete || productMaximumUnreadable) missingRateCount += 1;
+        const productMaximum = rawMaximum !== undefined && rawMaximum > 0 ? rawMaximum : undefined;
+        const parsedTiers = tierSchedule.tiers.flatMap((tier) => {
+          const apr = tier.apr ?? tier.apy;
+          return apr === undefined ? [] : [{ min: tier.min, max: tier.max, apr, ...(tier.maxStatus ? { maxStatus: tier.maxStatus } : {}) }];
+        });
+        const tiers = parsedTiers.length > 0
+          ? productMaximum === undefined
+            ? parsedTiers
+            : parsedTiers.flatMap((tier) => {
+              if (tier.min >= productMaximum) return [];
+              const cappedTier = {
+                ...tier,
+                max: tier.max === null ? productMaximum : Math.min(tier.max, productMaximum),
+              };
+              delete cappedTier.maxStatus;
+              return [cappedTier];
+            })
+          : Number.isFinite(baseApr)
+            ? [{ min: 0, max: productMaximum ?? null, apr: baseApr,
+              ...(productMaximum === undefined && (item.maxStakeAmount === undefined || rawMaximum === -1) ? { maxStatus: "unlimited" as const } : {}) }]
+            : [];
         const apr = tiers[0]?.apr ?? baseApr;
         if (!Number.isFinite(apr)) { missingRateCount += 1; continue; }
         const identity = buildPlatformProductIdentity({
@@ -212,12 +250,16 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
           productType: "flexible",
           externalProductId,
         });
-        const hasLiveCapacity = tiers.some((tier) => tier.max !== null);
+        const hasLiveCapacity = tiers.some((tier) => tier.max !== null)
+          || (typeof item.remainingPoolAmount !== "undefined" && parseFiniteAmount(item.remainingPoolAmount) !== undefined);
+        const subscriptionMaximumStatus: NonNullable<LiveRate["subscriptionMaximumStatus"]> = item.maxStakeAmount === undefined
+          ? !tierSchedule.hasTiers ? "unlimited" : "not_returned"
+          : rawMaximum === -1 ? "unlimited" : rawMaximum === undefined ? "unreadable" : "limited";
         const rate: LiveRate = {
           productId: identity.identityKey,
           ...identity,
           apr,
-          rateShape: tiers.length > 0 ? "tiered_rate" : Number.isFinite(baseApr) ? "single_rate" : "no_rate",
+          rateShape: tierSchedule.hasTiers ? "tiered_rate" : Number.isFinite(baseApr) ? "single_rate" : "no_rate",
           ...(tiers.length > 0 ? { tiers } : {}),
           fetchedAt,
           sourceLabel: endpoint.label,
@@ -226,8 +268,12 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
             : item.status
               ? "unavailable"
               : "unknown",
-          rateCoverage: tiers.length > 0 ? "complete" : "base_only",
-          ...(hasLiveCapacity ? { capacitySource: "live" as const, capacityFetchedAt: fetchedAt } : {}),
+          rateCoverage: rateScheduleComplete ? "complete" : "partial",
+          subscriptionMaximum: rawMaximum === undefined || rawMaximum === -1 ? null : rawMaximum,
+          subscriptionMaximumStatus,
+          subscriptionMaximumSource: item.maxStakeAmount === undefined ? "not_returned" : "api",
+          ...(parseFiniteAmount(item.remainingPoolAmount) !== undefined ? { productPoolRemaining: parseFiniteAmount(item.remainingPoolAmount) } : {}),
+          ...(hasLiveCapacity || productMaximum !== undefined ? { capacitySource: "live" as const, capacityFetchedAt: fetchedAt } : {}),
           catalog: {
             accountId: endpoint.accountId,
             exchange: "bybit",
@@ -276,27 +322,8 @@ function bybitRateScore(rate: LiveRate) {
     + Number(rate.rateCoverage === "complete");
 }
 
-function parseBybitTiers(details: BybitFlexibleRow["tierAprDetails"]) {
-  return (details ?? []).flatMap((detail) => {
-    const min = parseFiniteNumber(detail.min);
-    const rawMax = parseFiniteNumber(detail.max);
-    const max = rawMax === -1 ? null : rawMax;
-    const apr = parsePercentValue(detail.estimateApr ?? detail.apr);
-    if (!Number.isFinite(min) || !Number.isFinite(apr)) return [];
-    return [{ min, max: max !== null && Number.isFinite(max) && max > min ? max : null, apr,
-      ...(rawMax === -1 ? { maxStatus: "unlimited" as const } : {}) }];
-  }).sort((left, right) => left.min - right.min);
-}
-
-function parsePercentValue(value: string | number | null | undefined) {
-  if (typeof value === "number") return value;
-  return parsePercent(value ?? undefined);
-}
-
-function parseFiniteNumber(value: string | number | null | undefined) {
-  if (typeof value === "number") return value;
-  const parsed = Number.parseFloat((value ?? "").replaceAll(",", ""));
-  return parsed;
+function parseFiniteAmount(value: string | number | null | undefined) {
+  return parseExchangeNumber(value, { allowThousandsSeparators: true });
 }
 
 /**
@@ -323,6 +350,6 @@ function sanitizeBybitRateValue(value: unknown, depth = 0): unknown {
     .map(([key, nested]) => [key, sanitizeBybitRateValue(nested, depth + 1)]));
 }
 
-function parsePercent(value: string | number | undefined) {
-  return Number.parseFloat(String(value ?? "").replace("%", ""));
+function parsePercent(value: string | number | null | undefined) {
+  return parseExchangeNumber(value, { allowPercentSuffix: true }) ?? Number.NaN;
 }
