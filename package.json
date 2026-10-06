@@ -14,7 +14,9 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "test:file": "node --experimental-strip-types --test",
     "test:e2e": "playwright test",
+    "audit:security": "node scripts/audit-security.mjs",
     "verify": "npm run lint && npm run typecheck && npm test",
     "check": "npm run verify && npm run build"
   },

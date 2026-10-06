@@ -27,14 +27,23 @@ npm run dev
 常用检查：
 
 ```bash
-npm test       # 自动化测试
-npm run verify # lint、类型检查和测试
-npm run check  # verify 加生产构建
-npx playwright install chromium # 首次运行浏览器测试时安装 Chromium
-npm run test:e2e # 启动本地预览并运行 Playwright 浏览器检查
+# 日常改动：只跑相关测试和 lint，例如
+npm run test:file -- tests/data-states.test.mjs
+npx eslint lib/product-status.ts app/page.tsx
+
+# 提交前：全量 lint、类型检查和单元测试
+npm run verify
+
+# 发布前：再加生产构建、浏览器测试和并行依赖审计
+npm run check
+npm run test:e2e
+npm run audit:security
+
+# 首次运行浏览器测试时安装 Chromium
+npx playwright install chromium
 ```
 
-发布前核对范围见 [发布检查清单](docs/RELEASE-CHECKLIST.md)。浏览器测试只访问本地预览与模拟数据，不连接生产账号或 D1。
+端到端测试默认复用已经运行的 <http://localhost:3000>；该服务未运行时，Playwright 会自行启动。需要只跑部分浏览器测试时，可传入文件名或筛选条件，例如 `npm run test:e2e -- --grep "known quota|known first tier"`。发布前核对范围见 [发布检查清单](docs/RELEASE-CHECKLIST.md)。浏览器测试只访问本地预览与模拟数据，不连接生产账号或 D1。
 
 ## 自托管部署
 
