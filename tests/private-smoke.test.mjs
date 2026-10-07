@@ -85,6 +85,7 @@ test("private route serves a static shell and keeps account data client-loaded",
 test("remote product history does not show an empty result before its first page resolves", () => {
   const history = readFileSync(new URL("../app/components/product-history.tsx", import.meta.url), "utf8");
   assert.match(history, /initialHistoryLoadComplete/);
-  assert.match(history, /historyError \|\| \(loadPage && !initialHistoryLoadComplete\)/);
+  assert.match(history, /className="product-history-state"/);
+  assert.match(history, /loadPage && !initialHistoryLoadComplete\s*\?\s*null/);
   assert.match(history, /if \(isFirstInitialLoad\) setInitialHistoryLoadComplete\(true\)/);
 });

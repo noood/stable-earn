@@ -240,14 +240,18 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead, read
       >
         <div className="product-history-header"><p className="product-history-title">变更记录</p></div>
         {sortedEvents.length === 0
-          ? historyLoading && !initialHistoryLoadComplete
-            ? <div className="product-history-loading" role="status" aria-label="正在加载变更记录">
-              <span className="skeleton-block product-history-loading-line product-history-loading-line-primary" aria-hidden="true" />
-              <span className="skeleton-block product-history-loading-line product-history-loading-line-secondary" aria-hidden="true" />
-            </div>
-            : historyError || (loadPage && !initialHistoryLoadComplete)
-              ? null
-              : <p className="product-history-empty">暂无变更记录</p>
+          ? <div className="product-history-state">
+            {historyLoading && !initialHistoryLoadComplete
+              ? <div className="product-history-loading" role="status" aria-label="正在加载变更记录">
+                <span className="skeleton-block product-history-loading-line product-history-loading-line-primary" aria-hidden="true" />
+                <span className="skeleton-block product-history-loading-line product-history-loading-line-secondary" aria-hidden="true" />
+              </div>
+              : historyError
+                ? <ActionButton type="button" variant="text" className={`button-text-inline-action product-history-more product-history-state-action${historyLoading ? " product-history-loading-state" : " product-history-error"}`} aria-busy={historyLoading} disabled={historyLoading} onClick={() => void requestHistoryPage(nextCursor, nextCursor === null)}>{historyLoading ? "加载中…" : "加载失败，点击重试"}</ActionButton>
+                : loadPage && !initialHistoryLoadComplete
+                  ? null
+                  : <p className="product-history-empty">暂无变更记录</p>}
+          </div>
           : <ol className="product-history-list">{sortedEvents.map((event, index) => <li key={event.id} className="product-history-event">
             <span className={`product-history-node ${index === 0 ? "product-history-node-latest" : ""}`} aria-hidden="true" />
             <div className="product-history-event-copy">
@@ -255,7 +259,7 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead, read
               <p className="product-history-event-title"><span>{event.title}</span>{event.before !== undefined && event.after !== undefined && <span className="product-history-event-change"><span>{event.before}</span><span className="product-history-arrow" aria-hidden="true">→</span><strong>{event.after}</strong></span>}</p>
             </div>
           </li>)}</ol>}
-        {historyError && <ActionButton type="button" variant="text" className={`button-text-inline-action product-history-more${historyLoading ? " product-history-loading-state" : " product-history-error"}`} aria-busy={historyLoading} disabled={historyLoading} onClick={() => void requestHistoryPage(nextCursor, nextCursor === null)}>{historyLoading ? "加载中…" : "加载失败，点击重试"}</ActionButton>}
+        {historyError && sortedEvents.length > 0 && <ActionButton type="button" variant="text" className={`button-text-inline-action product-history-more${historyLoading ? " product-history-loading-state" : " product-history-error"}`} aria-busy={historyLoading} disabled={historyLoading} onClick={() => void requestHistoryPage(nextCursor, nextCursor === null)}>{historyLoading ? "加载中…" : "加载失败，点击重试"}</ActionButton>}
         {!historyError && nextCursor && <ActionButton type="button" variant="text" className="button-text-inline-action product-history-more" aria-busy={historyLoading} disabled={historyLoading} onClick={() => void requestHistoryPage(nextCursor, false)}>{historyLoading ? "加载中…" : "加载更早记录"}</ActionButton>}
       </div>,
       document.body,

@@ -785,13 +785,44 @@ test("empty local product history opens directly in its stable empty state", asy
   const dialog = page.getByRole("dialog", { name: "产品变更记录" });
   await expect(dialog.getByText("暂无变更记录")).toBeVisible();
   await expect(dialog.getByRole("status")).toHaveCount(0);
-  const gaps = await dialog.evaluate((popover) => {
-    const header = popover.querySelector(".product-history-header");
+  const emptyAlignment = await dialog.evaluate((popover) => {
+    const state = popover.querySelector(".product-history-state");
     const empty = popover.querySelector(".product-history-empty");
-    if (!header || !empty) throw new Error("History popover content missing");
-    return { top: header.offsetTop, bottom: popover.scrollHeight - empty.offsetTop - empty.offsetHeight };
+    if (!state || !empty) throw new Error("History popover content missing");
+    const stateRect = state.getBoundingClientRect();
+    const emptyRect = empty.getBoundingClientRect();
+    const headerRect = popover.querySelector(".product-history-header").getBoundingClientRect();
+    return {
+      stateHeight: stateRect.height,
+      minimumHeight: Number.parseFloat(getComputedStyle(state).minHeight),
+      centerOffset: Math.abs((stateRect.top + stateRect.height / 2) - (emptyRect.top + emptyRect.height / 2)),
+      centerFromHeader: emptyRect.top + emptyRect.height / 2 - headerRect.bottom,
+    };
   });
-  expect(gaps.top).toBe(gaps.bottom);
+  expect(emptyAlignment.stateHeight).toBe(emptyAlignment.minimumHeight);
+  expect(emptyAlignment.centerOffset).toBeCloseTo(2, 0);
+
+  await dialog.getByText("暂无变更记录").click();
+  await expect(dialog).toBeVisible();
+
+  const singleEventRow = page.getByRole("row").filter({ hasText: "Bitget" }).filter({ hasText: "持仓 300.00" });
+  await singleEventRow.getByRole("button", { name: /查看变更记录/ }).click();
+  const singleEventDialog = page.getByRole("dialog", { name: "产品变更记录" });
+  await expect(singleEventDialog.getByText("持仓变化")).toBeVisible();
+  const singleEventCenterFromHeader = await singleEventDialog.evaluate((popover) => {
+    const header = popover.querySelector(".product-history-header");
+    const copy = popover.querySelector(".product-history-event-copy");
+    if (!header || !copy) throw new Error("Single history event missing");
+    const headerRect = header.getBoundingClientRect();
+    const copyRect = copy.getBoundingClientRect();
+    return copyRect.top + copyRect.height / 2 - headerRect.bottom;
+  });
+  expect(Math.abs(singleEventCenterFromHeader - emptyAlignment.centerFromHeader)).toBeLessThan(1);
+
+  await singleEventDialog.locator(".product-history-event-copy").click();
+  await expect(singleEventDialog).toBeVisible();
+  await page.mouse.move(4, 4);
+  await expect(singleEventDialog).toHaveCount(0);
 });
 
 test("three local Bybit USDT products separately preview history failure, pagination, and more-page failure", async ({ page }) => {
@@ -802,6 +833,8 @@ test("three local Bybit USDT products separately preview history failure, pagina
   await initialFailureRow.getByRole("button", { name: "查看变更记录" }).hover();
   const dialog = page.getByRole("dialog", { name: "产品变更记录" });
   await expect(dialog.locator(".product-history-loading")).toBeVisible();
+  const loadingState = await dialog.locator(".product-history-state").boundingBox();
+  expect(loadingState).not.toBeNull();
 
   const retry = dialog.getByRole("button", { name: "加载失败，点击重试" });
   await expect(retry).toBeVisible();
@@ -814,7 +847,20 @@ test("three local Bybit USDT products separately preview history failure, pagina
   expect(dangerRgb).not.toBeNull();
   expect(errorStyle.color).toBe(`rgb(${parseInt(dangerRgb[1], 16)}, ${parseInt(dangerRgb[2], 16)}, ${parseInt(dangerRgb[3], 16)})`);
   expect(errorStyle.alignment).toBe("center");
-  expect(await retry.evaluate((button) => getComputedStyle(button).marginTop)).toBe("12px");
+  expect(await retry.evaluate((button) => getComputedStyle(button).marginTop)).toBe("4px");
+  const errorAlignment = await dialog.evaluate((popover) => {
+    const state = popover.querySelector(".product-history-state");
+    const action = state?.querySelector(".product-history-state-action");
+    if (!state || !action) throw new Error("Centered history error state missing");
+    const stateRect = state.getBoundingClientRect();
+    const actionRect = action.getBoundingClientRect();
+    return {
+      stateHeight: stateRect.height,
+      centerOffset: Math.abs((stateRect.top + stateRect.height / 2) - (actionRect.top + actionRect.height / 2)),
+    };
+  });
+  expect(errorAlignment.stateHeight).toBe(loadingState.height);
+  expect(errorAlignment.centerOffset).toBeCloseTo(2, 0);
   await retry.click();
   const retryLoading = dialog.getByRole("button", { name: "加载中…" });
   await expect(retryLoading).toBeDisabled();

@@ -97,6 +97,37 @@ test("fallback values do not create false product changes", () => {
   assert.deepEqual(events, []);
 });
 
+test("APR history records only first-tier changes and ignores later-tier-only changes", () => {
+  const snapshot = (firstApr, laterApr) => ({
+    rates: [{
+      productId: "bitget-usdc-ladder",
+      apr: firstApr,
+      tiers: [
+        { min: 0, max: 300, apr: firstApr },
+        { min: 300, max: 1_000_000, apr: laterApr },
+      ],
+    }],
+  });
+
+  assert.deepEqual(
+    buildSyncChangeEvents(snapshot(6.66, 1.73), snapshot(6.66, 1.36), "手动刷新", observedAt),
+    [],
+    "a change confined to the second tier does not create an APR event",
+  );
+
+  const firstTierChange = buildSyncChangeEvents(
+    snapshot(6.66, 1.73),
+    snapshot(6.5, 1.36),
+    "手动刷新",
+    observedAt,
+  );
+  assert.deepEqual(firstTierChange.map(({ title, before, after }) => ({ title, before, after })), [{
+    title: "首档 APR 下调",
+    before: "6.66%",
+    after: "6.50%",
+  }]);
+});
+
 test("an omitted quota is unknown, while an explicit unlimited quota is comparable", () => {
   const unknown = buildSyncChangeEvents(
     { rates: [{ productId: "api-usdt", apr: 6 }] },

@@ -78,13 +78,6 @@ export function buildSyncChangeEvents(
         after: formatApr(afterApr),
         attention: beforeApr >= minimumOpportunityApr && afterApr < minimumOpportunityApr,
       });
-    } else if (tierSummary(before) !== tierSummary(rate)) {
-      add(rate.productId, {
-        type: "rate",
-        title: "阶梯 APR 调整",
-        before: tierSummary(before),
-        after: tierSummary(rate),
-      });
     }
 
     // Some APIs omit quota fields entirely. Keep that unknown state separate
@@ -453,12 +446,6 @@ function eventId(observedAt: string, productId: string, sequence: number) {
 function primaryApr(rate: LiveRate) {
   const value = rate.tiers?.[0]?.apr ?? rate.apr;
   return Number.isFinite(value) ? value : null;
-}
-
-function tierSummary(rate: LiveRate) {
-  const tiers = rate.tiers ?? [];
-  if (tiers.length === 0) return formatApr(primaryApr(rate));
-  return tiers.map((tier) => formatApr(tier.apr)).join(" / ");
 }
 
 function firstTierCapacity(rate: LiveRate): number | null | undefined {
