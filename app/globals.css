@@ -645,7 +645,10 @@ input:focus-visible,
 .product-history-event-change { display: inline-flex; align-items: baseline; gap: .35rem; color: var(--text-secondary); font-weight: 400; }
 .product-history-event-change strong { color: var(--text-primary); font-weight: 600; }
 .product-history-arrow { color: var(--text-subtle); }
-.product-history-more { display: block; margin: var(--space-2) 0 0 calc(var(--history-node-size, 6px) + var(--space-3)); text-align: left; }
+.product-history-more { display: block; width: 100%; margin: var(--space-3) 0 0; text-align: center; }
+.button-text.product-history-error,
+.button-text.product-history-error:hover:not(:disabled) { color: var(--danger-text); }
+.button-text.product-history-loading-state { color: var(--text-muted); transition: none; }
 .product-history-more:disabled { cursor: progress; }
 
 .holding-column { min-width: 13.875rem; }

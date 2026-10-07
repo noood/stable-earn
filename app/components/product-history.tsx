@@ -1,30 +1,34 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ProductChangeEvent } from "@/lib/domain";
 import { useDismissiblePopover } from "@/app/components/use-dismissible-popover";
 import { ActionButton } from "@/app/components/ui";
 
 export type ProductHistoryPage = { events: ProductChangeEvent[]; nextCursor: string | null };
+const PRODUCT_HISTORY_OPEN_EVENT = "stable-earn:product-history-open";
 
-export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
+export function ProductHistory({ productId, events, loadPage, onEventsRead, readOnlyPreview = false }: {
   productId: string;
   events: ProductChangeEvent[];
   loadPage?: (cursor: string | null) => Promise<ProductHistoryPage>;
   onEventsRead?: (readAt: string) => void;
+  readOnlyPreview?: boolean;
 }) {
+  const instanceId = useId();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pinnedByClickRef = useRef(false);
+  const initialHistoryRequestStartedRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [acknowledgedEventIds, setAcknowledgedEventIds] = useState<string[]>([]);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const [loadedHistoryEvents, setLoadedHistoryEvents] = useState<ProductChangeEvent[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [initialHistoryLoadComplete, setInitialHistoryLoadComplete] = useState(false);
   const [historyError, setHistoryError] = useState(false);
   const historyEvents = loadedHistoryEvents ?? events;
   const attention = events.some((event) => event.attention && !event.readAt && !acknowledgedEventIds.includes(event.id))
@@ -32,6 +36,37 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
   const sortedEvents = useMemo(() => [...historyEvents].sort((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt)), [historyEvents]);
 
   useDismissiblePopover(open, setOpen, buttonRef, popoverRef, { closeOnScroll: false });
+
+  useEffect(() => {
+    if (!open) return;
+    function closeWhenAnotherOpens(event: Event) {
+      if ((event as CustomEvent<string>).detail === instanceId) return;
+      cancelScheduledClose();
+      cancelScheduledHoverOpen();
+      setOpen(false);
+    }
+    window.addEventListener(PRODUCT_HISTORY_OPEN_EVENT, closeWhenAnotherOpens);
+    return () => window.removeEventListener(PRODUCT_HISTORY_OPEN_EVENT, closeWhenAnotherOpens);
+  }, [open, instanceId]);
+
+  useEffect(() => {
+    if (!open || typeof IntersectionObserver === "undefined") return;
+    const trigger = buttonRef.current;
+    if (!trigger) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry) return;
+      const triggerVisible = entry.isIntersecting
+        && entry.intersectionRect.width > 0
+        && entry.intersectionRect.height > 0;
+      if (!triggerVisible) {
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+        setOpen(false);
+      }
+    });
+    observer.observe(trigger);
+    return () => observer.disconnect();
+  }, [open, setOpen]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -78,15 +113,18 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
   }
 
   function scheduleClose() {
-    if (pinnedByClickRef.current) return;
+    cancelScheduledHoverOpen();
     cancelScheduledClose();
-    closeTimerRef.current = setTimeout(() => setOpen(false), 180);
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      setOpen(false);
+    }, 180);
   }
 
   async function requestHistoryPage(cursor: string | null, replace: boolean) {
     if (!loadPage) return;
-    setHistoryError(false);
-    const loadingTimer = setTimeout(() => setHistoryLoading(true), 150);
+    const isFirstInitialLoad = replace && cursor === null && !initialHistoryLoadComplete;
+    setHistoryLoading(true);
     try {
       const page = await loadPage(cursor);
       setLoadedHistoryEvents((current) => {
@@ -95,17 +133,18 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
         return [...(current ?? events), ...page.events.filter((event) => !known.has(event.id))];
       });
       setNextCursor(page.nextCursor);
+      setHistoryError(false);
     } catch {
       setHistoryError(true);
     } finally {
-      clearTimeout(loadingTimer);
       setHistoryLoading(false);
+      if (isFirstInitialLoad) setInitialHistoryLoadComplete(true);
     }
   }
 
   async function persistReadState() {
     const unreadIds = historyEvents.filter((event) => event.attention && !event.readAt).map((event) => event.id);
-    if (!loadPage) {
+    if (!loadPage || readOnlyPreview) {
       setAcknowledgedEventIds((current) => [...new Set([...current, ...unreadIds])]);
       return;
     }
@@ -131,7 +170,7 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
   function openPopover() {
     cancelScheduledClose();
     cancelScheduledHoverOpen();
-    pinnedByClickRef.current = false;
+    window.dispatchEvent(new CustomEvent(PRODUCT_HISTORY_OPEN_EVENT, { detail: instanceId }));
     const rect = buttonRef.current?.getBoundingClientRect();
     if (rect) {
       const width = Math.min(288, window.innerWidth - 24);
@@ -144,27 +183,30 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
     }
     setOpen(true);
     void persistReadState();
-    if (loadPage) void requestHistoryPage(null, true);
+    if (loadPage && !initialHistoryRequestStartedRef.current) {
+      initialHistoryRequestStartedRef.current = true;
+      void requestHistoryPage(null, true);
+    }
   }
 
   function scheduleHoverOpen() {
+    cancelScheduledClose();
     cancelScheduledHoverOpen();
-    hoverTimerRef.current = setTimeout(openPopover, 220);
+    if (open) return;
+    hoverTimerRef.current = setTimeout(() => {
+      hoverTimerRef.current = null;
+      openPopover();
+    }, 220);
   }
 
   function handleTriggerClick() {
     cancelScheduledHoverOpen();
-    // A click confirms a hover/focus-opened popover instead of closing it as
-    // the browser scrolls a narrow table's trigger into view.
-    if (open && !pinnedByClickRef.current) {
-      pinnedByClickRef.current = true;
+    // Clicking only opens the transient hover-style popover; it never pins it.
+    if (open) {
       cancelScheduledClose();
+      cancelScheduledHoverOpen();
     }
-    else if (open) setOpen(false);
-    else {
-      openPopover();
-      pinnedByClickRef.current = true;
-    }
+    else openPopover();
   }
 
   return <div className="product-history">
@@ -198,12 +240,14 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
       >
         <div className="product-history-header"><p className="product-history-title">变更记录</p></div>
         {sortedEvents.length === 0
-          ? historyLoading
+          ? historyLoading && !initialHistoryLoadComplete
             ? <div className="product-history-loading" role="status" aria-label="正在加载变更记录">
               <span className="skeleton-block product-history-loading-line product-history-loading-line-primary" aria-hidden="true" />
               <span className="skeleton-block product-history-loading-line product-history-loading-line-secondary" aria-hidden="true" />
             </div>
-            : <p className="product-history-empty">暂无变更记录</p>
+            : historyError || (loadPage && !initialHistoryLoadComplete)
+              ? null
+              : <p className="product-history-empty">暂无变更记录</p>
           : <ol className="product-history-list">{sortedEvents.map((event, index) => <li key={event.id} className="product-history-event">
             <span className={`product-history-node ${index === 0 ? "product-history-node-latest" : ""}`} aria-hidden="true" />
             <div className="product-history-event-copy">
@@ -211,7 +255,7 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
               <p className="product-history-event-title"><span>{event.title}</span>{event.before !== undefined && event.after !== undefined && <span className="product-history-event-change"><span>{event.before}</span><span className="product-history-arrow" aria-hidden="true">→</span><strong>{event.after}</strong></span>}</p>
             </div>
           </li>)}</ol>}
-        {historyError && <ActionButton type="button" variant="text" className="button-text-inline-action product-history-more" onClick={() => void requestHistoryPage(nextCursor, nextCursor === null)}>加载失败，点击重试</ActionButton>}
+        {historyError && <ActionButton type="button" variant="text" className={`button-text-inline-action product-history-more${historyLoading ? " product-history-loading-state" : " product-history-error"}`} aria-busy={historyLoading} disabled={historyLoading} onClick={() => void requestHistoryPage(nextCursor, nextCursor === null)}>{historyLoading ? "加载中…" : "加载失败，点击重试"}</ActionButton>}
         {!historyError && nextCursor && <ActionButton type="button" variant="text" className="button-text-inline-action product-history-more" aria-busy={historyLoading} disabled={historyLoading} onClick={() => void requestHistoryPage(nextCursor, false)}>{historyLoading ? "加载中…" : "加载更早记录"}</ActionButton>}
       </div>,
       document.body,

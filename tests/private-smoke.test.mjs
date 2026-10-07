@@ -7,6 +7,7 @@ const load = moduleLoader();
 const { publicDemoProducts, publicDemoChangeEvents } = load("@/lib/public-demo");
 const { catalogProductTemplates } = load("@/lib/catalog-templates");
 const { localPrivateProductsPreview, localPrivateHoldingsPreview } = load("@/lib/local-preview");
+const { createLocalProductHistoryPreviewLoader } = load("@/lib/product-history-preview");
 
 test("private dashboard smoke data keeps demo, production compatibility, and preview fixtures separate", () => {
   assert.deepEqual(publicDemoProducts.map((product) => product.id), [
@@ -33,6 +34,28 @@ test("private preview still contains the long-history and manual-field scenarios
   assert.ok(holdingsPreview.manualProducts.some((product) => product.id === "manual-preview-fixed"));
 });
 
+test("local Bybit USDT history previews assign errors and pagination to three separate products", async () => {
+  const loadPage = createLocalProductHistoryPreviewLoader();
+  await assert.rejects(loadPage("by-g-usdt-short-fixed", null));
+  const retriedInitialPage = await loadPage("by-g-usdt-short-fixed", null);
+  assert.equal(retriedInitialPage.events.length, 3);
+  assert.equal(retriedInitialPage.nextCursor, null);
+
+  const firstPage = await loadPage("preview-apr-six", null);
+  assert.equal(firstPage.events.length, 3);
+  assert.equal(firstPage.nextCursor, "3");
+  const secondPage = await loadPage("preview-apr-six", firstPage.nextCursor);
+  assert.equal(secondPage.events.length, 3);
+  assert.equal(secondPage.nextCursor, null);
+
+  const moreFailureFirstPage = await loadPage("preview-below-threshold-held", null);
+  assert.equal(moreFailureFirstPage.events.length, 3);
+  await assert.rejects(loadPage("preview-below-threshold-held", moreFailureFirstPage.nextCursor));
+  const retriedMorePage = await loadPage("preview-below-threshold-held", moreFailureFirstPage.nextCursor);
+  assert.equal(retriedMorePage.events.length, 3);
+  assert.equal(retriedMorePage.nextCursor, null);
+});
+
 test("private route serves a static shell and keeps account data client-loaded", () => {
   const privatePage = readFileSync(new URL("../app/private/page.tsx", import.meta.url), "utf8");
   const privateClient = readFileSync(new URL("../app/private/private-dashboard-client.tsx", import.meta.url), "utf8");
@@ -46,11 +69,22 @@ test("private route serves a static shell and keeps account data client-loaded",
   assert.match(privateClient, /ssr: false/);
   assert.match(privateClient, /localPreview=\{process\.env\.NODE_ENV === "development"\}/);
   assert.match(dashboard, /useState\(\(\) => isDemo \? publicDemoProducts : \[\]\)/);
-  assert.match(dashboard, /loadHistoryPage=\{isDemo \|\| localPreview \? undefined/);
+  assert.match(dashboard, /isHistoryPreviewProduct/);
+  assert.match(dashboard, /readOnlyHistoryPreview=\{isHistoryPreviewProduct\}/);
   assert.match(history, /product-history-loading/);
+  assert.match(history, /initialHistoryRequestStartedRef/);
+  assert.match(history, /historyLoading \? "加载中…"/);
+  assert.doesNotMatch(history, /product-history-loading-more/);
   assert.match(history, /暂无变更记录/);
   assert.ok(apiSettings.indexOf('<SectionIntro title="配置 API"') < apiSettings.indexOf('<SectionIntro title="手动刷新频率"'));
   assert.match(styles, /\.modal-body\s*\{[^}]*overscroll-behavior:\s*contain/s);
   assert.match(styles, /\.product-history-popover\s*\{[^}]*overscroll-behavior:\s*contain/s);
   assert.match(dashboard, /const emptyHoldings: HoldingMap = \{\};/);
+});
+
+test("remote product history does not show an empty result before its first page resolves", () => {
+  const history = readFileSync(new URL("../app/components/product-history.tsx", import.meta.url), "utf8");
+  assert.match(history, /initialHistoryLoadComplete/);
+  assert.match(history, /historyError \|\| \(loadPage && !initialHistoryLoadComplete\)/);
+  assert.match(history, /if \(isFirstInitialLoad\) setInitialHistoryLoadComplete\(true\)/);
 });

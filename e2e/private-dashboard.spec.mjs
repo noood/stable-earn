@@ -108,8 +108,10 @@ test("signed-out demo shows two synthetic product changes without requesting pri
   const row = page.getByRole("row").filter({ hasText: "Binance.com" }).filter({ hasText: "6.20%" });
   await expect(row).not.toContainText("阶梯额度未获取");
   await expect(row).toContainText("5.35%");
-  await row.getByRole("button", { name: "查看变更记录" }).click();
+  const historyButton = row.getByRole("button", { name: "查看变更记录" });
+  await historyButton.click();
   const dialog = page.getByRole("dialog", { name: "产品变更记录" });
+  await expect(dialog).toBeVisible();
   await expect(dialog.getByText("首档 APR 下调")).toBeVisible();
   await expect(dialog.getByText("首档额度减少")).toBeVisible();
   await expect(dialog.locator(".product-history-event")).toHaveCount(2);
@@ -527,7 +529,25 @@ test("scrolling the product history popover at its boundary does not scroll the 
   await expect(popover).toBeVisible();
 });
 
-test("a click after hover opens product history keeps it open on a narrow table", async ({ page }) => {
+test("hover- and click-open history both close when their trigger leaves view", async ({ page }) => {
+  await page.goto("/private?asset=USDT");
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+
+  const trigger = page.locator("tr.product-row").filter({ hasText: "Binance Bahrain" }).first()
+    .getByRole("button", { name: /查看变更记录/ });
+  await trigger.hover();
+  const popover = page.getByRole("dialog", { name: "产品变更记录" });
+  await expect(popover).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect(popover).toHaveCount(0);
+
+  await trigger.click();
+  await expect(popover).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect(popover).toHaveCount(0);
+});
+
+test("clicking an open history bubble does not pin or toggle it", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto("/private?asset=USDT");
   const trigger = page.locator("tr.product-row").filter({ hasText: "Binance.com" }).first()
@@ -538,7 +558,39 @@ test("a click after hover opens product history keeps it open on a narrow table"
   await trigger.click();
   await expect(history).toBeVisible();
   await trigger.click();
+  await expect(history).toBeVisible();
+  await page.mouse.move(10, 10);
   await expect(history).toHaveCount(0);
+
+  const otherTrigger = page.locator("tr.product-row").filter({ hasText: "Binance Bahrain" }).first()
+    .getByRole("button", { name: /查看变更记录/ });
+  await trigger.click();
+  await expect(history).toBeVisible();
+  await otherTrigger.hover();
+  await expect(history).toHaveCount(1);
+  await expect.poll(() => page.getByRole("dialog", { name: "产品变更记录" }).count()).toBe(1);
+  await expect(history).toBeVisible();
+});
+
+test("leaving one history bubble cancels its pending reopen before hovering another", async ({ page }) => {
+  await page.goto("/private?asset=USDT");
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+
+  const firstTrigger = page.locator("tr.product-row").filter({ hasText: "Binance.com" }).filter({ hasText: "5.80%" }).first()
+    .getByRole("button", { name: /查看变更记录/ });
+  const secondTrigger = page.locator("tr.product-row").filter({ hasText: "Binance Bahrain" }).first()
+    .getByRole("button", { name: /查看变更记录/ });
+  const dialogs = page.getByRole("dialog", { name: "产品变更记录" });
+
+  await firstTrigger.hover();
+  await expect(dialogs).toHaveCount(1);
+  await dialogs.hover();
+  await firstTrigger.hover();
+  await secondTrigger.hover();
+
+  await expect.poll(() => dialogs.count()).toBe(1);
+  await expect(firstTrigger).toHaveAttribute("aria-expanded", "false");
+  await expect(secondTrigger).toHaveAttribute("aria-expanded", "true");
 });
 
 test("rate-limited API report explains partial results and shows a retry countdown", async ({ page }) => {
@@ -740,6 +792,82 @@ test("empty local product history opens directly in its stable empty state", asy
     return { top: header.offsetTop, bottom: popover.scrollHeight - empty.offsetTop - empty.offsetHeight };
   });
   expect(gaps.top).toBe(gaps.bottom);
+});
+
+test("three local Bybit USDT products separately preview history failure, pagination, and more-page failure", async ({ page }) => {
+  await page.goto("/private");
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+
+  const initialFailureRow = page.getByRole("row").filter({ hasText: "Bybit.com" }).filter({ hasText: "8.80%" });
+  await initialFailureRow.getByRole("button", { name: "查看变更记录" }).hover();
+  const dialog = page.getByRole("dialog", { name: "产品变更记录" });
+  await expect(dialog.locator(".product-history-loading")).toBeVisible();
+
+  const retry = dialog.getByRole("button", { name: "加载失败，点击重试" });
+  await expect(retry).toBeVisible();
+  const errorStyle = await retry.evaluate((button) => ({
+    color: getComputedStyle(button).color,
+    danger: getComputedStyle(document.documentElement).getPropertyValue("--danger-text").trim(),
+    alignment: getComputedStyle(button).textAlign,
+  }));
+  const dangerRgb = errorStyle.danger.match(/^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i);
+  expect(dangerRgb).not.toBeNull();
+  expect(errorStyle.color).toBe(`rgb(${parseInt(dangerRgb[1], 16)}, ${parseInt(dangerRgb[2], 16)}, ${parseInt(dangerRgb[3], 16)})`);
+  expect(errorStyle.alignment).toBe("center");
+  expect(await retry.evaluate((button) => getComputedStyle(button).marginTop)).toBe("12px");
+  await retry.click();
+  const retryLoading = dialog.getByRole("button", { name: "加载中…" });
+  await expect(retryLoading).toBeDisabled();
+  expect(await retryLoading.evaluate((button) => button.classList.contains("product-history-error"))).toBe(false);
+  expect(await retryLoading.evaluate((button) => button.classList.contains("product-history-loading-state"))).toBe(true);
+  const loadingColor = await retryLoading.evaluate((button) => getComputedStyle(button).color);
+  const dangerColor = await page.locator("html").evaluate((element) => {
+    const value = getComputedStyle(element).getPropertyValue("--danger-text").trim();
+    const rgb = value.match(/^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i);
+    if (!rgb) throw new Error("Unexpected danger color token");
+    return `rgb(${parseInt(rgb[1], 16)}, ${parseInt(rgb[2], 16)}, ${parseInt(rgb[3], 16)})`;
+  });
+  expect(loadingColor).not.toBe(dangerColor);
+  await expect(dialog.locator(".product-history-loading")).toHaveCount(0);
+  await expect(dialog.locator(".product-history-event")).toHaveCount(3);
+  await expect(dialog.getByRole("button", { name: "加载更早记录" })).toHaveCount(0);
+
+  // Keep each local fixture isolated: a hover bubble intentionally stays open
+  // while the pointer is over its contents so its paging controls remain usable.
+  await page.goto("/private");
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+  const paginationRow = page.getByRole("row").filter({ hasText: "Bybit.com" }).filter({ hasText: "6.00%" });
+  await paginationRow.getByRole("button", { name: "查看变更记录" }).hover();
+  const paginationDialog = page.getByRole("dialog", { name: "产品变更记录" });
+  await expect(paginationDialog.locator(".product-history-loading")).toBeVisible();
+  await expect(paginationDialog.locator(".product-history-event")).toHaveCount(3);
+  const more = paginationDialog.getByRole("button", { name: "加载更早记录" });
+  expect(await more.evaluate((button) => getComputedStyle(button).textAlign)).toBe("center");
+  expect(await more.evaluate((button) => getComputedStyle(button).marginTop)).toBe("12px");
+  await more.click();
+  const paginationLoading = paginationDialog.getByRole("button", { name: "加载中…" });
+  await expect(paginationLoading).toBeDisabled();
+  await expect(paginationDialog.locator(".product-history-loading")).toHaveCount(0);
+  await expect(paginationDialog.locator(".product-history-event")).toHaveCount(6);
+  await paginationRow.getByRole("button", { name: "查看变更记录" }).hover();
+  await expect(paginationDialog.locator(".product-history-loading")).toHaveCount(0);
+  await expect(paginationDialog.locator(".product-history-event")).toHaveCount(6);
+
+  await page.goto("/private");
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+  const moreErrorRow = page.getByRole("row").filter({ hasText: "Bybit.com" }).filter({ hasText: "5.90%" });
+  await moreErrorRow.getByRole("button", { name: "查看变更记录" }).hover();
+  const moreErrorDialog = page.getByRole("dialog", { name: "产品变更记录" });
+  await expect(moreErrorDialog.locator(".product-history-event")).toHaveCount(3);
+  await moreErrorDialog.getByRole("button", { name: "加载更早记录" }).click();
+  await expect(moreErrorDialog.getByRole("button", { name: "加载中…" })).toBeDisabled();
+  await expect(moreErrorDialog.locator(".product-history-loading")).toHaveCount(0);
+  await expect(moreErrorDialog.getByRole("button", { name: "加载失败，点击重试" })).toBeVisible();
+  await expect(moreErrorDialog.locator(".product-history-event")).toHaveCount(3);
+  await moreErrorDialog.getByRole("button", { name: "加载失败，点击重试" }).click();
+  await expect(moreErrorDialog.getByRole("button", { name: "加载中…" })).toBeDisabled();
+  await expect(moreErrorDialog.locator(".product-history-loading")).toHaveCount(0);
+  await expect(moreErrorDialog.locator(".product-history-event")).toHaveCount(6);
 });
 
 test("saving an edited holding submits only the local preview payload", async ({ page }) => {

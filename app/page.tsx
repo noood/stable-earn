@@ -18,6 +18,7 @@ import { publicDemoChangeEvents, publicDemoHoldings, publicDemoOverrides, public
 import { accounts } from "@/lib/seed-data";
 import { bestAvailableFirstTierProduct, maximumShortTermDays, minimumOpportunityApr, productHasKnownCapacity, totalHighYieldRemaining } from "@/lib/opportunity-policy";
 import { buildManualChangeEvents, sameManualProduct } from "@/lib/product-change-events";
+import { createLocalProductHistoryPreviewLoader } from "@/lib/product-history-preview";
 import { userProductInputToProduct } from "@/lib/user-products";
 import { hasCompletePurchaseTiming, summarizeHoldingTiming, type HoldingTiming } from "@/lib/holding-timing";
 
@@ -181,6 +182,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const holdingsRef = useRef<HoldingMap>(holdings);
   const previewScenario = localPreview && typeof window !== "undefined"
     ? new URLSearchParams(window.location.search).get("syncScenario") : null;
+  const historyPreviewLoader = useMemo(() => localPreview ? createLocalProductHistoryPreviewLoader() : null, [localPreview]);
   const previewAt = localPreview && typeof window !== "undefined"
     ? new URLSearchParams(window.location.search).get("previewAt") : null;
   const previewQuery = localPreview ? `?preview=1${previewScenario ? `&syncScenario=${encodeURIComponent(previewScenario)}` : ""}${previewAt ? `&previewAt=${encodeURIComponent(previewAt)}` : ""}` : "";
@@ -814,7 +816,15 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             const apiDeleteDisabledReason = !holdingIsKnown(baseProduct) || holdingSyncStates?.[listedProduct.id] === "error" || holdingSyncStates?.[listedProduct.id] === "partial"
               ? "暂时无法确认持仓，刷新成功后才能移除"
               : (activeHoldings[listedProduct.id] ?? 0) > 0 || positivePositionProductIds.has(listedProduct.id) ? "有持仓的产品不能移除" : undefined;
-            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingTiming={holdingTimingByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} apiDeleteDisabled={apiDeleteBlocked} apiDeleteDisabledReason={apiDeleteDisabledReason} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} changeEvents={changeEvents.filter((event) => event.productId === listedProduct.id)} loadHistoryPage={isDemo || localPreview ? undefined : (cursor) => loadProductHistoryPage(listedProduct.id, cursor)} onEventsRead={(readAt) => setChangeEvents((current) => current.map((event) => event.productId === listedProduct.id && event.attention && !event.readAt ? { ...event, readAt } : event))} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
+            const isHistoryPreviewProduct = historyPreviewLoader !== null && [
+              "by-g-usdt-short-fixed",
+              "preview-apr-six",
+              "preview-below-threshold-held",
+            ].includes(listedProduct.id);
+            const loadHistoryPage = isHistoryPreviewProduct
+              ? (cursor: string | null) => historyPreviewLoader(listedProduct.id, cursor)
+              : isDemo || localPreview ? undefined : (cursor: string | null) => loadProductHistoryPage(listedProduct.id, cursor);
+            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingTiming={holdingTimingByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} apiDeleteDisabled={apiDeleteBlocked} apiDeleteDisabledReason={apiDeleteDisabledReason} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} changeEvents={changeEvents.filter((event) => event.productId === listedProduct.id)} loadHistoryPage={loadHistoryPage} readOnlyHistoryPreview={isHistoryPreviewProduct} onEventsRead={(readAt) => setChangeEvents((current) => current.map((event) => event.productId === listedProduct.id && event.attention && !event.readAt ? { ...event, readAt } : event))} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
           }) : <tr><td colSpan={5}><EmptyProductState /></td></tr>}</tbody></table></div>
         </section>
 
@@ -890,7 +900,7 @@ async function loadProductHistoryPage(productId: string, cursor: string | null):
   return response.json() as Promise<ProductHistoryPage>;
 }
 
-function ProductRow({ product, baseProduct, manualSettings, holdingTiming, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, apiDeleteDisabled, apiDeleteDisabledReason, rateFallbackAt, holdingFallbackAt, changeEvents, loadHistoryPage, onEventsRead, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingTiming?: HoldingTiming; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; apiDeleteDisabled: boolean; apiDeleteDisabledReason?: string; rateFallbackAt?: string; holdingFallbackAt?: string; changeEvents: ProductChangeEvent[]; loadHistoryPage?: (cursor: string | null) => Promise<ProductHistoryPage>; onEventsRead: (readAt: string) => void; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
+function ProductRow({ product, baseProduct, manualSettings, holdingTiming, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, apiDeleteDisabled, apiDeleteDisabledReason, rateFallbackAt, holdingFallbackAt, changeEvents, loadHistoryPage, readOnlyHistoryPreview = false, onEventsRead, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingTiming?: HoldingTiming; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; apiDeleteDisabled: boolean; apiDeleteDisabledReason?: string; rateFallbackAt?: string; holdingFallbackAt?: string; changeEvents: ProductChangeEvent[]; loadHistoryPage?: (cursor: string | null) => Promise<ProductHistoryPage>; readOnlyHistoryPreview?: boolean; onEventsRead: (readAt: string) => void; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
   const account = accounts.find((item) => item.id === product.accountId)!;
   const hasApiTiming = hasCompletePurchaseTiming(holdingTiming, holding);
   const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming, holdingAvailable && holding > 0);
@@ -906,7 +916,7 @@ function ProductRow({ product, baseProduct, manualSettings, holdingTiming, holdi
       <TableCell className="type-body font-semibold tabular-nums">{holdingAvailable && productInfoIssues.length === 0 && holding > 0
         ? `${effectiveApr(product, holding).toFixed(2)}%`
         : <span className="text-subtle font-normal">—</span>}</TableCell>
-      <TableCell className="product-history-cell"><ProductHistory productId={product.id} events={changeEvents} loadPage={loadHistoryPage} onEventsRead={onEventsRead} /></TableCell>
+      <TableCell className="product-history-cell"><ProductHistory productId={product.id} events={changeEvents} loadPage={loadHistoryPage} onEventsRead={onEventsRead} readOnlyPreview={readOnlyHistoryPreview} /></TableCell>
     </tr>
   );
 }
