@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ProductChangeEvent } from "@/lib/domain";
 import { useDismissiblePopover } from "@/app/components/use-dismissible-popover";
+import { ActionButton } from "@/app/components/ui";
 
 export type ProductHistoryPage = { events: ProductChangeEvent[]; nextCursor: string | null };
 
@@ -210,8 +211,8 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead }: {
               <p className="product-history-event-title"><span>{event.title}</span>{event.before !== undefined && event.after !== undefined && <span className="product-history-event-change"><span>{event.before}</span><span className="product-history-arrow" aria-hidden="true">→</span><strong>{event.after}</strong></span>}</p>
             </div>
           </li>)}</ol>}
-        {historyError && <button type="button" className="product-history-more" onClick={() => void requestHistoryPage(nextCursor, nextCursor === null)}>加载失败，点击重试</button>}
-        {!historyError && nextCursor && <button type="button" className="product-history-more" disabled={historyLoading} onClick={() => void requestHistoryPage(nextCursor, false)}>{historyLoading ? "加载中…" : "加载更早记录"}</button>}
+        {historyError && <ActionButton type="button" variant="text" className="button-text-inline-action product-history-more" onClick={() => void requestHistoryPage(nextCursor, nextCursor === null)}>加载失败，点击重试</ActionButton>}
+        {!historyError && nextCursor && <ActionButton type="button" variant="text" className="button-text-inline-action product-history-more" aria-busy={historyLoading} disabled={historyLoading} onClick={() => void requestHistoryPage(nextCursor, false)}>{historyLoading ? "加载中…" : "加载更早记录"}</ActionButton>}
       </div>,
       document.body,
     )}

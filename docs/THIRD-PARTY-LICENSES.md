@@ -6,6 +6,10 @@
 
 项目代码采用 PolyForm Noncommercial License 1.0.0，见根目录 `LICENSE`；`package.json` 与 lockfile 均声明 `PolyForm-Noncommercial-1.0.0`。这限制项目代码的商业使用，但不替代、也不改变依赖各自的许可证。分发时必须保留随依赖提供的版权和许可声明，不可用项目许可证覆盖依赖许可证。
 
+## 静态品牌资源
+
+- `public/bitcoin.svg` 使用 Wikimedia Commons 的 [Bitcoin.svg](https://commons.wikimedia.org/wiki/File:Bitcoin.svg)。Commons 将该图标标记为公有领域（简单图形/文字，不满足版权原创性门槛）；页面同时提醒 Bitcoin 标志可能在部分司法辖区受商标保护。项目仅将其用作 BTC 资产标识，不表示与 Bitcoin Foundation 或其他组织存在关联。
+
 ## Lockfile 许可证分布
 
 | 许可证元数据 | 包数 | 初步处理 |

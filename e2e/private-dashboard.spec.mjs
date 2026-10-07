@@ -60,6 +60,20 @@ test("private dashboard reaches a settled table state and switches assets", asyn
   expect(pageErrors).toEqual([]);
 });
 
+test("BTC logo is served from the local SVG asset", async ({ page }) => {
+  await page.goto("/");
+  const btcTab = page.getByRole("button", { name: "BTC", exact: true });
+  const icon = btcTab.locator("img.asset-icon-image");
+  await expect(icon).toHaveAttribute("src", "/bitcoin.svg");
+  await expect.poll(() => icon.evaluate((image) => image.naturalWidth)).toBe(64);
+});
+
+test("BTC logo falls back to a text symbol if the local asset cannot load", async ({ page }) => {
+  await page.route("**/bitcoin.svg", (route) => route.abort());
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "BTC", exact: true }).locator(".bitcoin-icon-fallback")).toHaveText("₿");
+});
+
 test("header menu action labels align vertically within their rows", async ({ page }) => {
   await page.goto("/private");
   await page.locator(".action-menu-trigger").click();
@@ -483,7 +497,7 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(reopenedDialog.getByRole("button", { name: /下载 JSON · \d{4}\/\d{1,2}\/\d{1,2}/ })).toBeVisible();
     await reopenedDialog.getByRole("button", { name: "关闭" }).click();
     await page.getByRole("button", { name: "编辑持仓" }).click();
-    const tableApiSettings = page.locator(".table-toolbar-inline-action");
+    const tableApiSettings = page.locator(".button-text-inline-action");
     await expect(tableApiSettings).toBeVisible();
     await tableApiSettings.hover();
     await expect(tableApiSettings).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
