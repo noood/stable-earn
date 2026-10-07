@@ -3,7 +3,7 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
-function fixture({ savedAmount = 0, snapshotAmount = 50 } = {}) {
+function fixture({ savedAmount = 0, snapshotAmount = 50, mixedSource = false, manualCatalog = false } = {}) {
   const db = sqliteDb();
   const load = moduleLoader({
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
@@ -11,8 +11,11 @@ function fixture({ savedAmount = 0, snapshotAmount = 50 } = {}) {
     "@/lib/request-security": { isSameOriginMutation: () => true, privateResponseHeaders: {} },
     "@/lib/local-preview": { isLocalPreviewRequest: () => false },
   });
-  const product = moduleLoader()("@/lib/local-preview").localPrivateProductsPreview().products
+  const previewProduct = moduleLoader()("@/lib/local-preview").localPrivateProductsPreview().products
     .find((item) => item.id === "bn-g-usdt");
+  const product = mixedSource || manualCatalog
+    ? { ...previewProduct, productDataMode: "manual", holdingDataMode: manualCatalog ? "manual" : "api" }
+    : previewProduct;
   assert.ok(product);
   const time = "2026-10-06T00:00:00.000Z";
   db.sqlite.prepare(`INSERT INTO product_catalog
@@ -41,6 +44,27 @@ test("a newer positive API snapshot prevents hiding a product whose saved amount
     .run("user", f.product.id, "2026-10-06T00:00:00.000Z");
   const read = await f.route.GET(new Request("https://local.test/private/api/holdings"));
   assert.deepEqual((await read.json()).hiddenProductIds, []);
+});
+
+test("a catalogue product with manual APR and API holdings cannot hide a positive or unknown API holding", async () => {
+  const positive = fixture({ mixedSource: true, savedAmount: 100, snapshotAmount: 100 });
+  const hide = { holdings: {}, changedHoldingProductIds: [], hiddenProductIds: [positive.product.id] };
+  assert.equal((await positive.route.PUT(positive.request(hide))).status, 409);
+  assert.equal(positive.db.sqlite.prepare("SELECT COUNT(*) AS count FROM hidden_products").get().count, 0);
+
+  const unknown = fixture({ mixedSource: true });
+  unknown.db.sqlite.prepare("UPDATE sync_snapshots SET payload = '{}'").run();
+  assert.equal((await unknown.route.PUT(unknown.request(hide))).status, 409);
+});
+
+test("a manual-data catalogue row can be hidden only after its saved holding reaches zero", async () => {
+  const positive = fixture({ manualCatalog: true, savedAmount: 100 });
+  const hide = { holdings: {}, changedHoldingProductIds: [], hiddenProductIds: [positive.product.id] };
+  assert.equal((await positive.route.PUT(positive.request(hide))).status, 409);
+
+  const zero = fixture({ manualCatalog: true, savedAmount: 0 });
+  assert.equal((await zero.route.PUT(zero.request(hide))).status, 200);
+  assert.equal(zero.db.sqlite.prepare("SELECT COUNT(*) AS count FROM hidden_products").get().count, 1);
 });
 
 test("a null amount cannot erase a holding, and an API amount must match its trusted snapshot", async () => {

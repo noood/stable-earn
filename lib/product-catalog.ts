@@ -337,7 +337,8 @@ export async function archiveApiCatalogProducts(
         AND status = 'active'
         AND json_valid(payload)
         AND json_extract(payload, '$.accountId') = ?
-        AND json_extract(payload, '$.productDataMode') = 'api'`)
+        AND (json_extract(payload, '$.productDataMode') = 'api'
+          OR json_extract(payload, '$.holdingDataMode') = 'api')`)
     .bind(archivedAt, archivedAt, ownerId, accountId)
     .run();
 }

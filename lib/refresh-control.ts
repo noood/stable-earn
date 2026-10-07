@@ -1,4 +1,4 @@
-import type { D1Database } from "@cloudflare/workers-types";
+import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { SYNC_ATTEMPT_WINDOW_MS } from "./sync-cache";
 
 export function refreshDay(now = Date.now()) {
@@ -17,6 +17,26 @@ export async function acquireRefresh(db: D1Database, userId: string) {
     RETURNING lease_token`).bind(userId, token, now + SYNC_ATTEMPT_WINDOW_MS, now)
     .first<{ lease_token: string }>();
   return row ? token : null;
+}
+
+/** Block new refreshes while changing credentials and revoke an in-flight refresh. */
+export async function supersedeRefreshForCredentialChange(db: D1Database, userId: string) {
+  const token = `credentials:${crypto.randomUUID()}`;
+  const now = Date.now();
+  const row = await db.prepare(`INSERT INTO refresh_control (user_id, lease_token, lease_until)
+    VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET
+      lease_token = excluded.lease_token, lease_until = excluded.lease_until
+    WHERE refresh_control.lease_until <= ? OR refresh_control.lease_token NOT LIKE 'credentials:%'
+    RETURNING lease_token`).bind(userId, token, now + SYNC_ATTEMPT_WINDOW_MS, now)
+    .first<{ lease_token: string }>();
+  return row ? token : null;
+}
+
+/** First statement in the sync batch: a revoked lease aborts the whole transaction. */
+export function prepareRefreshCommitGuard(db: D1Database, userId: string, token: string): D1PreparedStatement {
+  return db.prepare(`SELECT CASE WHEN EXISTS (
+      SELECT 1 FROM refresh_control WHERE user_id = ? AND lease_token = ? AND lease_until > ?
+    ) THEN 1 ELSE json('invalid_refresh_lease') END`).bind(userId, token, Date.now());
 }
 
 export async function releaseRefresh(db: D1Database, userId: string, token: string) {

@@ -4,6 +4,7 @@ import { getDatabase, getUserIdentity } from "@/lib/db";
 import { archiveApiCatalogProducts } from "@/lib/product-catalog";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
 import { deleteSyncCache } from "@/lib/sync-cache";
+import { releaseRefresh, supersedeRefreshForCredentialChange } from "@/lib/refresh-control";
 
 export const dynamic = "force-dynamic";
 
@@ -43,12 +44,18 @@ export async function PUT(request: Request) {
   }
 
   const db = await getDatabase();
-  await saveCredential(db, identity.userId, account.id, {
-    apiKey,
-    apiSecret,
-    passphrase: account.requiresPassphrase ? passphrase : undefined,
-  });
-  await deleteSyncCache(db, identity.userId, "private-products");
+  const token = await supersedeRefreshForCredentialChange(db, identity.userId);
+  if (!token) return NextResponse.json({ error: "API 配置正在更新，请稍后重试。" }, { status: 409, headers: privateResponseHeaders });
+  try {
+    await saveCredential(db, identity.userId, account.id, {
+      apiKey,
+      apiSecret,
+      passphrase: account.requiresPassphrase ? passphrase : undefined,
+    });
+    await deleteSyncCache(db, identity.userId, "private-products");
+  } finally {
+    await releaseRefresh(db, identity.userId, token);
+  }
   return NextResponse.json({ saved: true, accountId: account.id }, { headers: privateResponseHeaders });
 }
 
@@ -59,9 +66,15 @@ export async function DELETE(request: Request) {
   const account = credentialAccount(new URL(request.url).searchParams.get("accountId") ?? "");
   if (!account) return NextResponse.json({ error: "不支持该账户。" }, { status: 400, headers: privateResponseHeaders });
   const db = await getDatabase();
-  await deleteCredential(db, identity.userId, account.id as CredentialAccountId);
-  await archiveApiCatalogProducts(db, identity.userId, account.id);
-  await deleteSyncCache(db, identity.userId, "private-products");
+  const token = await supersedeRefreshForCredentialChange(db, identity.userId);
+  if (!token) return NextResponse.json({ error: "API 配置正在更新，请稍后重试。" }, { status: 409, headers: privateResponseHeaders });
+  try {
+    await deleteCredential(db, identity.userId, account.id as CredentialAccountId);
+    await archiveApiCatalogProducts(db, identity.userId, account.id);
+    await deleteSyncCache(db, identity.userId, "private-products");
+  } finally {
+    await releaseRefresh(db, identity.userId, token);
+  }
   return NextResponse.json({ deleted: true, accountId: account.id }, { headers: privateResponseHeaders });
 }
 

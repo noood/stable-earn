@@ -94,6 +94,9 @@ test("removing API credentials archives every account API product but preserves 
   insertProduct.run("manual-product", "manual-product", "manual-product", JSON.stringify({
     id: "manual-product", accountId: "binance-global", productDataMode: "manual", apiAccess: "authenticated",
   }), now, now);
+  insertProduct.run("mixed-api-holding", "mixed-api-holding", "mixed-api-holding", JSON.stringify({
+    id: "mixed-api-holding", accountId: "binance-global", productDataMode: "manual", holdingDataMode: "api",
+  }), now, now);
   insertProduct.run("public-product", "public-product", "public-product", JSON.stringify({
     id: "public-product", accountId: "binance-global", productDataMode: "api", apiAccess: "public",
   }), now, now);
@@ -120,6 +123,7 @@ test("removing API credentials archives every account API product but preserves 
     "cached-zero": "archived",
     "cached-positive": "archived",
     "manual-product": "active",
+    "mixed-api-holding": "archived",
     "other-account": "active",
     "position-positive": "archived",
     "public-product": "archived",

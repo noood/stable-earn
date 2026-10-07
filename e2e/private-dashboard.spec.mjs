@@ -142,6 +142,47 @@ test("known quota and remaining capacity stay visible when unrelated product inf
   await expect(row.locator("td").nth(3)).toHaveText("—");
 });
 
+test("a mixed-source product follows API holding rules when removed", async ({ page }) => {
+  await page.goto("/private");
+  await page.getByRole("button", { name: "编辑持仓" }).click();
+  const heldOkx = page.locator("tr.product-row").filter({ hasText: "OKX" });
+  await expect(heldOkx.getByRole("button", { name: "移除产品" })).toBeDisabled();
+  await page.getByRole("button", { name: "取消" }).first().click();
+  await page.getByRole("button", { name: "BTC", exact: true }).first().click();
+  await page.getByRole("button", { name: "编辑持仓" }).click();
+  const emptyOkx = page.locator("tr.product-row").filter({ hasText: "OKX" });
+  await emptyOkx.getByRole("button", { name: "移除产品" }).click();
+  await expect(page.getByRole("dialog", { name: "移除产品" })).toBeVisible();
+});
+
+test("multiple API positions do not borrow one purchase date for the whole product", async ({ page }) => {
+  let missingDate = true;
+  await page.route("**/private/api/products**", async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== "GET" || url.searchParams.get("preview") !== "1") return route.continue();
+    const response = await route.fetch();
+    const payload = await response.json();
+    const productId = "preview-binance-fixed-expired-held";
+    payload.holdingPositions = payload.holdingPositions.filter((position) => position.productId !== productId);
+    payload.holdingPositions.push(
+      { productId, positionId: "one", amount: 100, source: "api", purchaseAt: "2026-10-01T00:00:00Z", updatedAt: visualPreviewAt },
+      { productId, positionId: "two", amount: 200, source: "api", ...(missingDate ? {} : { purchaseAt: "2026-10-02T00:00:00Z" }), updatedAt: visualPreviewAt },
+    );
+    await route.fulfill({ response, json: payload });
+  });
+
+  await page.goto("/private");
+  const row = page.locator("tr.product-row").filter({ hasText: "持仓 300.00 / 申购额度 300.00" });
+  await expect(row).toContainText("买入日未获取，不参与收益计算");
+  await expect(row.locator("td").nth(3)).toHaveText("—");
+  missingDate = false;
+  await page.reload();
+  await expect(row).toContainText("多笔持仓");
+  await expect(row).toContainText("各笔到期日请在交易所查看");
+  await expect(row).not.toContainText("买入日未获取");
+  await expect(row.locator("td").nth(3)).not.toHaveText("—");
+});
+
 test("a known first tier stays visible without claiming an unknown later rate", async ({ page }) => {
   await page.route("**/private/api/products**", async (route) => {
     const url = new URL(route.request().url());

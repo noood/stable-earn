@@ -149,15 +149,18 @@ export async function PUT(request: Request) {
   const positionAmounts = new Map<string, number>();
   for (const row of positionResult.results) positionAmounts.set(row.product_id, (positionAmounts.get(row.product_id) ?? 0) + Number(row.amount));
   const snapshot = parseSyncSnapshot(syncSnapshotResult.results[0]?.payload);
-  const hiddenCatalogIds = new Set(catalogProducts.filter((product) => product.productDataMode === "api").map((product) => product.id));
+  const catalogById = new Map(catalogProducts.map((product) => [product.id, product]));
+  const savedAmounts = new Map(holdingResult.results.map((row) => [row.product_id, Number(row.amount)]));
   if (hiddenProductsProvided) {
     for (const productId of hiddenProductIds) {
-      if (!hiddenCatalogIds.has(productId)) continue;
+      const product = catalogById.get(productId);
+      if (!product) continue;
       const positions = positionAmounts.get(productId) ?? 0;
-      const snapshotAmount = trustedSnapshotAmount(snapshot, productId);
-      const knownZero = snapshotAmount !== undefined && snapshotAmount <= 0;
+      const knownZero = product.holdingDataMode === "api"
+        ? trustedSnapshotAmount(snapshot, productId) === 0
+        : (savedAmounts.get(productId) ?? 0) === 0;
       if (!knownZero || positions > 0) {
-        return NextResponse.json({ error: "有持仓或暂时无法确认持仓的 API 产品不能移除。" }, { status: 409, headers: privateResponseHeaders });
+        return NextResponse.json({ error: "有持仓或暂时无法确认持仓的产品不能移除。" }, { status: 409, headers: privateResponseHeaders });
       }
     }
   }

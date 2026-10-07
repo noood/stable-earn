@@ -10,6 +10,7 @@ const { applyProductOverride, formatShortDate, productTermStatus } = load("@/lib
 const { completedDataSummary, syncFailureSummary, sanitizeSyncFailure, nextScheduledRefreshAt, scheduledRefreshPending } = load("@/lib/sync-notice");
 const { scheduledRefreshMetadata } = load("@/lib/sync-cache");
 const { localPrivateProductsPreview, localSyncScenarioPreview } = load("@/lib/local-preview");
+const { hasCompletePurchaseTiming, summarizeHoldingTiming } = load("@/lib/holding-timing");
 const base = localPrivateProductsPreview().products.find((p) => p.id === "bn-g-usdt");
 
 test("product completeness and holdings remain independent", () => {
@@ -38,6 +39,26 @@ test("missing API and manual fields are named separately without flagging an est
 test("short dates display API timestamps in Shanghai and leave date-only values unchanged", () => {
   assert.equal(formatShortDate("2026-10-06T16:30:00.000Z"), "10/07");
   assert.equal(formatShortDate("2026-10-06"), "10/06");
+});
+
+test("multiple fixed positions require a purchase date for every positive position, regardless of row order", () => {
+  const dated = { productId: "fixed", positionId: "dated", amount: 100, source: "api", purchaseAt: "2026-10-06T00:00:00Z" };
+  const undated = { productId: "fixed", positionId: "undated", amount: 200, source: "api" };
+  const fixed = { ...base, productType: "fixed", termDays: 7 };
+  for (const positions of [[dated, undated], [undated, dated]]) {
+    const timing = summarizeHoldingTiming(positions);
+    assert.equal(timing.singlePosition, undefined);
+    assert.equal(timing.completePurchaseTiming, false);
+    assert.equal(productParticipatesInInterest(fixed, 300, undefined, timing.completePurchaseTiming), false);
+  }
+  const complete = summarizeHoldingTiming([dated, { ...undated, purchaseAt: "2026-10-07T00:00:00Z" }]);
+  assert.equal(complete.completePurchaseTiming, true);
+  assert.equal(hasCompletePurchaseTiming(complete, 300), true);
+  assert.equal(hasCompletePurchaseTiming(complete, 400), false);
+  assert.equal(productParticipatesInInterest(fixed, 300, undefined, hasCompletePurchaseTiming(complete, 300)), true);
+  const empty = summarizeHoldingTiming([{ ...dated, amount: 0 }]);
+  assert.equal(empty.singlePosition?.positionId, "dated");
+  assert.equal(hasCompletePurchaseTiming(empty, 0), false);
 });
 
 test("best APR metric compares only first tiers with remaining or unlimited quota", () => {

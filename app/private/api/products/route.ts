@@ -20,7 +20,7 @@ import type { ProductOverrideMap } from "@/lib/product-overrides";
 import { loadUserProducts } from "@/lib/user-products";
 import { authoritativeEmptyHoldingScopeKeys, platformCapabilityScopeKey } from "@/lib/platform-capabilities";
 import { diagnosticErrorKind, syncDiagnostic, withSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
-import { acquireRefresh, claimDailyRefresh, refreshIsLocked, releaseRefresh, renewRefresh } from "@/lib/refresh-control";
+import { acquireRefresh, claimDailyRefresh, prepareRefreshCommitGuard, refreshIsLocked, releaseRefresh, renewRefresh } from "@/lib/refresh-control";
 import { sanitizeSyncFailure, scheduledRefreshPending } from "@/lib/sync-notice";
 import {
   formatCacheTime,
@@ -278,6 +278,7 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
         DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`)
         .bind(userId, productId, amount, payload.fetchedAt));
     await db.batch([
+      ...(options.leaseToken ? [prepareRefreshCommitGuard(db, userId, options.leaseToken)] : []),
       ...catalog.statements,
       ...apiHoldingStatements,
       ...prepareHoldingPositionStatements(db, userId, payload.holdingPositions),
@@ -287,7 +288,9 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
     progress.committed = true;
     return (await loadSyncCache<PrivateProductsPayload>(db, userId, privateCacheKey))!;
   } catch (error) {
-    if (persistFailure && (!options.leaseToken || await renewRefresh(db, userId, options.leaseToken))) {
+    const leaseStillOwned = !options.leaseToken || await renewRefresh(db, userId, options.leaseToken);
+    if (!leaseStillOwned) throw new Error("refresh lease expired");
+    if (persistFailure) {
       await recordSyncFailure(db, userId, privateCacheKey, safeCacheError(error));
     }
     throw error;
