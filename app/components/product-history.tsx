@@ -121,6 +121,12 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead, read
     }, 180);
   }
 
+  function ensureInitialHistoryRequest() {
+    if (!loadPage || initialHistoryRequestStartedRef.current) return;
+    initialHistoryRequestStartedRef.current = true;
+    void requestHistoryPage(null, true);
+  }
+
   async function requestHistoryPage(cursor: string | null, replace: boolean) {
     if (!loadPage) return;
     const isFirstInitialLoad = replace && cursor === null && !initialHistoryLoadComplete;
@@ -183,16 +189,15 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead, read
     }
     setOpen(true);
     void persistReadState();
-    if (loadPage && !initialHistoryRequestStartedRef.current) {
-      initialHistoryRequestStartedRef.current = true;
-      void requestHistoryPage(null, true);
-    }
+    ensureInitialHistoryRequest();
   }
 
   function scheduleHoverOpen() {
     cancelScheduledClose();
     cancelScheduledHoverOpen();
     if (open) return;
+    // Use the hover-intent delay to fetch the first page before the bubble appears.
+    ensureInitialHistoryRequest();
     hoverTimerRef.current = setTimeout(() => {
       hoverTimerRef.current = null;
       openPopover();

@@ -825,6 +825,22 @@ test("empty local product history opens directly in its stable empty state", asy
   await expect(singleEventDialog).toHaveCount(0);
 });
 
+test("history request starts during the hover-intent delay", async ({ page }) => {
+  await page.goto("/private");
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+  const productRow = page.getByRole("row").filter({ hasText: "Bybit.com" }).filter({ hasText: "8.80%" });
+  const hoverStartedAt = Date.now();
+  await productRow.getByRole("button", { name: "查看变更记录" }).hover();
+
+  const dialog = page.getByRole("dialog", { name: "产品变更记录" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator(".product-history-loading")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "加载失败，点击重试" })).toBeVisible();
+  // The preview loader takes 450ms. If it were started only when the dialog
+  // opened (after the 220ms hover delay), the error would arrive around 670ms.
+  expect(Date.now() - hoverStartedAt).toBeLessThan(600);
+});
+
 test("three local Bybit USDT products separately preview history failure, pagination, and more-page failure", async ({ page }) => {
   await page.goto("/private");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
