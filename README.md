@@ -52,7 +52,7 @@ npx playwright install chromium
 - Cloudflare 账号，以及已登录的 Wrangler（`npx wrangler login`）。
 - 一个 D1 数据库，名称使用 `stablecoin-earn-monitor`。
 - 一个 Queue，名称使用 `stable-earn-sync`。
-- Cloudflare Access 应用，保护网站的 `/private/*` 路径。
+- Cloudflare Access 应用，路径规则使用 `/private*`，覆盖 `/private` 页面入口及其子路径（当前线上使用此规则）。如果新增其他以 `/private` 开头的公开路径，应重新检查匹配范围。
 - 交易所只读 API Key；关闭交易、转账、申购、赎回和提现权限。
 
 ### 第一次部署

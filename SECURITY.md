@@ -19,7 +19,7 @@
 
 部署者需要：
 
-- 为 `/private/*` 配置 Cloudflare Access；
+- 为 `/private*` 配置 Cloudflare Access，确保同时覆盖不带尾斜杠的 `/private` 页面入口和其子路径；新增相同前缀的公开路由时重新检查匹配范围；
 - 使用只读权限的交易所 API Key；
 - 将 `CREDENTIAL_ENCRYPTION_KEY` 保存在 Worker Secret 中；
 - 不把 `.env`、生产配置、D1 导出或日志中的个人数据提交到仓库。

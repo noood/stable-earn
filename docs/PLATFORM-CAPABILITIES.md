@@ -173,3 +173,5 @@
 - 产品目录与归档：`lib/product-catalog.ts`、`lib/opportunity-policy.ts`
 - API 设置界面：`app/components/api-settings.tsx`
 - 主要回归测试：`tests/platform-capabilities.test.mjs`、`tests/platform-capability-probe.test.mjs`、`tests/product-catalog.test.mjs`、`tests/sync-route.test.mjs`
+
+其他诊断入口与一次性专项探针统一见[诊断索引](DIAGNOSTICS.md)。
