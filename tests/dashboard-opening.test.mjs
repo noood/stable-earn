@@ -27,6 +27,7 @@ async function open({ personalFailure = false, cacheFailure = false, dailyFailur
   const state = { setOpeningLoading: true, setHoldingsReady: false, setSyncFailures: [] };
   const deps = {
     isDemo: false, holdingsEndpoint: "/holdings", productsEndpoint: "/products", emptyHoldings: {},
+    reportStartupDiagnostic: () => {},
     holdingsRef: { current: {} }, productOverridesRef: { current: {} }, manualProductsRef: { current: [] }, hiddenProductIdsRef: { current: [] },
     personalDataReadyRef: { current: false }, personalDataLoadingRef: { current: false },
     dailyRefreshPendingRef: { current: daily }, refreshInFlightRef: { current: false },

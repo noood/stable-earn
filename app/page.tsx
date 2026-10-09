@@ -9,6 +9,7 @@ import { useDismissibleDetails } from "@/app/components/use-dismissible-details"
 import { useDismissiblePopover } from "@/app/components/use-dismissible-popover";
 import { ProductHistory, type ProductHistoryPage } from "@/app/components/product-history";
 import { AccountBadge, ActionButton, HoldingSummary, Metric, MetricSkeleton, ModalFrame, TableCell } from "@/app/components/ui";
+import { reportStartupDiagnostic } from "@/app/components/startup-diagnostics";
 import { effectiveApr, formatAmount, type Account, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent } from "@/lib/domain";
 import { applyProductOverride, dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { holdingSyncNote, productCapacityIsIncomplete, productInformationIssues, productInformationNote, productParticipatesInInterest, type ProductInformationIssue } from "@/lib/product-status";
@@ -240,10 +241,15 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
 
   async function loadPersonalData(): Promise<HoldingMap | null> {
     setPersonalDataLoading(true);
+    reportStartupDiagnostic("holdings", "持仓数据接口", "请求中");
+    let responseStatus: number | null = null;
     try {
       const response = await fetch(holdingsEndpoint, { cache: "no-store" });
+      responseStatus = response.status;
+      reportStartupDiagnostic("holdings", "持仓数据接口", `HTTP ${response.status}`);
       if (!response.ok) throw new Error("cloud holdings unavailable");
       const data = await response.json() as HoldingsApiResult;
+      reportStartupDiagnostic("holdings", "持仓数据接口", "响应已读取");
       if (data.products) setProducts(data.products);
       setProductOverrides(data.overrides ?? {});
       setManualProducts(data.manualProducts ?? []);
@@ -259,6 +265,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       setPersonalDataError(false);
       return next;
     } catch {
+      reportStartupDiagnostic("holdings", "持仓数据接口", responseStatus === null ? "网络请求失败" : `HTTP ${responseStatus}，响应读取失败`);
       // A failed read is not an empty portfolio. Keep any existing data.
       personalDataReadyRef.current = false;
       setPersonalDataError(true);
@@ -293,13 +300,24 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         return;
       }
       void fetch("/private/api/session", { cache: "no-store" })
-        .then((response) => response.ok ? response.json() as Promise<{ email: string }> : Promise.reject())
+        .then((response) => {
+          reportStartupDiagnostic("session", "登录状态接口", `HTTP ${response.status}`);
+          return response.ok ? response.json() as Promise<{ email: string }> : Promise.reject();
+        })
         .then((session) => setUserEmail(session.email))
-        .catch(() => setUserEmail(null));
+        .catch(() => {
+          reportStartupDiagnostic("session-error", "登录状态读取", "网络或响应读取失败");
+          setUserEmail(null);
+        });
+      reportStartupDiagnostic("initialization", "页面初始化", "已开始");
       setLoading(true);
       // Show the saved snapshot before requesting today's opening refresh.
       const productsResponse = fetch(productsEndpoint, { cache: "no-store" });
-      void productsResponse.catch(() => undefined);
+      void productsResponse.then((response) => {
+        reportStartupDiagnostic("products-http", "产品数据接口", `HTTP ${response.status}`);
+      }).catch(() => {
+        reportStartupDiagnostic("products-error", "产品数据请求", "网络请求失败");
+      });
       personalDataLoadingRef.current = true;
       try {
         const loaded = await loadPersonalData();
@@ -310,6 +328,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       } finally {
         personalDataLoadingRef.current = false;
         setOpeningLoading(false);
+        reportStartupDiagnostic("initialization", "页面初始化", "首轮读取已结束");
       }
     }
 
@@ -330,6 +349,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     try {
       const endpoint = options?.cacheOnly ? { url: productsEndpoint, method: "GET" as const } : refreshEndpoint(options?.manual);
       const response = await (options?.response ?? fetch(endpoint.url, { method: endpoint.method, cache: "no-store" }));
+      reportStartupDiagnostic("rate-data", "产品与同步接口", `HTTP ${response.status}`);
       if (!response.ok) {
         const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending"> | null;
         if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = errorData?.dailyRefreshPending === true;
@@ -347,6 +367,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         throw new Error("rate refresh failed");
       }
       const data = await response.json() as ApiResult;
+      reportStartupDiagnostic("rate-data", "产品与同步接口", "响应已读取");
       if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = data.dailyRefreshPending === true;
       setProductSnapshotReady(true);
       setSyncCache(data.cache);
@@ -394,6 +415,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       setClock(Date.now());
       return true;
     } catch {
+      reportStartupDiagnostic("rate-data", "产品与同步接口", "请求或响应读取失败");
       // A network/read failure does not start a repeating exchange retry loop.
       if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = false;
       setSyncing(false);
@@ -765,7 +787,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
             {dataBlocked
               ? <p className="text-danger font-semibold">{serverReadFailureMessage}</p>
-            : <p className="sync-notice-message min-w-0 flex-1 text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-secondary font-normal">数据正在更新中，请稍候。</span>}{scheduledRefreshFailed && <span className="text-danger font-semibold">{scheduledFailureLabel}</span>}{!scheduledRefreshFailed && hasSyncFailure && <span className="text-danger font-semibold">{failureSummary}</span>}{!updating && uniqueMissingApiFieldNotices.length > 0 && <span className="text-danger font-semibold">{hasSyncFailure && !scheduledRefreshFailed ? "；" : ""}{uniqueMissingApiFieldNotices.join("；")}</span>}</p>}
+            : <p className="sync-notice-message min-w-0 flex-1 text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-secondary font-normal">数据正在更新中，请稍候。</span>}{scheduledRefreshFailed && <span className="text-danger font-semibold">{scheduledFailureLabel}</span>}{!updating && !scheduledRefreshFailed && hasSyncFailure && <span className="text-danger font-semibold">{failureSummary}</span>}{!updating && uniqueMissingApiFieldNotices.length > 0 && <span className="text-danger font-semibold">{hasSyncFailure && !scheduledRefreshFailed ? "；" : ""}{uniqueMissingApiFieldNotices.join("；")}</span>}</p>}
           </div>
           {showSyncFailureRefresh && <ActionButton size="small" className="shrink-0 sync-notice-refresh" aria-label={manualRefreshInProgress && preserveManualRefreshButton ? "正在刷新" : undefined} aria-busy={manualRefreshInProgress && preserveManualRefreshButton} disabled={openingLoading || loading || refreshingExchange || manualRefreshInProgress || manualRefreshCooling} onClick={handleManualRefresh}>
             {manualRefreshInProgress && preserveManualRefreshButton

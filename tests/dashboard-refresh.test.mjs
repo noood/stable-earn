@@ -19,6 +19,7 @@ test("daily opening and manual refresh use POST; ordinary cache polling stays GE
   const requests = [], methods = [];
   const deps = {
     productsEndpoint: "/products", isDemo: false,
+    reportStartupDiagnostic: () => {},
     dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false },
     hiddenProductIdsRef: { current: [] },
     fetch: async (url, options) => {
@@ -62,6 +63,7 @@ for (const scenario of [
     };
     const deps = {
       isDemo: false, productsEndpoint: "/products", holdingsEndpoint: "/holdings",
+      reportStartupDiagnostic: () => {},
       hiddenProductIdsRef: { current: [] }, productOverridesRef: { current: {} }, manualProductsRef: { current: [] },
       personalDataReadyRef: { current: scenario.personalReady !== false },
       holdingsRef: { current: {} },

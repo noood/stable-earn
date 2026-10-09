@@ -1,9 +1,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { reportStartupDiagnostic, StartupDiagnostics } from "@/app/components/startup-diagnostics";
 
 const PrivateDashboard = dynamic(
-  () => import("@/app/page").then((module) => module.Dashboard),
+  () => import("@/app/page").then((module) => {
+    reportStartupDiagnostic("dashboard-module", "私人页面模块", "已加载");
+    return module.Dashboard;
+  }),
   {
     ssr: false,
     loading: () => (
@@ -23,5 +27,8 @@ const PrivateDashboard = dynamic(
 );
 
 export default function PrivateDashboardClient() {
-  return <PrivateDashboard mode="private" localPreview={process.env.NODE_ENV === "development"} />;
+  return <>
+    <StartupDiagnostics />
+    <PrivateDashboard mode="private" localPreview={process.env.NODE_ENV === "development"} />
+  </>;
 }
