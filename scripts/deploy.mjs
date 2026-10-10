@@ -49,9 +49,11 @@ const explicitConfigPath = configFlagIndex >= 0 ? deployArgs[configFlagIndex + 1
   .find((arg) => arg.startsWith('--config='))?.slice('--config='.length);
 const configPath = explicitConfigPath ? resolve(projectRoot, explicitConfigPath) : generatedConfigPath;
 
-if (!explicitConfigPath) {
-  deployArgs.push('--config', generatedConfigPath);
-}
+// Let @cloudflare/vite-plugin consume the selected source config through its
+// environment variable and generate dist/server/wrangler.json for Wrangler.
+// Do not append the generated source config as the adapter's --config: that
+// makes Wrangler bypass its generated config and bundle worker.ts directly,
+// where vinext's virtual worker entry cannot be resolved.
 
 const result = spawnSync(cliPath, ['deploy', ...deployArgs], {
   cwd: projectRoot,
