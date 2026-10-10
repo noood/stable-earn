@@ -1160,6 +1160,11 @@ for (const viewport of [
   });
 
   test(`private settings and history match the ${viewport.name} visual baselines`, async ({ page }) => {
+    await page.route("**/private/api/preferences", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ manualRefreshCooldownMinutes: 0 }),
+    }));
     await openFixedPrivatePreview(page, viewport);
     await page.locator(".action-menu-trigger").click();
     await page.getByRole("button", { name: "API 设置" }).click();
