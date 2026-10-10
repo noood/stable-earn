@@ -14,7 +14,7 @@ function fixture(users = ["first", "second"]) {
   const load = moduleLoader({
     "@/lib/db": { getDatabase: async () => db },
     "@/lib/sync-cache": { loadSyncCache: async (_db, user) => records.get(user) ?? null },
-    "@/app/private/api/products/route": {
+    "@/lib/private-sync/service": {
       listPrivateSyncUserIds: async () => users,
       refreshPrivateProductsCache: async (_db, user, options) => {
         calls.push({ user, ...options });

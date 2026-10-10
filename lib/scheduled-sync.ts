@@ -1,5 +1,5 @@
 import { getDatabase } from "@/lib/db";
-import { listPrivateSyncUserIds, refreshPrivateProductsCache } from "@/app/private/api/products/route";
+import { listPrivateSyncUserIds, refreshPrivateProductsCache } from "@/lib/private-sync/service";
 import { loadSyncCache } from "@/lib/sync-cache";
 import { acquireRefresh, finishScheduledRefresh, releaseRefresh, scheduledRefreshDone } from "@/lib/refresh-control";
 import { diagnosticErrorKind, syncDiagnostic, withSyncDiagnostics } from "@/lib/sync-diagnostics";

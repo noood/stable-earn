@@ -104,7 +104,10 @@ test("signed-out demo shows two synthetic product changes without requesting pri
   page.on("request", (request) => {
     if (request.url().includes("/private/api/product-history")) privateHistoryRequests += 1;
   });
-  await page.goto("/");
+  // The dashboard removes the redundant default asset in its client effect.
+  // Wait for that existing behavior so SSR markup is not clicked before hydration.
+  await page.goto("/?asset=USDT");
+  await expect(page).toHaveURL(/\/$/);
   const row = page.getByRole("row").filter({ hasText: "Binance Global" }).filter({ hasText: "6.20%" });
   await expect(row).not.toContainText("阶梯额度未获取");
   await expect(row).toContainText("5.35%");
@@ -853,9 +856,26 @@ test("empty local product history opens directly in its stable empty state", asy
 test("history request starts during the hover-intent delay", async ({ page }) => {
   await page.goto("/private");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
   const productRow = page.getByRole("row").filter({ hasText: "Bybit Global" }).filter({ hasText: "8.80%" });
-  const hoverStartedAt = Date.now();
-  await productRow.getByRole("button", { name: "查看变更记录" }).hover();
+  const historyButton = productRow.getByRole("button", { name: "查看变更记录" });
+  // Measure the hover response, not waiting for the initial product read or scrolling.
+  await historyButton.scrollIntoViewIfNeeded();
+  await expect(historyButton).toBeVisible();
+  // Browser timestamps exclude locator preparation and assertion polling latency.
+  await historyButton.evaluate((button) => {
+    const timing = { startedAt: null, finishedAt: null };
+    window.__historyHoverTiming = timing;
+    button.addEventListener("mouseover", () => { timing.startedAt = performance.now(); }, { once: true });
+    const observer = new MutationObserver(() => {
+      if (timing.startedAt !== null && document.querySelector('[role="dialog"] .product-history-error')) {
+        timing.finishedAt = performance.now();
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+  });
+  await historyButton.hover();
 
   const dialog = page.getByRole("dialog", { name: "产品变更记录" });
   await expect(dialog).toBeVisible();
@@ -863,7 +883,10 @@ test("history request starts during the hover-intent delay", async ({ page }) =>
   await expect(dialog.getByRole("button", { name: "加载失败，点击重试" })).toBeVisible();
   // The preview loader takes 450ms. If it were started only when the dialog
   // opened (after the 220ms hover delay), the error would arrive around 670ms.
-  expect(Date.now() - hoverStartedAt).toBeLessThan(600);
+  const timing = await page.evaluate(() => window.__historyHoverTiming);
+  expect(timing.startedAt).not.toBeNull();
+  expect(timing.finishedAt).not.toBeNull();
+  expect(timing.finishedAt - timing.startedAt).toBeLessThan(600);
 });
 
 test("history keyboard focus reaches retry, returns with Escape, and does not reopen", async ({ page }) => {

@@ -59,7 +59,7 @@ test("local Bybit USDT history previews assign errors and pagination to three se
 test("private route serves a static shell and keeps account data client-loaded", () => {
   const privatePage = readFileSync(new URL("../app/private/page.tsx", import.meta.url), "utf8");
   const privateClient = readFileSync(new URL("../app/private/private-dashboard-client.tsx", import.meta.url), "utf8");
-  const dashboard = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const dashboard = readFileSync(new URL("../app/components/dashboard/dashboard.tsx", import.meta.url), "utf8");
   const history = readFileSync(new URL("../app/components/product-history.tsx", import.meta.url), "utf8");
   const apiSettings = readFileSync(new URL("../app/components/api-settings.tsx", import.meta.url), "utf8");
   const styles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");

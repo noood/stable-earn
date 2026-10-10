@@ -29,7 +29,7 @@ npm run dev
 ```bash
 # 日常改动：只跑相关测试和 lint，例如
 npm run test:file -- tests/data-states.test.mjs
-npx eslint lib/product-status.ts app/page.tsx
+npx eslint lib/product-status.ts app/components/dashboard/product-row.tsx
 
 # 提交前：全量 lint、类型检查和单元测试
 npm run verify
@@ -44,6 +44,15 @@ npx playwright install chromium
 ```
 
 端到端测试默认复用已经运行的 <http://localhost:3000>；该服务未运行时，Playwright 会自行启动。需要只跑部分浏览器测试时，可传入文件名或筛选条件，例如 `npm run test:e2e -- --grep "known quota|known first tier"`。发布前核对范围见 [发布检查清单](docs/RELEASE-CHECKLIST.md)。浏览器测试只访问本地预览与模拟数据，不连接生产账号或 D1。
+
+## 代码组织
+
+- `app/page.tsx` 与 `app/private/private-dashboard-client.tsx` 负责页面入口；共用 `app/components/dashboard/dashboard.tsx`。私人页面保留静态外壳及客户端延迟加载，不从公共页面入口反向导入。
+- `app/components/dashboard/` 内的产品行、输入和日期控件负责展示及交互；Dashboard 统一协调加载、刷新、草稿和保存。子控件通过回调交接修改，不自行保存数据。
+- `lib/private-sync/types.ts` 与 `status.ts` 维护同步内部类型、状态及文案；`snapshots.ts` 聚合平台读取，`payload.ts` 合并缓存与目录并准备保存方案，`service.ts` 统一执行刷新及提交。
+- 产品 HTTP 接口保留鉴权、同源校验、请求参数、刷新门控和响应；`lib/scheduled-sync.ts` 负责队列调度，直接调用同步服务。读取和候选合并层不提交数据，保存顺序与运行锁由服务协调。
+
+数据行为以 [数据规则](docs/DATA-STATES.md)为准，字段解析见 [APR 与额度规则](docs/API-APR-CAPACITY-RULES.md)，已核验接口见 [平台能力矩阵](docs/PLATFORM-CAPABILITIES.md)。模块整理不另定义业务规则。
 
 ## 自托管部署
 

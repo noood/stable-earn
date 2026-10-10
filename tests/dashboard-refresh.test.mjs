@@ -5,7 +5,7 @@ import ts from "typescript";
 
 // Exercise the actual refresh and PUT-body construction inside Dashboard,
 // with React state setters and network boundaries replaced by test doubles.
-const source = ts.createSourceFile("page.tsx", readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const source = ts.createSourceFile("dashboard.tsx", readFileSync(new URL("../app/components/dashboard/dashboard.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const functions = [];
 function visit(node) {
   if (ts.isFunctionDeclaration(node) && ["refreshEndpoint", "refreshRates", "persistPortfolio"].includes(node.name?.text)) functions.push(node.getText(source));

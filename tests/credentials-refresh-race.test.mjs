@@ -53,7 +53,7 @@ test("removing credentials while an exchange request is pending cannot restore i
   const f = fixture();
   const control = f.load("@/lib/refresh-control");
   const token = await control.acquireRefresh(f.db, "user");
-  const refresh = f.load("@/app/private/api/products/route").refreshPrivateProductsCache(f.db, "user", { leaseToken: token });
+  const refresh = f.load("@/lib/private-sync/service").refreshPrivateProductsCache(f.db, "user", { leaseToken: token });
   await f.started;
   const removed = await f.load("@/app/private/api/credentials/route").DELETE(new Request(
     "https://test/private/api/credentials?accountId=binance-global", { method: "DELETE", headers: { origin: "https://test" } },
@@ -71,7 +71,7 @@ test("replacing credentials while an old exchange request is pending leaves no o
   const f = fixture();
   const control = f.load("@/lib/refresh-control");
   const token = await control.acquireRefresh(f.db, "user");
-  const refresh = f.load("@/app/private/api/products/route").refreshPrivateProductsCache(f.db, "user", { leaseToken: token });
+  const refresh = f.load("@/lib/private-sync/service").refreshPrivateProductsCache(f.db, "user", { leaseToken: token });
   await f.started;
   const saved = await f.load("@/app/private/api/credentials/route").PUT(new Request(
     "https://test/private/api/credentials", {

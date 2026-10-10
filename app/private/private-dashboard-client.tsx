@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { reportStartupDiagnostic, StartupDiagnostics } from "@/app/components/startup-diagnostics";
 
 const PrivateDashboard = dynamic(
-  () => import("@/app/page").then((module) => {
+  () => import("@/app/components/dashboard/dashboard").then((module) => {
     reportStartupDiagnostic("dashboard-module", "私人页面模块", "已加载");
     return module.Dashboard;
   }),

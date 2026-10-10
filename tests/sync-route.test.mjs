@@ -129,7 +129,7 @@ function fixture({ scheduledEnabled = true, includeOkxProduct = false } = {}) {
     step(nextMode) { time += 60000; mode = nextMode; },
     setTime(value) { time = Date.parse(value); },
     pause() { let resume; pause = new Promise((resolve) => { resume = resolve; }); return () => { pause = null; resume(); }; },
-    refresh: (options) => route.refreshPrivateProductsCache(db, "test-user", options),
+    refresh: (options) => load("@/lib/private-sync/service").refreshPrivateProductsCache(db, "test-user", options),
     async read(query = "") {
       const requestUrl = `http://test/private/api/products${query}`;
       const params = new URL(requestUrl).searchParams;
@@ -477,7 +477,7 @@ test("product APR cache keeps its own timestamp even without a matching failure 
 
 test("failed holding fallback preserves active product IDs instead of applying legacy aliases", () => {
   const f = fixture();
-  const { normalizeCatalogHoldingId } = f.load("@/app/private/api/products/route");
+  const { normalizeCatalogHoldingId } = f.load("@/lib/private-sync/payload");
   const active = new Set(["bg-usdt-simple", "api-bg-usdt-simple-1gd23qx"]);
   const aliases = {
     "bg-usdt-simple": "api-bg-usdt-simple-1gd23qx",
