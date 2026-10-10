@@ -70,7 +70,7 @@ export function buildSyncChangeEvents(
     }
     if (!before) continue;
 
-    if (beforeApr !== null && afterApr !== null && beforeApr !== afterApr) {
+    if (rate.aprSource !== "cache" && beforeApr !== null && afterApr !== null && beforeApr !== afterApr) {
       add(rate.productId, {
         type: "rate",
         title: afterApr < beforeApr ? "首档 APR 下调" : "首档 APR 上调",
@@ -81,7 +81,7 @@ export function buildSyncChangeEvents(
     }
 
     // Some APIs omit quota fields entirely. Keep that unknown state separate
-    // from an explicit `null` upper bound, which means “unlimited”. Only
+    // from an adapter-confirmed `maxStatus: unlimited` upper bound. Only
     // compare when both snapshots provide a meaningful capacity value.
     if (rate.capacitySource !== "cache"
       && beforeCapacity !== undefined
@@ -99,25 +99,36 @@ export function buildSyncChangeEvents(
       });
     }
 
-    if (before.termDays !== rate.termDays) {
+    const termCleared = rate.clearedProductFields?.includes("termDays");
+    const currentTermKnown = termCleared || (typeof rate.termDays === "number" && Number.isFinite(rate.termDays) && rate.termDays > 0);
+    if (currentTermKnown && before.termDays !== (termCleared ? undefined : rate.termDays)) {
       add(rate.productId, {
         type: "maturity",
         title: "锁定期限变化",
         before: formatTerm(before.termDays),
-        after: formatTerm(rate.termDays),
+        after: termCleared ? "无锁定期限" : formatTerm(rate.termDays),
       });
     }
-    if (before.subscriptionEndsAt !== rate.subscriptionEndsAt && (before.subscriptionEndsAt || rate.subscriptionEndsAt)) {
+    const deadlineCleared = rate.clearedProductFields?.includes("subscriptionEndsAt");
+    const currentDeadlineKnown = deadlineCleared || (typeof rate.subscriptionEndsAt === "string" && Number.isFinite(Date.parse(rate.subscriptionEndsAt)));
+    if (currentDeadlineKnown && before.subscriptionEndsAt !== (deadlineCleared ? undefined : rate.subscriptionEndsAt)) {
       add(rate.productId, {
         type: "maturity",
         title: "认购截止变化",
         before: formatShortDate(before.subscriptionEndsAt) || "待确认",
-        after: formatShortDate(rate.subscriptionEndsAt) || "待确认",
+        after: deadlineCleared ? "无截止日期" : formatShortDate(rate.subscriptionEndsAt) || "待确认",
       });
     }
 
+    // An omitted/unknown field is not a fresh confirmation that a known
+    // subscription state changed. Merge only explicitly confirmed dimensions.
+    const afterAvailabilityRate = {
+      ...before,
+      ...(rate.availability === "available" || rate.availability === "unavailable" ? { availability: rate.availability } : {}),
+      ...(rate.eligibilityStatus === "eligible" || rate.eligibilityStatus === "ineligible" ? { eligibilityStatus: rate.eligibilityStatus } : {}),
+    };
     const beforeAvailability = availabilitySummary(before);
-    const afterAvailability = availabilitySummary(rate);
+    const afterAvailability = availabilitySummary(afterAvailabilityRate);
     if (beforeAvailability !== afterAvailability) {
       add(rate.productId, {
         type: "availability",
@@ -340,11 +351,15 @@ export async function loadProductChangeEvents(db: D1Database, ownerId: string, l
     .map(mapProductChangeEvent);
 }
 
-export async function markProductChangeEventsRead(db: D1Database, ownerId: string, productId: string, readAt = new Date().toISOString()) {
+export async function markProductChangeEventsRead(db: D1Database, ownerId: string, productId: string, eventIds: string[], readAt = new Date().toISOString()) {
+  const ids = [...new Set(eventIds)];
+  if (ids.length === 0) return readAt;
+  if (ids.length > PRODUCT_HISTORY_PAGE_SIZE) throw new Error("Too many product history events");
   await db.prepare(`UPDATE product_change_events
       SET read_at = ?
-      WHERE owner_id = ? AND product_id = ? AND attention = 1 AND read_at IS NULL`)
-    .bind(readAt, ownerId, productId)
+      WHERE owner_id = ? AND product_id = ? AND attention = 1 AND read_at IS NULL
+        AND event_id IN (${ids.map(() => "?").join(", ")})`)
+    .bind(readAt, ownerId, productId, ...ids)
     .run();
   return readAt;
 }
@@ -444,15 +459,17 @@ function eventId(observedAt: string, productId: string, sequence: number) {
 }
 
 function primaryApr(rate: LiveRate) {
+  if (rate.aprStatus === "unavailable" || rate.rateCoverage === "unavailable" || rate.rateCoverage === "max_only") return null;
   const value = rate.tiers?.[0]?.apr ?? rate.apr;
   return Number.isFinite(value) ? value : null;
 }
 
 function firstTierCapacity(rate: LiveRate): number | null | undefined {
+  if (rate.capacityStatus === "unavailable") return undefined;
   const firstTier = rate.tiers?.[0];
   if (!firstTier || !Object.prototype.hasOwnProperty.call(firstTier, "max")) return undefined;
   const max = firstTier.max;
-  if (max === null) return null;
+  if (max === null) return firstTier.maxStatus === "unlimited" ? null : undefined;
   return typeof max === "number" && Number.isFinite(max) ? max : undefined;
 }
 

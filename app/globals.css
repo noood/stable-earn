@@ -96,6 +96,7 @@ button { cursor: pointer; }
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
+.product-history-popover:focus-visible,
 .icon-button:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus);
   outline-offset: 2px;
@@ -280,7 +281,8 @@ input:focus-visible,
 .muted-panel { background: var(--surface-muted); color: var(--text-secondary); }
 .error-panel { background: var(--danger-surface); color: var(--danger-text); }
 .api-feedback-panel { padding: var(--space-control) var(--space-3); }
-.surface-popover { border: var(--hairline) solid var(--border-strong); border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow-dialog); }
+.surface-popover,
+.inline-select-menu { border: var(--hairline) solid var(--border-strong); border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow-dialog); }
 .progress-track { height: var(--progress-height); overflow: hidden; border-radius: var(--radius-pill); background: var(--surface-muted); }
 .progress-fill { height: 100%; border-radius: inherit; background: var(--brand-muted); }
 .asset-switch { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; touch-action: pan-x; overscroll-behavior-x: contain; }
@@ -452,11 +454,7 @@ input:focus-visible,
   display: grid;
   min-width: 11rem;
   overflow-y: auto;
-  border: var(--hairline) solid var(--border-strong);
-  border-radius: var(--radius-control);
-  background: var(--surface);
   padding: var(--button-small-padding-y);
-  box-shadow: var(--shadow-dialog);
 }
 .inline-select-menu button {
   display: flex;

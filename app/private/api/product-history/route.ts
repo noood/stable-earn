@@ -32,12 +32,15 @@ export async function POST(request: Request) {
   try { body = await request.json(); } catch {
     return NextResponse.json({ error: "变更记录请求格式不正确。" }, { status: 400, headers: privateResponseHeaders });
   }
-  const productId = typeof body === "object" && body !== null && !Array.isArray(body)
-    ? (body as { productId?: unknown }).productId
-    : null;
-  if (typeof productId !== "string" || !productId.trim() || productId.length > 300) {
+  const candidate = typeof body === "object" && body !== null && !Array.isArray(body)
+    ? body as { productId?: unknown; eventIds?: unknown }
+    : {};
+  const { productId, eventIds } = candidate;
+  if (typeof productId !== "string" || !productId.trim() || productId.length > 300
+    || !Array.isArray(eventIds) || eventIds.length === 0 || eventIds.length > 50
+    || eventIds.some((id) => typeof id !== "string" || !id.trim() || id.length > 512)) {
     return NextResponse.json({ error: "变更记录请求格式不正确。" }, { status: 400, headers: privateResponseHeaders });
   }
-  const readAt = await markProductChangeEventsRead(await getDatabase(), identity.userId, productId.trim());
-  return NextResponse.json({ readAt }, { headers: privateResponseHeaders });
+  const readAt = await markProductChangeEventsRead(await getDatabase(), identity.userId, productId.trim(), eventIds);
+  return NextResponse.json({ readAt, eventIds }, { headers: privateResponseHeaders });
 }

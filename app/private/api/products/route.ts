@@ -8,7 +8,7 @@ import { loadCredentials } from "@/lib/credentials";
 import { getDatabase, getUserIdentity, isScheduledSyncEnabled } from "@/lib/db";
 import { fetchPublicRateSnapshot, summarizePublicFailures, type ApiFieldNotice, type LiveRate } from "@/lib/live-rates";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
-import { mergeRates } from "@/lib/rate-cache";
+import { mergeRateFields, mergeRates } from "@/lib/rate-cache";
 import { loadManualRefreshCooldown, manualRefreshCooldownMs } from "@/lib/user-settings";
 import { isLocalPreviewRequest, localPreviewTime, localPrivateProductsPreview, localSyncScenarioPreview } from "@/lib/local-preview";
 import { cachedHoldingTimes, mergeHoldingPositions } from "@/lib/holding-cache";
@@ -500,18 +500,47 @@ async function buildPrivatePayload(
       ...(bitget.sync.holdingsDiagnostic?.startsWith("scopes:") ? bitget.sync.holdingsDiagnostic.slice("scopes:".length).split("|") : []),
     ].filter(Boolean).join("|")}`
     : bitgetResult.diagnostic;
-  const freshRates: LiveRate[] = [
+  const adapterRates: LiveRate[] = [
     ...publicRates,
     ...(binanceGlobal?.rates ?? []),
     ...(binanceBahrain?.rates ?? []),
     ...(bybitGlobal?.rates ?? []),
     ...(bitget?.rates ?? []),
   ];
+  const fallbackRates = cached?.payload?.rates ?? [];
+  const freshRates = mergeRateFields(adapterRates, fallbackRates);
   const apiFieldNotices: ApiFieldNotice[] = [
-    ...(publicSnapshot.fieldNotices ?? []),
-    ...freshRates.flatMap((rate) => rate.productDataMode !== "manual" && rate.rateCoverage === "unavailable" && rate.catalog
-      ? [{ accountId: rate.catalog.accountId, asset: rate.catalog.asset, productName: rate.name ?? rate.externalProductId ?? rate.productId, externalProductId: rate.externalProductId, fields: ["APR 未获取"] }]
-      : []),
+    ...(publicSnapshot.fieldNotices ?? []).flatMap((notice) => {
+      const rate = freshRates.find((candidate) => candidate.catalog?.accountId === notice.accountId
+        && candidate.catalog.asset === notice.asset
+        && (notice.externalProductId
+          ? candidate.externalProductId === notice.externalProductId
+          : candidate.name === notice.productName));
+      if (!rate) return [notice];
+      const fields = notice.fields.filter((field) => {
+        if ((field.includes("APR") || field.includes("阶梯结构")) && rate.aprSource === "cache") return false;
+        if (field.includes("额度") && rate.capacitySource === "cache") return false;
+        return true;
+      });
+      return fields.length ? [{ ...notice, fields }] : [];
+    }),
+    ...freshRates.flatMap((rate) => {
+      if (rate.productDataMode === "manual" || !rate.catalog) return [];
+      const fields = rate.rateCoverage === "unavailable"
+        ? ["APR 未获取"]
+        : rate.rateCoverage === "partial" ? ["阶梯结构未获取"]
+          : rate.rateCoverage === "base_only" ? ["首档额度未获取"]
+            : rate.tiers?.some((tier) => tier.max === null && tier.maxStatus !== "unlimited")
+              ? ["首档额度未获取"]
+              : [];
+      return fields.length ? [{
+        accountId: rate.catalog.accountId,
+        asset: rate.catalog.asset,
+        productName: rate.name ?? rate.externalProductId ?? rate.productId,
+        externalProductId: rate.externalProductId,
+        fields,
+      }] : [];
+    }),
   ];
   const freshHoldingUpdates = {
     ...(binanceGlobal?.holdings ?? {}),
@@ -524,7 +553,6 @@ async function buildPrivatePayload(
     ...(binanceGlobal?.positions ?? []).map((position) => ({ ...position, accountId: "binance-global" })),
     ...(binanceBahrain?.positions ?? []).map((position) => ({ ...position, accountId: "binance-bahrain" })),
   ];
-  const fallbackRates = cached?.payload?.rates ?? [];
   const completeAccountIds = [
     binanceGlobalStatus === "synced"
       && binanceGlobal?.apiStatuses.flexibleProducts === "complete"
@@ -910,16 +938,16 @@ function safeCacheError(error: unknown) {
 
 function buildFailures(status: PrivateStatuses, diagnostics: PrivateDiagnostics, publicFailures: string[], publicPartials: string[] = []) {
   const failed = ([
-    ["binanceGlobal", "Binance.com"],
+    ["binanceGlobal", "Binance Global"],
     ["binanceBahrain", "Binance Bahrain"],
-    ["bybitGlobal", "Bybit.com"],
+    ["bybitGlobal", "Bybit Global"],
     ["bitget", "Bitget"],
     ["okx", "OKX"],
   ] as const).flatMap(([key, label]) => status[key] === "error"
     ? [privateFailureLabel(key, label, diagnostics[key])]
     : []);
   const partialFailure = [
-    ...(status.binanceGlobal === "partial" ? scopedBinanceFailures("Binance.com", diagnostics.binanceGlobal) : []),
+    ...(status.binanceGlobal === "partial" ? scopedBinanceFailures("Binance Global", diagnostics.binanceGlobal) : []),
     ...(status.binanceBahrain === "partial" ? scopedBinanceFailures("Binance Bahrain", diagnostics.binanceBahrain) : []),
     ...(status.bybitGlobal === "partial" ? scopedBybitFailures(diagnostics.bybitGlobal) : []),
     ...(status.bitget === "partial" ? scopedBitgetFailures(diagnostics.bitget) : []),
@@ -964,12 +992,30 @@ function legacyFailures(note: string) {
     const existing = messages.join("、");
     messages.push(...extractPlatforms(publicFailure).filter((platform) => !existing.includes(platform)));
   }
-  return messages.length ? messages : extractPlatforms(note.match(/([^。]*失败[^。]*)/)?.[1] ?? "");
+  return messages.length
+    ? messages.map(normalizePlatformLabel)
+    : extractPlatforms(note.match(/([^。]*失败[^。]*)/)?.[1] ?? "");
+}
+
+function normalizePlatformLabel(value: string) {
+  return value
+    .replace(/^Binance\.com(?=\s|（|$)/, "Binance Global")
+    .replace(/^Bybit\.com(?=\s|（|$)/, "Bybit Global");
 }
 
 function extractPlatforms(text: string) {
-  const knownPlatforms = ["Binance.com", "Binance Bahrain", "Bybit.com", "Bybit EU", "Bitget", "OKX", "MEXC"];
-  return knownPlatforms.filter((platform) => text.includes(platform));
+  const knownPlatforms = [
+    ["Binance.com", "Binance Global"],
+    ["Binance Global", "Binance Global"],
+    ["Binance Bahrain", "Binance Bahrain"],
+    ["Bybit.com", "Bybit Global"],
+    ["Bybit Global", "Bybit Global"],
+    ["Bybit EU", "Bybit EU"],
+    ["Bitget", "Bitget"],
+    ["OKX", "OKX"],
+    ["MEXC", "MEXC"],
+  ] as const;
+  return [...new Set(knownPlatforms.filter(([alias]) => text.includes(alias)).map(([, label]) => normalizePlatformLabel(label)))];
 }
 
 function privateFailureLabel(key: keyof PrivateStatuses, label: string, diagnostic?: string) {
@@ -1000,15 +1046,15 @@ function scopedBybitFailures(diagnostic?: string) {
   const scopes = diagnostic?.startsWith("scopes:")
     ? diagnostic.slice("scopes:".length).split("|").filter(Boolean)
     : [];
-  if (scopes.length === 0) return ["Bybit.com"];
+  if (scopes.length === 0) return ["Bybit Global"];
   return scopes.map((scope) => {
     const flexibleFailure = scope.match(/^活期持仓请求失败:(.+)$/);
-    if (flexibleFailure) return `Bybit.com 活期持仓 ${flexibleFailure[1]}`;
-    if (scope.startsWith("活期持仓部分返回:")) return "Bybit.com 活期持仓部分数据未返回";
-    if (scope.endsWith("请求失败")) return `Bybit.com ${scope.replace("请求失败", "")}`;
-    if (scope.endsWith("部分返回")) return `Bybit.com ${scope.replace("部分返回", "部分数据未返回")}`;
-    if (["定期产品", "定期持仓"].includes(scope)) return `Bybit.com ${scope}`;
-    return `Bybit.com ${scope}`;
+    if (flexibleFailure) return `Bybit Global 活期持仓 ${flexibleFailure[1]}`;
+    if (scope.startsWith("活期持仓部分返回:")) return "Bybit Global 活期持仓部分数据未返回";
+    if (scope.endsWith("请求失败")) return `Bybit Global ${scope.replace("请求失败", "")}`;
+    if (scope.endsWith("部分返回")) return `Bybit Global ${scope.replace("部分返回", "部分数据未返回")}`;
+    if (["定期产品", "定期持仓"].includes(scope)) return `Bybit Global ${scope}`;
+    return `Bybit Global ${scope}`;
   });
 }
 

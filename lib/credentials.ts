@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import type { D1Database } from "@cloudflare/workers-types";
+import { accountDisplayNames } from "./platform-display";
 
 type StoredCredential = {
   apiKey: string;
@@ -8,17 +9,17 @@ type StoredCredential = {
 };
 
 export const credentialAccounts = [
-  { id: "binance-global", label: "Binance.com", requiresPassphrase: false, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
-  { id: "binance-bahrain", label: "Binance Bahrain", requiresPassphrase: false, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
-  { id: "bybit-global", label: "Bybit.com", requiresPassphrase: false, syncDescription: "产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓自动同步" },
-  { id: "bitget-global", label: "Bitget", requiresPassphrase: true, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
-  { id: "okx-global", label: "OKX", requiresPassphrase: true, syncDescription: "同步 USDT、USDC、BTC 活期持仓；每币种对应一条跟踪产品，成功完整回包缺少币种行按 0；产品 APR 需手动维护" },
+  { id: "binance-global", label: accountDisplayNames["binance-global"], requiresPassphrase: false, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
+  { id: "binance-bahrain", label: accountDisplayNames["binance-bahrain"], requiresPassphrase: false, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
+  { id: "bybit-global", label: accountDisplayNames["bybit-global"], requiresPassphrase: false, syncDescription: "产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓自动同步" },
+  { id: "bitget-global", label: accountDisplayNames["bitget-global"], requiresPassphrase: true, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
+  { id: "okx-global", label: accountDisplayNames["okx-global"], requiresPassphrase: true, syncDescription: "同步 USDT、USDC、BTC 活期持仓；每币种对应一条跟踪产品，成功完整回包缺少币种行按 0；产品 APR 需手动维护" },
 ] as const;
 
 export const manualDataAccounts = [
-  { id: "bybit-eu", label: "Bybit EU", statusLabel: "手动维护", syncDescription: "产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓需手动维护" },
-  { id: "mexc-ph", label: "MEXC · PH 🇵🇭", syncDescription: "产品信息与持仓需要手动维护" },
-  { id: "mexc-uk", label: "MEXC · UK 🇬🇧", syncDescription: "产品信息与持仓需要手动维护" },
+  { id: "bybit-eu", label: accountDisplayNames["bybit-eu"], statusLabel: "手动维护", syncDescription: "产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓需手动维护" },
+  { id: "mexc-ph", label: accountDisplayNames["mexc-ph"], syncDescription: "产品信息与持仓需要手动维护" },
+  { id: "mexc-uk", label: accountDisplayNames["mexc-uk"], syncDescription: "产品信息与持仓需要手动维护" },
 ] as const;
 
 export type CredentialAccountId = typeof credentialAccounts[number]["id"];

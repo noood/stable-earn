@@ -63,6 +63,12 @@ export type Product = {
   tiers: Tier[];
   source: RateSource;
   rateCoverage: RateCoverage;
+  aprStatus?: "available" | "unavailable";
+  capacityStatus?: "available" | "unavailable";
+  tierStructureStatus?: "complete" | "incomplete";
+  /** The displayed APR can be cached while other product data is current. */
+  aprSource?: "live" | "cache";
+  aprFetchedAt?: string;
   /** Whether the displayed quota came from the latest response or a known cache. */
   capacitySource?: "live" | "cache";
   capacityFetchedAt?: string;

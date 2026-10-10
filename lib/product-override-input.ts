@@ -1,4 +1,5 @@
 import type { Product } from "./domain";
+import { parseExchangeNumber } from "./exchange-number";
 import { productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, type ProductOverride } from "./product-overrides";
 
 type RawProductOverride = {
@@ -8,7 +9,9 @@ type RawProductOverride = {
   purchaseDate?: unknown;
 };
 
-export function parseProductOverride(product: Product, raw: RawProductOverride) {
+export function parseProductOverride(product: Product, input: unknown) {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return null;
+  const raw = input as RawProductOverride;
   const apr = productNeedsManualApr(product) ? optionalApr(raw.apr) : null;
   const firstTierLimit = productNeedsManualLimit(product) ? optionalLimit(raw.firstTierLimit) : null;
   // A product may declare that its term is manual while the saved catalogue
@@ -22,20 +25,20 @@ export function parseProductOverride(product: Product, raw: RawProductOverride) 
 
 function optionalApr(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
-  const apr = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(apr) && apr >= 0 && apr <= 10000 ? apr : undefined;
+  const apr = parseExchangeNumber(value);
+  return apr !== undefined && apr >= 0 && apr <= 10000 ? apr : undefined;
 }
 
 function optionalLimit(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
-  const limit = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(limit) && limit > 0 && limit <= 1e15 ? limit : undefined;
+  const limit = parseExchangeNumber(value);
+  return limit !== undefined && limit > 0 && limit <= 1e15 ? limit : undefined;
 }
 
 function optionalTerm(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
-  const termDays = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(termDays) && termDays > 0 && termDays <= 3650 ? termDays : undefined;
+  const termDays = parseExchangeNumber(value);
+  return termDays !== undefined && termDays > 0 && termDays <= 3650 ? termDays : undefined;
 }
 
 function optionalDate(value: unknown) {

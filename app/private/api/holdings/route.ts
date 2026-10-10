@@ -185,10 +185,7 @@ export async function PUT(request: Request) {
     : {};
   const overrideEntries = changedOverrideProductIds.map((productId) => {
     const product = allProducts.find((item) => item.id === productId)!;
-    const raw = typeof overrideCandidate[productId] === "object" && overrideCandidate[productId] !== null
-      ? overrideCandidate[productId] as { apr?: unknown; firstTierLimit?: unknown; termDays?: unknown; purchaseDate?: unknown }
-      : {};
-    return parseProductOverride(product, raw);
+    return parseProductOverride(product, overrideCandidate[productId]);
   });
   if (overrideEntries.some((entry) => entry === null)) {
     return NextResponse.json({ error: "人工额度、APR、期限或买入日格式不正确。" }, { status: 400, headers: privateResponseHeaders });

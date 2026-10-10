@@ -82,6 +82,9 @@ type BinanceTierSchedule = {
   tiers: BinanceTier[];
   hasReportedTiers: boolean;
   complete: boolean;
+  aprStatus?: "available" | "unavailable";
+  capacityStatus?: "available" | "unavailable";
+  tierStructureStatus?: "complete" | "incomplete";
 };
 
 export type BinanceFlexibleSnapshot = {
@@ -180,7 +183,7 @@ export type BinanceLockedSnapshot = {
 
 const accounts = {
   global: {
-    sourceLabel: "Binance.com 官方账户 API",
+    sourceLabel: "Binance Global 官方账户 API",
   },
   bahrain: {
     sourceLabel: "Binance Bahrain 官方账户 API",
@@ -324,9 +327,7 @@ export async function fetchBinanceFlexibleSnapshot(
       const hasProductRow = Boolean(product);
       const rateSource = product;
       const hasApr = hasBinanceApr(rateSource);
-      const schedule: BinanceTierSchedule = hasApr
-        ? parseBinanceTiers(asset, rateSource?.latestAnnualPercentageRate, rateSource?.tierAnnualPercentageRate)
-        : { tiers: [], hasReportedTiers: false, complete: false };
+      const schedule = parseBinanceTiers(asset, rateSource?.latestAnnualPercentageRate, rateSource?.tierAnnualPercentageRate);
       const tiers = schedule.tiers;
       const identity = buildPlatformProductIdentity({
         accountId,
@@ -343,6 +344,9 @@ export async function fetchBinanceFlexibleSnapshot(
         ...(hasApr ? { baseApr: parseBinanceApr(rateSource?.latestAnnualPercentageRate) } : {}),
         bonusTiers: parseBinanceBonusTiers(asset, rateSource?.tierAnnualPercentageRate),
         rateShape: !hasApr ? "no_rate" : schedule.hasReportedTiers ? "tiered_rate" : "single_rate",
+        aprStatus: schedule.aprStatus,
+        capacityStatus: schedule.capacityStatus,
+        tierStructureStatus: schedule.tierStructureStatus,
         tiers,
         fetchedAt,
         sourceLabel: hasProductRow
@@ -769,9 +773,9 @@ export async function fetchBinanceLockedSnapshot(
     const parsedApr = Number.isFinite(apr);
     const rate = lockedRate(accountConfig, account, asset, projectId, duration, parsedApr ? apr : 0, detail, row.quota, fetchedAt);
     if (!parsedApr) {
-      rate.tiers = [];
       rate.rateCoverage = "unavailable";
       rate.rateShape = "no_rate";
+      rate.aprStatus = "unavailable";
     }
     rates.push(rate);
     rateByProject.set(`${asset}:${projectId}`, rate);
@@ -886,15 +890,19 @@ function lockedRate(
   const rawMaximum = quota?.totalPersonalQuota;
   const maximumStatus: NonNullable<LiveRate["subscriptionMaximumStatus"]> = rawMaximum === undefined
     ? "unlimited"
-    : maximum === undefined ? "unreadable"
+    : maximum === undefined || (maximum < 0 && maximum !== -1) ? "unreadable"
       : maximum === -1 ? "unlimited" : "limited";
+  const capacityAvailable = maximumStatus !== "unreadable";
   return {
     productId: identity.identityKey,
     ...identity,
     name: `Simple Earn Locked · ${formatLockedDuration(duration)}`,
     apr,
+    aprStatus: "available",
+    capacityStatus: capacityAvailable ? "available" : "unavailable",
+    tierStructureStatus: "complete",
     rateShape: "single_rate",
-    tiers: [{ min: 0, max: maximum && maximum > 0 ? maximum : null, apr,
+    tiers: [{ min: 0, max: maximum !== undefined && maximum >= 0 ? maximum : null, apr,
       ...(rawMaximum === undefined || maximum === -1 ? { maxStatus: "unlimited" as const } : {}) }],
     subscriptionMaximum: maximum === undefined || maximum === -1 ? null : maximum,
     subscriptionMaximumStatus: maximumStatus,
@@ -906,8 +914,8 @@ function lockedRate(
     minimumAmount: minimum && minimum > 0 ? minimum : undefined,
     subscriptionStartsAt: timestampIso(detail?.subscriptionStartTime),
     availability: detail?.isSoldOut || /sold.?out|unavailable|off.?line/i.test(detail?.status ?? "") ? "unavailable" : "available",
-    rateCoverage: "complete",
-    capacitySource: rawMaximum === undefined ? undefined : maximum === undefined ? "cache" : "live",
+    rateCoverage: capacityAvailable ? "complete" : "base_only",
+    capacitySource: capacityAvailable && rawMaximum !== undefined ? "live" : undefined,
     catalog: {
       accountId,
       exchange: "binance",
@@ -925,41 +933,49 @@ function parseBinanceTiers(
   rawTiers: unknown,
 ): BinanceTierSchedule {
   const baseApr = parseBinanceApr(rawBaseApr);
-  const baseOnlyTier = { min: 0, max: null, apr: baseApr, maxStatus: "unlimited" as const };
+  const baseAvailable = Number.isFinite(baseApr) && baseApr >= 0;
+  const baseOnlyTier = { min: 0, max: null, apr: baseAvailable ? baseApr : 0, maxStatus: "unlimited" as const };
+  const singleSchedule = { tiers: [baseOnlyTier], hasReportedTiers: false, complete: baseAvailable,
+    aprStatus: baseAvailable ? "available" as const : "unavailable" as const,
+    capacityStatus: "available" as const, tierStructureStatus: "complete" as const };
   if (rawTiers === undefined || rawTiers === null) {
-    return { tiers: [baseOnlyTier], hasReportedTiers: false, complete: true };
+    return singleSchedule;
   }
   if (typeof rawTiers !== "object" || Array.isArray(rawTiers)) {
-    return { tiers: [baseOnlyTier], hasReportedTiers: true, complete: false };
+    return { ...singleSchedule, hasReportedTiers: true, complete: false, aprStatus: "unavailable", capacityStatus: "unavailable", tierStructureStatus: "incomplete" };
   }
   const entries = rawTiers && typeof rawTiers === "object" && !Array.isArray(rawTiers)
     ? Object.entries(rawTiers as Record<string, number | string>)
     : [];
-  if (entries.length === 0) return { tiers: [baseOnlyTier], hasReportedTiers: false, complete: true };
+  if (entries.length === 0) return singleSchedule;
 
   // Binance's flexible product fields are two parts of the rate: the latest
   // APR is the base rate, and tierAnnualPercentageRate is an extra reward.
   // Add them while the reward applies, then keep the base rate for amounts
   // beyond the final reward band.
-  const bonusTiers = parseBinanceBonusTiers(asset, rawTiers);
-  const finalBonusTiers = bonusTiers.flatMap((tier) => Number.isFinite(baseApr)
-    ? [{ ...tier, apr: baseApr + tier.apr }]
-    : []);
+  const parsedBands = entries.map(([label, rawApr]) => ({ bounds: parseTierBounds(label, asset), bonusApr: parseBinanceApr(rawApr) }));
+  const finalBonusTiers = parsedBands.flatMap(({ bounds, bonusApr }) => bounds
+    ? [{ ...bounds, apr: baseAvailable && Number.isFinite(bonusApr) && bonusApr >= 0 ? baseApr + bonusApr : 0 }]
+    : []).sort((left, right) => left.min - right.min);
   const completeBonusBands = finalBonusTiers.length === entries.length
     && finalBonusTiers.length > 0
     && finalBonusTiers[0].min === 0
     && finalBonusTiers.every((tier, index) => index === 0 || finalBonusTiers[index - 1].max === tier.min);
-  const tiers = completeBonusBands && Number.isFinite(baseApr)
+  const tiers = completeBonusBands
     ? [
       ...finalBonusTiers,
-      { min: finalBonusTiers[finalBonusTiers.length - 1]!.max!, max: null, apr: baseApr, maxStatus: "unlimited" as const },
+      { min: finalBonusTiers[finalBonusTiers.length - 1]!.max!, max: null, apr: baseAvailable ? baseApr : 0, maxStatus: "unlimited" as const },
     ]
     : finalBonusTiers.length > 0 ? finalBonusTiers : [baseOnlyTier];
-  const complete = completeBonusBands && Number.isFinite(baseApr);
+  const aprAvailable = baseAvailable && parsedBands.every(({ bonusApr }) => Number.isFinite(bonusApr) && bonusApr >= 0);
+  const complete = completeBonusBands && aprAvailable;
   return {
     tiers,
     hasReportedTiers: true,
     complete,
+    aprStatus: aprAvailable ? "available" : "unavailable",
+    capacityStatus: completeBonusBands ? "available" : "unavailable",
+    tierStructureStatus: completeBonusBands ? "complete" : "incomplete",
   };
 }
 

@@ -1,7 +1,7 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import type { Product } from "./domain";
 import type { LiveRate } from "./live-rates";
-import { highestProductApr, productHasComparableApr, productQualifiesAsOpportunity, productShouldBeActive } from "./opportunity-policy";
+import { productHasComparableApr, productHoldingQualifiesForCatalog, productShouldBeActive } from "./opportunity-policy";
 import { resolveProductWithoutApiData } from "./product-status";
 import { catalogProductTemplates } from "./catalog-templates";
 import { syncDiagnostic } from "./sync-diagnostics";
@@ -13,8 +13,8 @@ import { platformCapabilityScopeKey } from "./platform-capabilities";
  * different product set for every account. A stable identity is matched by
  * exchange/account/asset and the upstream external ID (or adapter fallback);
  * mutable APR, quota and subscription-window fields update the same row.
- * Old verified rows are retained for history and archived only when their
- * holding is explicitly known to be zero.
+ * Old verified rows are retained for history. Active API rows are archived
+ * only with sufficient evidence under the shared holding/opportunity rules.
  */
 type CatalogRow = {
   owner_id: string;
@@ -89,7 +89,6 @@ export async function prepareProductCatalogSync(
   // schemas are being retired.
   const selectedByIdentity = new Map<string, Set<string>>();
   const selectedLegacyRows = new Set<string>();
-  const binanceCatalogDecisions: Array<Record<string, unknown>> = [];
   const normalizedIncomingRates = deduplicateRates(incomingRates);
   const incomingIdentityKeys = new Set(normalizedIncomingRates.flatMap((rate) => {
     const identityKey = rate.identityKey ?? rate.canonicalProductId ?? rate.productId;
@@ -128,27 +127,6 @@ export async function prepareProductCatalogSync(
     const alreadyActive = selectedCurrent?.status === "active";
     const active = productShouldBeActive(product, evidence, alreadyActive)
       || (alreadyActive && product.productDataMode === "api" && product.rateCoverage === "unavailable");
-    if (isBinanceLockedProduct(product)) {
-      binanceCatalogDecisions.push({
-        branch: "incoming_rate",
-        productId: id,
-        canonicalProductId,
-        identityKey,
-        externalProjectId: product.externalProductId ?? null,
-        accountId: product.accountId,
-        asset: product.asset,
-        termDays: product.termDays ?? null,
-        highestApr: highestProductApr(product),
-        availability: product.availability ?? null,
-        eligibilityStatus: product.eligibilityStatus ?? null,
-        holdingKnown: evidence.known,
-        holdingAmount: evidence.amount,
-        completeAccount: isCatalogScopeComplete(product, completeScopes),
-        previousStatus: selectedCurrent?.status ?? null,
-        active,
-        reason: productActivityReason(product, evidence, alreadyActive, active),
-      });
-    }
     mapProductIds(productIds, rate, canonicalProductId, identityKey, id);
 
     const selected = selectedByIdentity.get(identityKey) ?? new Set<string>();
@@ -184,31 +162,12 @@ export async function prepareProductCatalogSync(
         && (persistedHoldings.get(row.product_id) ?? 0) <= 0) {
         planned.set(row.product_id, { product, status: "archived" });
         statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
-        recordBinanceCatalogDecision(binanceCatalogDecisions, product, {
-          branch: "duplicate_identity",
-          productId: row.product_id,
-          selectedProductId: selectedForIdentity.product_id,
-          holdingKnown: persistedHoldings.has(row.product_id),
-          holdingAmount: persistedHoldings.get(row.product_id) ?? 0,
-          completeAccount: isCatalogScopeComplete(product, completeScopes),
-          active: false,
-          reason: "duplicate_identity_zero_holding",
-        });
         continue;
       }
       const evidence = existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeScopes);
       if (!evidence.known || evidence.amount > 0) continue;
       planned.set(row.product_id, { product, status: "archived" });
       statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
-      recordBinanceCatalogDecision(binanceCatalogDecisions, product, {
-        branch: "omitted_identity",
-        productId: row.product_id,
-        holdingKnown: evidence.known,
-        holdingAmount: evidence.amount,
-        completeAccount: isCatalogScopeComplete(product, completeScopes),
-        active: false,
-        reason: "omitted_identity_zero_holding",
-      });
     }
   }
 
@@ -224,15 +183,6 @@ export async function prepareProductCatalogSync(
     if (!evidence.known || evidence.amount > 0) continue;
     planned.set(row.product_id, { product, status: "archived" });
     statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
-    recordBinanceCatalogDecision(binanceCatalogDecisions, product, {
-      branch: "complete_account_absent",
-      productId: row.product_id,
-      holdingKnown: evidence.known,
-      holdingAmount: evidence.amount,
-      completeAccount: isCatalogScopeComplete(product, completeScopes),
-      active: false,
-      reason: "complete_account_absent_zero_holding",
-    });
   }
 
   // Some account APIs return holdings without product-rate rows. A positive
@@ -245,7 +195,9 @@ export async function prepareProductCatalogSync(
     const seed = catalogProductTemplates.find((product) => product.id === sourceId);
     const base = current ? parseProduct(current.payload)[0] : seed;
     if (!base || !Number.isFinite(amount)
-      || (base.productDataMode === "api" && (base.source.kind !== "live" || !productHasComparableApr(base)))) continue;
+      || (base.productDataMode === "api"
+        && (base.source.kind !== "live" || !productHasComparableApr(base))
+        && !productHoldingQualifiesForCatalog(base, amount))) continue;
     // A zero balance alone must not turn a normalization template into a
     // user-visible manual product. Positive holdings still need a row so the
     // user can complete product fields that the account API does not expose.
@@ -590,21 +542,30 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
     : base.tiers.map((tier, index) => rate.tierAprs?.[index] !== undefined
       ? { ...tier, id: `${id}-tier-${index}`, apr: rate.tierAprs[index] }
       : index === 0 ? { ...tier, id: `${id}-tier-${index}`, apr: rate.apr } : { ...tier, id: `${id}-tier-${index}` });
-  const capacityKnown = tiers[0]?.max !== null && tiers[0]?.max !== undefined;
+  const capacityKnown = Boolean(tiers[0] && (
+    (tiers[0].max !== null && tiers[0].max !== undefined && Number.isFinite(tiers[0].max))
+    || (tiers[0].max === null && tiers[0].maxStatus === "unlimited")
+  ));
+  const rateHasKnownCapacity = Boolean(rate.tiers?.some((tier) => (
+    (tier.max !== null && Number.isFinite(tier.max))
+    || (tier.max === null && tier.maxStatus === "unlimited")
+  )));
   const capacitySource = rate.capacitySource === "cache"
     ? capacityKnown ? "cache" : undefined
     : rate.capacitySource === "live"
       ? "live"
-      : capacityKnown ? base.capacitySource : undefined;
+      : rateHasKnownCapacity
+        ? "live"
+        : capacityKnown ? base.capacitySource : undefined;
   return {
     ...normalizedBase,
     id,
     name: rate.name ?? base.name,
     productType: rate.productType ?? base.productType,
-    termDays: rate.termDays ?? base.termDays,
+    termDays: rate.clearedProductFields?.includes("termDays") ? undefined : rate.termDays ?? base.termDays,
     minimumAmount: rate.minimumAmount ?? base.minimumAmount,
     subscriptionStartsAt: rate.subscriptionStartsAt ?? base.subscriptionStartsAt,
-    subscriptionEndsAt: rate.subscriptionEndsAt ?? base.subscriptionEndsAt,
+    subscriptionEndsAt: rate.clearedProductFields?.includes("subscriptionEndsAt") ? undefined : rate.subscriptionEndsAt ?? base.subscriptionEndsAt,
     availability: rate.availability ?? base.availability,
     eligibilityRequired: rate.eligibilityRequired ?? base.eligibilityRequired,
     eligibilityLabel: rate.eligibilityLabel ?? base.eligibilityLabel,
@@ -614,13 +575,21 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
     identityKey,
     tiers,
     rateCoverage: rate.rateCoverage === "base_only" && capacityKnown
+      && rate.aprStatus !== "unavailable" && rate.capacityStatus !== "unavailable" && rate.tierStructureStatus !== "incomplete"
       ? "complete"
       : rate.rateCoverage ?? (rate.tiers ? "complete" : base.rateCoverage),
+    aprStatus: rate.aprStatus,
+    capacityStatus: rate.capacityStatus,
+    tierStructureStatus: rate.tierStructureStatus,
     // A cache source is truthful only when the cached tier actually supplied
     // a finite limit. If both the live response and cache lack the limit,
     // keep the product as base_only without claiming that a quota was cached.
     capacitySource,
-    capacityFetchedAt: capacitySource === "cache" ? base.capacityFetchedAt ?? base.source.fetchedAt : rate.capacityFetchedAt,
+    capacityFetchedAt: capacitySource === "cache"
+      ? rate.capacityFetchedAt ?? base.capacityFetchedAt ?? (base.source.kind === "live" ? base.source.fetchedAt : undefined)
+      : capacitySource === "live" ? rate.capacityFetchedAt ?? rate.fetchedAt : undefined,
+    aprSource: rate.aprSource,
+    aprFetchedAt: rate.aprSource === "cache" ? rate.aprFetchedAt ?? rate.fetchedAt : undefined,
     source: rate.productDataMode === "manual"
       ? { kind: "manual", label: rate.sourceLabel }
       : { kind: "live", label: rate.sourceLabel, fetchedAt: rate.fetchedAt },
@@ -659,8 +628,13 @@ function productTemplateFromRate(rate: LiveRate, id: string, identityKey: string
       ? { kind: "manual", label: rate.sourceLabel }
       : { kind: "live", label: rate.sourceLabel, fetchedAt: rate.fetchedAt },
     rateCoverage: rate.rateCoverage ?? (rate.tiers ? "complete" : "base_only"),
-    capacitySource: rate.capacitySource ?? (rate.tiers?.some((tier) => tier.max !== null) ? "live" : undefined),
+    aprStatus: rate.aprStatus,
+    capacityStatus: rate.capacityStatus,
+    tierStructureStatus: rate.tierStructureStatus,
+    capacitySource: rate.capacitySource ?? (rate.tiers?.some((tier) => tier.max !== null || tier.maxStatus === "unlimited") ? "live" : undefined),
     capacityFetchedAt: rate.capacityFetchedAt,
+    aprSource: rate.aprSource,
+    aprFetchedAt: rate.aprSource === "cache" ? rate.aprFetchedAt ?? rate.fetchedAt : undefined,
     externalProductId: rate.externalProductId,
     identityKey,
   } as Product;
@@ -689,45 +663,6 @@ function parseProduct(payload: string) {
   } catch {
     return [];
   }
-}
-
-function isBinanceLockedProduct(product: Product) {
-  return product.exchange === "binance" && product.productType === "fixed";
-}
-
-function productActivityReason(
-  product: Product,
-  holding: HoldingEvidence,
-  alreadyActive: boolean,
-  active: boolean,
-) {
-  if (holding.known && holding.amount > 0) return "positive_holding";
-  if (product.availability === "unavailable" || product.eligibilityStatus === "ineligible") {
-    return active && !holding.known
-      ? "unavailable_or_ineligible_holding_unknown_preserved"
-      : "unavailable_or_ineligible";
-  }
-  if (active && !holding.known && alreadyActive) return "holding_unknown_preserved";
-  if (productQualifiesAsOpportunity(product)) return "opportunity_qualified";
-  return holding.known ? "zero_holding_opportunity_rule" : "holding_unknown_not_qualified";
-}
-
-function recordBinanceCatalogDecision(
-  decisions: Array<Record<string, unknown>>,
-  product: Product,
-  decision: Record<string, unknown>,
-) {
-  if (!isBinanceLockedProduct(product)) return;
-  decisions.push({
-    canonicalProductId: product.identityKey,
-    identityKey: product.identityKey,
-    externalProjectId: product.externalProductId ?? null,
-    accountId: product.accountId,
-    asset: product.asset,
-    termDays: product.termDays ?? null,
-    highestApr: highestProductApr(product),
-    ...decision,
-  });
 }
 
 function catalogProductId(canonicalProductId: string, identityKey: string) {

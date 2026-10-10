@@ -105,7 +105,7 @@ test("signed-out demo shows two synthetic product changes without requesting pri
     if (request.url().includes("/private/api/product-history")) privateHistoryRequests += 1;
   });
   await page.goto("/");
-  const row = page.getByRole("row").filter({ hasText: "Binance.com" }).filter({ hasText: "6.20%" });
+  const row = page.getByRole("row").filter({ hasText: "Binance Global" }).filter({ hasText: "6.20%" });
   await expect(row).not.toContainText("阶梯额度未获取");
   await expect(row).toContainText("5.35%");
   const historyButton = row.getByRole("button", { name: "查看变更记录" });
@@ -157,6 +157,29 @@ test("known quota and remaining capacity stay visible when unrelated product inf
   await expect(row.getByRole("progressbar", { name: "OKX 首档使用进度" })).toBeVisible();
   await expect(row.locator("td").nth(3)).toHaveText("—");
 });
+
+for (const viewport of [{ name: "desktop", width: 889, height: 1001 }, { name: "mobile", width: 375, height: 812 }]) {
+  test(`read-only API product facts have no empty editor on ${viewport.name}`, async ({ page }) => {
+    await openFixedPrivatePreview(page, viewport);
+    await page.getByRole("button", { name: "编辑持仓" }).click();
+
+    const apiFixedRows = page.locator("tr.product-row").filter({ hasText: "Binance Global" })
+      .filter({ has: page.locator(".product-rate-headline").filter({ hasText: "20.00%" }) });
+    await expect(apiFixedRows).toHaveCount(2);
+    for (const row of await apiFixedRows.all()) {
+      const productCell = row.locator("td").nth(1);
+      await expect(productCell).toContainText("买入日期");
+      await expect(productCell).toContainText("API 同步");
+      await expect(productCell.locator(".manual-fields")).toHaveCount(0);
+    }
+    await expect(page.locator(".manual-fields:empty")).toHaveCount(0);
+
+    const manualDateRow = page.locator("tr.product-row").filter({ hasText: "Bybit Global" })
+      .filter({ has: page.locator(".product-rate-headline").filter({ hasText: "6.00%" }) });
+    await expect(manualDateRow.locator(".manual-fields").getByRole("button", { name: "买入日", exact: true })).toBeVisible();
+    await expect(manualDateRow.locator(".manual-fields")).toHaveCSS("border-top-width", "1px");
+  });
+}
 
 test("a mixed-source product follows API holding rules when removed", async ({ page }) => {
   await page.goto("/private");
@@ -343,9 +366,9 @@ test("API settings modal keeps its three sections, truthful account copy, and re
       contentType: "application/json",
       body: JSON.stringify({
         sources: [
-          { id: "binance-global", label: "Binance.com", configured: false, requiresPassphrase: false, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
+          { id: "binance-global", label: "Binance Global", configured: false, requiresPassphrase: false, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
           { id: "binance-bahrain", label: "Binance Bahrain", configured: false, requiresPassphrase: false, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
-          { id: "bybit-global", label: "Bybit.com", configured: false, requiresPassphrase: false, syncDescription: "产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓自动同步" },
+          { id: "bybit-global", label: "Bybit Global", configured: false, requiresPassphrase: false, syncDescription: "产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓自动同步" },
           { id: "bitget-global", label: "Bitget", configured: false, requiresPassphrase: true, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
           { id: "okx-global", label: "OKX", configured: false, requiresPassphrase: true, syncDescription: "同步 USDT、USDC、BTC 活期持仓；每币种对应一条跟踪产品，成功完整回包缺少币种行按 0；产品 APR 需手动维护" },
         ],
@@ -425,7 +448,7 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(euRow).toContainText("产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）");
     await expect(euRow).toContainText("持仓需手动维护");
     await expect(euRow.getByRole("button", { name: "添加" })).toHaveCount(0);
-    const bybitRow = connectionList.locator(".api-connection-row").filter({ hasText: "Bybit.com" });
+    const bybitRow = connectionList.locator(".api-connection-row").filter({ hasText: "Bybit Global" });
     await expect(bybitRow).toContainText("产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓自动同步");
     const okxRow = connectionList.locator(".api-connection-row").filter({ hasText: "OKX" });
     await expect(okxRow).toContainText("每币种对应一条跟踪产品，成功完整回包缺少币种行按 0");
@@ -512,7 +535,7 @@ test("scrolling the product history popover at its boundary does not scroll the 
   await page.goto("/private?asset=USDT");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
 
-  const row = page.locator("tr.product-row").filter({ hasText: "Binance.com" }).first();
+  const row = page.locator("tr.product-row").filter({ hasText: "Binance Global" }).first();
   await row.getByRole("button", { name: /查看变更记录/ }).click();
   const popover = page.getByRole("dialog", { name: "产品变更记录" });
   await expect(popover).toBeVisible();
@@ -550,7 +573,7 @@ test("hover- and click-open history both close when their trigger leaves view", 
 test("clicking an open history bubble does not pin or toggle it", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto("/private?asset=USDT");
-  const trigger = page.locator("tr.product-row").filter({ hasText: "Binance.com" }).first()
+  const trigger = page.locator("tr.product-row").filter({ hasText: "Binance Global" }).first()
     .getByRole("button", { name: "查看变更记录" });
   await trigger.hover();
   const history = page.getByRole("dialog", { name: "产品变更记录" });
@@ -576,7 +599,7 @@ test("leaving one history bubble cancels its pending reopen before hovering anot
   await page.goto("/private?asset=USDT");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
 
-  const firstTrigger = page.locator("tr.product-row").filter({ hasText: "Binance.com" }).filter({ hasText: "5.80%" }).first()
+  const firstTrigger = page.locator("tr.product-row").filter({ hasText: "Binance Global" }).filter({ hasText: "5.80%" }).first()
     .getByRole("button", { name: /查看变更记录/ });
   const secondTrigger = page.locator("tr.product-row").filter({ hasText: "Binance Bahrain" }).first()
     .getByRole("button", { name: /查看变更记录/ });
@@ -761,7 +784,7 @@ test("local product history displays recorded events and clears the attention do
   await page.goto("/private");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
 
-  const productRow = page.getByRole("row").filter({ hasText: "Binance.com" }).filter({ hasText: "5.80%" });
+  const productRow = page.getByRole("row").filter({ hasText: "Binance Global" }).filter({ hasText: "5.80%" });
   const historyButton = productRow.locator(".product-history-trigger");
   await expect(historyButton).toBeVisible();
   await expect(historyButton).toHaveAccessibleName("查看变更记录，有需要关注的变化");
@@ -820,6 +843,8 @@ test("empty local product history opens directly in its stable empty state", asy
   expect(Math.abs(singleEventCenterFromHeader - emptyAlignment.centerFromHeader)).toBeLessThan(1);
 
   await singleEventDialog.locator(".product-history-event-copy").click();
+  // Clicking non-focusable content must not close after the 180ms blur delay.
+  await page.waitForTimeout(220);
   await expect(singleEventDialog).toBeVisible();
   await page.mouse.move(4, 4);
   await expect(singleEventDialog).toHaveCount(0);
@@ -828,7 +853,7 @@ test("empty local product history opens directly in its stable empty state", asy
 test("history request starts during the hover-intent delay", async ({ page }) => {
   await page.goto("/private");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
-  const productRow = page.getByRole("row").filter({ hasText: "Bybit.com" }).filter({ hasText: "8.80%" });
+  const productRow = page.getByRole("row").filter({ hasText: "Bybit Global" }).filter({ hasText: "8.80%" });
   const hoverStartedAt = Date.now();
   await productRow.getByRole("button", { name: "查看变更记录" }).hover();
 
@@ -841,11 +866,92 @@ test("history request starts during the hover-intent delay", async ({ page }) =>
   expect(Date.now() - hoverStartedAt).toBeLessThan(600);
 });
 
+test("history keyboard focus reaches retry, returns with Escape, and does not reopen", async ({ page }) => {
+  await page.goto("/private");
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+  const productRow = page.getByRole("row").filter({ hasText: "Bybit Global" }).filter({ hasText: "8.80%" });
+  const historyButton = productRow.getByRole("button", { name: "查看变更记录" });
+  await historyButton.focus();
+
+  const dialog = page.getByRole("dialog", { name: "产品变更记录" });
+  const retry = dialog.getByRole("button", { name: "加载失败，点击重试" });
+  await expect(dialog.getByRole("status")).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(dialog).toBeFocused();
+  await expect(retry).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(retry).toBeFocused();
+
+  await page.keyboard.press("Shift+Tab");
+  await expect(historyButton).toBeFocused();
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await expect(retry).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await expect(dialog.locator(".product-history-event")).toHaveCount(3);
+  await expect(dialog).toBeFocused();
+  await page.mouse.move(4, 4);
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(historyButton).toBeFocused();
+  // Moving focus after Escape must not reopen the dismissed bubble.
+  await page.keyboard.press("Tab");
+  await expect(historyButton).not.toBeFocused();
+  await expect(historyButton).toHaveAttribute("aria-expanded", "false");
+});
+
+test("history keyboard pagination stays usable and Tab leaves in page order", async ({ page }) => {
+  await page.goto("/private");
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+  const productRow = page.getByRole("row").filter({ hasText: "Bybit Global" }).filter({ hasText: "6.00%" });
+  const historyButton = productRow.getByRole("button", { name: "查看变更记录" });
+  const nextPageControl = await historyButton.evaluate((button) => {
+    const controls = [...document.querySelectorAll("a[href], button, input, select, textarea, [tabindex]")]
+      .filter((element) => element.tabIndex >= 0 && !element.matches(":disabled") && !element.closest("[inert]") && element.getClientRects().length > 0);
+    const next = controls[controls.indexOf(button) + 1];
+    if (!next) throw new Error("Expected a page control after the history trigger");
+    next.setAttribute("data-keyboard-history-next", "true");
+    return "[data-keyboard-history-next]";
+  });
+  await historyButton.focus();
+
+  const dialog = page.getByRole("dialog", { name: "产品变更记录" });
+  const more = dialog.getByRole("button", { name: "加载更早记录" });
+  await expect(more).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(more).toBeFocused();
+  await more.hover();
+  await page.keyboard.press("Enter");
+  await expect(dialog.getByRole("button", { name: "加载中…" })).toBeDisabled();
+  await page.mouse.move(4, 4);
+  await expect(dialog.locator(".product-history-event")).toHaveCount(6);
+  await expect(dialog).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.locator(nextPageControl)).toBeFocused();
+  await expect(historyButton).toHaveAttribute("aria-expanded", "false");
+});
+
+test("mouse history remains transient when the pointer leaves during loading", async ({ page }) => {
+  await page.goto("/private");
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+  const productRow = page.getByRole("row").filter({ hasText: "Bybit Global" }).filter({ hasText: "6.00%" });
+  const historyButton = productRow.getByRole("button", { name: "查看变更记录" });
+  await historyButton.hover();
+  const dialog = page.getByRole("dialog", { name: "产品变更记录" });
+  await dialog.getByRole("button", { name: "加载更早记录" }).click();
+  await expect(dialog.getByRole("button", { name: "加载中…" })).toBeDisabled();
+  await page.mouse.move(4, 4);
+  await expect(historyButton).toHaveAttribute("aria-expanded", "false");
+  await expect(dialog).toHaveCount(0);
+});
+
 test("three local Bybit USDT products separately preview history failure, pagination, and more-page failure", async ({ page }) => {
   await page.goto("/private");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
 
-  const initialFailureRow = page.getByRole("row").filter({ hasText: "Bybit.com" }).filter({ hasText: "8.80%" });
+  const initialFailureRow = page.getByRole("row").filter({ hasText: "Bybit Global" }).filter({ hasText: "8.80%" });
   await initialFailureRow.getByRole("button", { name: "查看变更记录" }).hover();
   const dialog = page.getByRole("dialog", { name: "产品变更记录" });
   await expect(dialog.locator(".product-history-loading")).toBeVisible();
@@ -898,7 +1004,7 @@ test("three local Bybit USDT products separately preview history failure, pagina
   // while the pointer is over its contents so its paging controls remain usable.
   await page.goto("/private");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
-  const paginationRow = page.getByRole("row").filter({ hasText: "Bybit.com" }).filter({ hasText: "6.00%" });
+  const paginationRow = page.getByRole("row").filter({ hasText: "Bybit Global" }).filter({ hasText: "6.00%" });
   await paginationRow.getByRole("button", { name: "查看变更记录" }).hover();
   const paginationDialog = page.getByRole("dialog", { name: "产品变更记录" });
   await expect(paginationDialog.locator(".product-history-loading")).toBeVisible();
@@ -917,7 +1023,7 @@ test("three local Bybit USDT products separately preview history failure, pagina
 
   await page.goto("/private");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
-  const moreErrorRow = page.getByRole("row").filter({ hasText: "Bybit.com" }).filter({ hasText: "5.90%" });
+  const moreErrorRow = page.getByRole("row").filter({ hasText: "Bybit Global" }).filter({ hasText: "5.90%" });
   await moreErrorRow.getByRole("button", { name: "查看变更记录" }).hover();
   const moreErrorDialog = page.getByRole("dialog", { name: "产品变更记录" });
   await expect(moreErrorDialog.locator(".product-history-event")).toHaveCount(3);
@@ -939,7 +1045,7 @@ test("saving an edited holding submits only the local preview payload", async ({
   await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
 
   await page.getByRole("button", { name: "编辑持仓" }).click();
-  const productRow = page.locator("tr.product-row").filter({ hasText: "Binance.com" }).filter({ hasText: "持仓 40.00" });
+  const productRow = page.locator("tr.product-row").filter({ hasText: "Binance Global" }).filter({ hasText: "持仓 40.00" });
   await productRow.getByLabel("USDT 产品持仓").fill("41.25");
   await page.getByRole("button", { name: "保存持仓" }).click();
 
@@ -956,7 +1062,7 @@ test("removing a manual product confirms the copy and submits a local preview de
   await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
   await page.getByRole("button", { name: "编辑持仓" }).click();
 
-  const productRow = page.locator("tr.product-row").filter({ hasText: "Binance.com" }).filter({ hasText: "持仓 40.00" });
+  const productRow = page.locator("tr.product-row").filter({ hasText: "Binance Global" }).filter({ hasText: "持仓 40.00" });
   await productRow.getByRole("button", { name: "移除产品" }).click();
   const dialog = page.getByRole("dialog", { name: "移除手动产品" });
   await expect(dialog).toContainText("移除该产品及其已保存的持仓和人工设置；产品变更记录仍会保留。");
@@ -1008,6 +1114,13 @@ for (const viewport of [
     await expect(page).toHaveScreenshot(`private-editing-${viewport.name}.png`, {
       fullPage: true, animations: "disabled", caret: "hide",
     });
+    await page.getByRole("button", { name: "取消", exact: true }).click();
+    await page.getByRole("button", { name: "BTC", exact: true }).first().click();
+    await expect(page.getByRole("heading", { name: "BTC 持仓" })).toBeVisible();
+    await page.getByRole("button", { name: "编辑持仓" }).click();
+    const btcSubtitle = page.locator(".table-toolbar-subtitle");
+    await expect(btcSubtitle).toContainText("仅展示已有持仓，或 APR ≥ 6% 的活期及 7 天内定期产品，去");
+    await expect(btcSubtitle.getByRole("button", { name: "配置 API" })).toBeVisible();
   });
 
   test(`private empty and sync-status pages match the ${viewport.name} full-page baselines`, async ({ page }) => {
@@ -1039,7 +1152,7 @@ for (const viewport of [
     });
     await dialog.getByRole("button", { name: "关闭" }).click();
 
-    const historyRow = page.locator("tr.product-row").filter({ hasText: "Binance.com" }).first();
+    const historyRow = page.locator("tr.product-row").filter({ hasText: "Binance Global" }).first();
     await historyRow.getByRole("button", { name: "查看变更记录" }).click();
     await expect(page.getByRole("dialog", { name: "产品变更记录" })).toBeVisible();
     await expect(page).toHaveScreenshot(`private-history-${viewport.name}.png`, {

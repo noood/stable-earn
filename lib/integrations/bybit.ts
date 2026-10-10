@@ -217,7 +217,8 @@ export async function scanBybitFlexibleProducts(accountId: "bybit-global" | "byb
     .map((row) => {
       const rawMaxAmount = probeNumber(row.maxStakeAmount);
       const maxAmount = rawMaxAmount === -1 ? null : rawMaxAmount;
-      const tierSchedule = parseBybitFlexibleTiers(row.tierAprDetails, rawMaxAmount);
+      const maximumUnreadable = row.maxStakeAmount !== undefined && (rawMaxAmount === undefined || (rawMaxAmount !== -1 && rawMaxAmount <= 0));
+      const tierSchedule = parseBybitFlexibleTiers(row.tierAprDetails, rawMaxAmount, maximumUnreadable);
       const tiers = tierSchedule.tiers;
       const apr = probePercent(row.estimateApr ?? row.apr);
       const apy = probePercent(row.estimateApy ?? row.apy);
@@ -257,13 +258,13 @@ export function parseBybitFlexibleTiers(
   productMaximumUnreadable = false,
 ) {
   type ParsedTier = { min: number; max: number | null; apr?: number; apy?: number; maxStatus?: "unlimited"; maxSource?: "api" | "product_limit" };
-  if (!details?.length) return { tiers: [] as ParsedTier[], complete: true, hasTiers: false };
+  if (!details?.length) return { tiers: [] as ParsedTier[], complete: true, hasTiers: false,
+    aprStatus: "unavailable" as const, capacityStatus: "available" as const, tierStructureStatus: "complete" as const };
   const parsed = details.map((detail, index) => {
     const min = probeNumber(detail.min);
     const rawMax = probeNumber(detail.max);
     const apr = probePercent(detail.estimateApr ?? detail.apr);
     const apy = probePercent(detail.estimateApy ?? detail.apy);
-    const hasRate = apr !== undefined || apy !== undefined;
     const maxFieldOmitted = detail.max === undefined || detail.max === null;
     const mayUseProductMaximum = index === details.length - 1 && maxFieldOmitted
       && productMaximum !== undefined && (productMaximum === -1 || (min !== undefined && productMaximum > min));
@@ -271,20 +272,27 @@ export function parseBybitFlexibleTiers(
       && (productMaximum === undefined || productMaximum === -1);
     const resolvedMax = rawMax ?? (mayUseProductMaximum ? productMaximum : mayInferUnlimited ? -1 : undefined);
     const hasMax = resolvedMax === -1 || (resolvedMax !== undefined && min !== undefined && resolvedMax > min);
-    return min !== undefined && min >= 0 && hasMax && hasRate
-      ? { valid: true as const, tier: { min, max: resolvedMax === -1 ? null : resolvedMax!, ...(apr !== undefined ? { apr } : {}), ...(apy !== undefined ? { apy } : {}), ...(resolvedMax === -1 ? { maxStatus: "unlimited" as const } : {}), ...(rawMax === undefined && mayUseProductMaximum ? { maxSource: "product_limit" as const } : { maxSource: "api" as const }) } }
+    return min !== undefined && min >= 0
+      ? { valid: true as const, tier: { min, max: hasMax && resolvedMax !== -1 ? resolvedMax! : null, ...(apr !== undefined && apr >= 0 ? { apr } : {}), ...(apy !== undefined && apy >= 0 ? { apy } : {}), ...(resolvedMax === -1 ? { maxStatus: "unlimited" as const } : {}), ...(rawMax === undefined && mayUseProductMaximum ? { maxSource: "product_limit" as const } : { maxSource: "api" as const }) } }
       : { valid: false as const };
   });
   const tiers = parsed.flatMap((entry) => entry.valid ? [entry.tier] : []).sort((left, right) => left.min - right.min);
-  const complete = tiers.length === details.length
+  const structureComplete = tiers.length === details.length
     && tiers.length > 0
     && tiers[0]!.min === 0
-    && tiers.every((tier, index) => index === 0 || tiers[index - 1]!.max === tier.min)
-    && tiers.slice(0, -1).every((tier) => tier.max !== null)
-    && tiers.filter((tier) => tier.maxStatus === "unlimited").length <= 1
-    && (tiers.at(-1)?.maxStatus !== "unlimited" || tiers.at(-1)?.max === null)
+    && tiers.every((tier, index) => index === 0 || tier.min > tiers[index - 1]!.min
+      && (tiers[index - 1]!.max === null && tiers[index - 1]!.maxStatus !== "unlimited" || tiers[index - 1]!.max === tier.min));
+  const aprAvailable = tiers.length === details.length && tiers.every((tier) => tier.apr !== undefined || tier.apy !== undefined);
+  const capacityAvailable = structureComplete && !productMaximumUnreadable
+    && tiers.every((tier) => tier.max !== null || tier.maxStatus === "unlimited")
     && tierScheduleCoversProduct(tiers, productMaximum);
-  return { tiers, complete, hasTiers: true };
+  // A confirmed total limit beyond a finite last tier proves a missing range,
+  // rather than a field that can be patched onto the existing tier count.
+  const missingRange = tierScheduleHasConfirmedMissingRange(tiers, productMaximum);
+  return { tiers, complete: aprAvailable && capacityAvailable, hasTiers: true,
+    aprStatus: aprAvailable ? "available" as const : "unavailable" as const,
+    capacityStatus: capacityAvailable ? "available" as const : "unavailable" as const,
+    tierStructureStatus: structureComplete && !missingRange ? "complete" as const : "incomplete" as const };
 }
 
 /** Public, read-only check for Bybit fixed-term product/APR rows by account region. */
@@ -309,7 +317,7 @@ export async function scanBybitFixedProducts(accountId: "bybit-global" | "bybit-
       if (!productId || !duration || !supportedFixedAssets.has(coin)) return [];
       const tiers = fixedProductTiers(row);
       const tierSchedule = fixedProductTierSchedule(row);
-      const hasTieredRate = (row.tieredApyList ?? []).some((tier) => Number.isFinite(parsePercent(tier.apy)));
+      const hasTieredRate = (row.tieredApyList ?? []).length > 0;
       return [{
         externalProductId: `${productId}@${duration}`,
         coin,
@@ -317,8 +325,11 @@ export async function scanBybitFixedProducts(accountId: "bybit-global" | "bybit-
         status: row.status ?? null,
         tierCount: row.tieredApyList?.length ?? 0,
         tierScheduleComplete: tierSchedule.complete,
-        rateCoverage: tierSchedule.complete ? "complete" as const : tiers.length ? "partial" as const : "unavailable" as const,
-        rateShape: hasTieredRate ? "tiered_rate" as const : tiers.length ? "single_rate" as const : "no_rate" as const,
+        rateCoverage: tierSchedule.aprStatus === "unavailable" ? "unavailable" as const : tierSchedule.complete ? "complete" as const : "partial" as const,
+        aprStatus: tierSchedule.aprStatus,
+        capacityStatus: tierSchedule.capacityStatus,
+        tierStructureStatus: tierSchedule.tierStructureStatus,
+        rateShape: hasTieredRate ? "tiered_rate" as const : tierSchedule.aprStatus === "available" ? "single_rate" as const : "no_rate" as const,
         ...(tiers.length ? { apy: tiers[0].apr, tiers: tiers.map((tier) => ({ min: tier.min, max: tier.max, apy: tier.apr, ...(tier.maxStatus ? { maxStatus: tier.maxStatus } : {}) })) } : {}),
         ...(probeNumber(row.minStakeAmount) !== undefined ? { minAmount: probeNumber(row.minStakeAmount) } : {}),
         maxAmount: row.maxStakeAmount === undefined ? null : probeAmountLimit(row.maxStakeAmount) ?? null,
@@ -517,24 +528,32 @@ function fixedProductRate(row: BybitFixedProductRow) {
     legacyIdentityKey: `bybit-global:${asset}:fixed:${sourceProductId}`,
     name: `Fixed Saving · ${formatDuration(row.duration)}`,
     apr: tiers[0]?.apr ?? 0,
-    rateShape: (row.tieredApyList ?? []).some((tier) => Number.isFinite(parsePercent(tier.apy)))
+    aprStatus: tierSchedule.aprStatus,
+    capacityStatus: tierSchedule.capacityStatus,
+    tierStructureStatus: tierSchedule.tierStructureStatus,
+    rateShape: (row.tieredApyList ?? []).length > 0
       ? "tiered_rate" as const
-      : tiers.length ? "single_rate" as const : "no_rate" as const,
+      : tierSchedule.aprStatus === "available" ? "single_rate" as const : "no_rate" as const,
     tiers,
     fetchedAt: new Date().toISOString(),
-    sourceLabel: tiers.length
+    sourceLabel: tierSchedule.aprStatus === "available"
       ? tierSchedule.complete ? "Bybit 官方固定期限产品与账户持仓 API" : "Bybit 定期档位未覆盖产品总额度；不参与收益计算"
       : "Bybit 定期产品 APR 未获取；不参与收益计算",
     productType: "fixed" as const,
     termDays: termDays > 0 ? termDays : undefined,
     minimumAmount: finiteNumber(row.minStakeAmount),
+    subscriptionMaximum: probeAmountLimit(row.maxStakeAmount) ?? null,
+    subscriptionMaximumStatus: row.maxStakeAmount === undefined ? "unlimited" as const
+      : probeNumber(row.maxStakeAmount) === -1 ? "unlimited" as const
+        : probeNumber(row.maxStakeAmount) !== undefined && probeNumber(row.maxStakeAmount)! > 0 ? "limited" as const : "unreadable" as const,
+    subscriptionMaximumSource: row.maxStakeAmount === undefined ? "not_returned" as const : "api" as const,
     subscriptionStartsAt: subscriptionStart,
     subscriptionEndsAt: subscriptionEnd,
     availability: row.status === "Available" ? "available" as const : "unavailable" as const,
     eligibilityRequired,
     eligibilityLabel,
     eligibilityStatus: eligibilityRequired ? "unknown" as const : undefined,
-    rateCoverage: tierSchedule.complete ? "complete" as const : tiers.length ? "partial" as const : "unavailable" as const,
+    rateCoverage: tierSchedule.aprStatus === "unavailable" ? "unavailable" as const : tierSchedule.complete ? "complete" as const : "partial" as const,
     catalog: {
       accountId: "bybit-global",
       exchange: "bybit" as const,
@@ -638,40 +657,48 @@ function fixedProductTierSchedule(row: BybitFixedProductRow) {
   })).sort((left, right) => (left.min ?? 0) - (right.min ?? 0));
   const tiered: Array<{ min: number; max: number | null; apr: number; maxStatus?: "unlimited" }> = parsedTierRows.flatMap((tier, index) => {
     const min = tier.min;
-    if (min === undefined || min < 0 || !Number.isFinite(tier.apr) || tier.apr < 0) return [];
-    if (tier.max === -1) return [{ min, max: null, apr: tier.apr, maxStatus: "unlimited" as const }];
-    if (tier.max !== undefined) return [{ min, max: tier.max > min ? tier.max : null, apr: tier.apr }];
+    if (min === undefined || min < 0) return [];
+    const apr = Number.isFinite(tier.apr) && tier.apr >= 0 ? tier.apr : 0;
+    if (tier.max === -1) return [{ min, max: null, apr, maxStatus: "unlimited" as const }];
+    if (tier.max !== undefined) return [{ min, max: tier.max > min ? tier.max : null, apr }];
     if (tier.maxFieldOmitted && index === parsedTierRows.length - 1) {
       if (parsedProductMaximum !== undefined && parsedProductMaximum > min) {
-        return [{ min, max: parsedProductMaximum, apr: tier.apr }];
+        return [{ min, max: parsedProductMaximum, apr }];
       }
       if (parsedProductMaximum === -1 || row.maxStakeAmount === undefined) {
-        return [{ min, max: null, apr: tier.apr, maxStatus: "unlimited" as const }];
+        return [{ min, max: null, apr, maxStatus: "unlimited" as const }];
       }
     }
-    return [{ min, max: null, apr: tier.apr }];
+    return [{ min, max: null, apr }];
   });
   if (rawTiered.length > 0) {
     const structureComplete = tiered.length === rawTiered.length
       && tiered[0]?.min === 0
-      && tiered.every((tier, index) => index === 0 || tiered[index - 1]!.max === tier.min)
-      && tiered.every((tier, index) => tier.max !== null || (index === tiered.length - 1 && tier.maxStatus === "unlimited"))
-      && tiered.slice(0, -1).every((tier) => tier.max !== null);
-    const complete = productLimitIsReadable && structureComplete && tierScheduleCoversProduct(tiered, parsedProductMaximum);
+      && tiered.every((tier, index) => index === 0 || tier.min > tiered[index - 1]!.min
+        && (tiered[index - 1]!.max === null && tiered[index - 1]!.maxStatus !== "unlimited" || tiered[index - 1]!.max === tier.min));
+    const aprAvailable = parsedTierRows.every((tier) => Number.isFinite(tier.apr) && tier.apr >= 0);
+    const capacityAvailable = productLimitIsReadable && structureComplete
+      && tiered.every((tier) => tier.max !== null || tier.maxStatus === "unlimited")
+      && tierScheduleCoversProduct(tiered, parsedProductMaximum);
     return {
-      tiers: structureComplete ? applyFixedProductLimit(tiered, row.maxStakeAmount) : tiered,
-      complete,
+      tiers: capacityAvailable ? applyFixedProductLimit(tiered, row.maxStakeAmount) : tiered,
+      complete: aprAvailable && capacityAvailable,
+      aprStatus: aprAvailable ? "available" as const : "unavailable" as const,
+      capacityStatus: capacityAvailable ? "available" as const : "unavailable" as const,
+      tierStructureStatus: structureComplete && !tierScheduleHasConfirmedMissingRange(tiered, parsedProductMaximum) ? "complete" as const : "incomplete" as const,
     };
   }
 
   const ownCoinRates = (row.interestCoinApyList ?? []).filter((item) => item.coin?.toUpperCase() === row.coin?.toUpperCase());
-  if (ownCoinRates.length !== 1) return { tiers: [], complete: false };
   const apr = parsePercent(ownCoinRates[0]?.apy);
+  const aprAvailable = ownCoinRates.length === 1 && Number.isFinite(apr) && apr >= 0;
   const max = parsedProductMaximum ?? 0;
-  if (!Number.isFinite(apr) || apr < 0) return { tiers: [], complete: false };
   const hasFiniteProductLimit = row.maxStakeAmount !== undefined && max > 0 && max !== -1;
-  return { tiers: [{ min: 0, max: hasFiniteProductLimit ? max : null, apr,
-    ...(row.maxStakeAmount === undefined || max === -1 ? { maxStatus: "unlimited" as const } : {}) }], complete: productLimitIsReadable };
+  return { tiers: [{ min: 0, max: hasFiniteProductLimit ? max : null, apr: aprAvailable ? apr : 0,
+    ...(row.maxStakeAmount === undefined || max === -1 ? { maxStatus: "unlimited" as const } : {}) }], complete: aprAvailable && productLimitIsReadable,
+    aprStatus: aprAvailable ? "available" as const : "unavailable" as const,
+    capacityStatus: productLimitIsReadable ? "available" as const : "unavailable" as const,
+    tierStructureStatus: ownCoinRates.length > 1 ? "incomplete" as const : "complete" as const };
 }
 
 function tierScheduleCoversProduct(
@@ -685,6 +712,17 @@ function tierScheduleCoversProduct(
     return lastTier.maxStatus === "unlimited" || (lastTier.max !== null && lastTier.max >= productMaximum);
   }
   return true;
+}
+
+function tierScheduleHasConfirmedMissingRange(
+  tiers: ReadonlyArray<{ max: number | null }>,
+  productMaximum?: number,
+) {
+  const lastMaximum = tiers.at(-1)?.max;
+  // An unreadable bound is unknown, not proof that a tier is absent. Only a
+  // confirmed finite endpoint below the total limit establishes a gap.
+  return lastMaximum !== undefined && lastMaximum !== null
+    && (productMaximum === -1 || (productMaximum !== undefined && productMaximum > lastMaximum));
 }
 
 function applyFixedProductLimit(

@@ -29,8 +29,11 @@ export async function PUT(request: Request) {
 
   let body: unknown;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "配置格式不正确。" }, { status: 400, headers: privateResponseHeaders }); }
-  const candidate = body as Partial<{ accountId: string; apiKey: string; apiSecret: string; passphrase: string }>;
-  const account = credentialAccount(candidate.accountId ?? "");
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return NextResponse.json({ error: "配置格式不正确。" }, { status: 400, headers: privateResponseHeaders });
+  }
+  const candidate = body as Partial<{ accountId: unknown; apiKey: unknown; apiSecret: unknown; passphrase: unknown }>;
+  const account = credentialAccount(typeof candidate.accountId === "string" ? candidate.accountId : "");
   if (!account) return NextResponse.json({ error: "不支持该账户。" }, { status: 400, headers: privateResponseHeaders });
 
   const apiKey = cleanSecret(candidate.apiKey);

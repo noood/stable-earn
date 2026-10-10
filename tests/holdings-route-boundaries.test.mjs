@@ -78,3 +78,21 @@ test("a null amount cannot erase a holding, and an API amount must match its tru
   assert.equal(accepted.status, 200);
   assert.equal(f.amount(), 50);
 });
+
+test("malformed override objects cannot silently clear a user's saved manual fields", async () => {
+  const f = fixture({ mixedSource: true });
+  f.db.sqlite.prepare(`INSERT INTO product_overrides (user_id, product_id, confirmed_apr, updated_at)
+    VALUES ('user', ?, 8, '2026-10-06T00:00:00.000Z')`).run(f.product.id);
+  f.db.sqlite.prepare(`INSERT INTO product_override_limits (user_id, product_id, first_tier_limit, updated_at)
+    VALUES ('user', ?, 300, '2026-10-06T00:00:00.000Z')`).run(f.product.id);
+  for (const raw of [null, [], true, "bad", { apr: true }, { firstTierLimit: [1] }]) {
+    const response = await f.route.PUT(f.request({ holdings: {}, changedHoldingProductIds: [], changedOverrideProductIds: [f.product.id], overrides: { [f.product.id]: raw } }));
+    assert.equal(response.status, 400);
+    const saved = f.db.sqlite.prepare("SELECT confirmed_apr FROM product_overrides WHERE user_id = 'user' AND product_id = ?").get(f.product.id);
+    const limit = f.db.sqlite.prepare("SELECT first_tier_limit FROM product_override_limits WHERE user_id = 'user' AND product_id = ?").get(f.product.id);
+    assert.equal(saved.confirmed_apr, 8);
+    assert.equal(limit.first_tier_limit, 300);
+  }
+  const cleared = await f.route.PUT(f.request({ holdings: {}, changedHoldingProductIds: [], changedOverrideProductIds: [f.product.id], overrides: { [f.product.id]: { apr: null, firstTierLimit: null } } }));
+  assert.equal(cleared.status, 200);
+});

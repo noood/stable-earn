@@ -55,8 +55,10 @@ export function productInformationIssues(
   if (product.rateCoverage === "unavailable") issues.push(apiManaged ? "APR 未获取" : "APR 待填写");
   if (product.rateCoverage === "max_only") issues.push("阶梯 APR 未获取");
   if (product.rateCoverage === "partial") issues.push("阶梯结构未获取");
-  if (apiManaged && product.rateCoverage === "base_only") issues.push("首档额度未获取");
-  if (apiManaged && product.rateCoverage === "complete" && productHasUnknownTierCapacity(product)) {
+  if (apiManaged && (product.rateCoverage === "base_only" || product.capacityStatus === "unavailable") && !productHasUnknownTierCapacity(product)) {
+    issues.push("阶梯额度未获取");
+  }
+  if (apiManaged && productHasUnknownTierCapacity(product)) {
     issues.push(product.tiers[0]?.max == null && product.tiers[0].maxStatus !== "unlimited" ? "首档额度未获取" : "阶梯额度未获取");
   }
   if (productNeedsManualLimit(product) && (override?.firstTierLimit === null || override?.firstTierLimit === undefined)) issues.push("首档额度待填写");

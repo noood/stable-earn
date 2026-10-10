@@ -29,6 +29,62 @@ test("an existing API product keeps its row and marks APR unavailable after a co
   assert.equal(kept.productDataMode, "api");
 });
 
+test("an active API product is retained when a partial APR schedule cannot prove it is below the threshold", async () => {
+  const db = sqliteDb();
+  const product = load("@/lib/local-preview").localPrivateProductsPreview().products
+    .find((item) => item.id === "bn-g-usdt");
+  assert.ok(product);
+  const now = "2026-10-06T00:00:00.000Z";
+  db.sqlite.prepare(`INSERT INTO product_catalog
+    (owner_id, product_id, canonical_product_id, identity_key, payload, status, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`)
+    .run("user", product.id, product.identityKey, product.identityKey, JSON.stringify(product), now, now);
+
+  const result = await prepareProductCatalogSync(db, "user", [{
+    productId: product.identityKey,
+    identityKey: product.identityKey,
+    externalProductId: product.externalProductId,
+    apr: 5,
+    tiers: [{ min: 0, max: 100, apr: 5 }],
+    rateCoverage: "partial",
+    fetchedAt: now,
+    sourceLabel: "Binance API",
+    productType: product.productType,
+    catalog: { accountId: product.accountId, exchange: product.exchange, region: product.region,
+      asset: product.asset, holdingDataMode: "api", apiAccess: "authenticated" },
+  }], { [product.identityKey]: 0 }, [], [`${product.accountId}:${product.asset}:${product.productType}`]);
+
+  assert.ok(result.products.some((item) => item.id === product.id));
+  assert.equal(result.products.find((item) => item.id === product.id).rateCoverage, "partial");
+});
+
+test("an API holding-only product re-enters the catalog only above the strict 0.01 boundary", async () => {
+  const template = load("@/lib/local-preview").localPrivateProductsPreview().products
+    .find((item) => item.id === "bn-g-usdt");
+  assert.ok(template);
+  const now = "2026-10-06T00:00:00.000Z";
+
+  for (const [amount, expectedActive] of [[0.01, false], [0.010000001, true]]) {
+    const db = sqliteDb();
+    const product = { ...template, source: { kind: "live", label: "API", fetchedAt: now },
+      productDataMode: "api", rateCoverage: "unavailable", tiers: [] };
+    db.sqlite.prepare(`INSERT INTO product_catalog
+      (owner_id, product_id, canonical_product_id, identity_key, payload, status, first_seen_at, last_seen_at, archived_at)
+      VALUES (?, ?, ?, ?, ?, 'archived', ?, ?, ?)`)
+      .run("user", product.id, product.identityKey, product.identityKey, JSON.stringify(product), now, now, now);
+
+    const result = await prepareProductCatalogSync(db, "user", [], {
+      [product.id]: amount,
+    });
+    await db.batch(result.statements);
+
+    assert.equal(result.products.some((item) => item.id === product.id), expectedActive, `amount=${amount}`);
+    const status = db.sqlite.prepare("SELECT status FROM product_catalog WHERE product_id = ?")
+      .get(product.id).status;
+    assert.equal(status, expectedActive ? "active" : "archived", `amount=${amount}`);
+  }
+});
+
 test("a complete supported scope cannot zero or archive an unsupported sibling scope", async () => {
   const { createProductTemplate } = load("@/lib/product-template");
   const db = sqliteDb();

@@ -40,7 +40,7 @@ export function dashboardReadState(input: {
 }
 
 export function syncFailureSummary(failures: string[]): string {
-  failures = failures.map(sanitizeSyncFailure);
+  failures = failures.map((failure) => sanitizeSyncFailure(normalizePlatformLabels(failure)));
   if (failures.includes("页面数据读取失败")) return serverReadFailureMessage;
   const incomplete = failures.filter(isIncompleteFailure);
   const actualFailures = failures.filter((value) => !isIncompleteFailure(value));
@@ -56,6 +56,12 @@ export function syncFailureSummary(failures: string[]): string {
   return messages.join("，");
 }
 
+function normalizePlatformLabels(value: string) {
+  return value
+    .replace(/^Binance\.com(?=\s|（|$)/, "Binance Global")
+    .replace(/^Bybit\.com(?=\s|（|$)/, "Bybit Global");
+}
+
 function formatIncompleteFailure(value: string) {
   const bitget = value.match(/^Bitget（(.+)）$/);
   return bitget ? `Bitget ${bitget[1].replace("接口未完整返回", "数据未完整返回")}` : value;
@@ -66,7 +72,7 @@ function isIncompleteFailure(value: string) {
 }
 
 function failureTarget(value: string) {
-  const platform = ["Binance.com", "Binance Bahrain", "Bybit.com", "Bybit EU", "Bitget", "OKX", "MEXC"]
+  const platform = ["Binance Global", "Binance Bahrain", "Bybit Global", "Bybit EU", "Bitget", "OKX", "MEXC"]
     .find((candidate) => value.startsWith(candidate));
   if (!platform) return value.replace(/（.*$/, "").trim();
   const scope = value.slice(platform.length);

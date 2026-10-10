@@ -25,10 +25,13 @@ export type LiveRate = {
   sourceLabel: string;
   productType?: "flexible" | "fixed";
   termDays?: number;
+  /** Only set for an explicit upstream cancellation, never for null/omission. */
+  clearedProductFields?: Array<"termDays" | "subscriptionEndsAt">;
   minimumAmount?: number;
   subscriptionMaximum?: number | null;
   subscriptionMaximumStatus?: "limited" | "unlimited" | "not_returned" | "unreadable";
-  subscriptionMaximumSource?: "api" | "not_returned";
+  subscriptionMaximumSource?: "api" | "not_returned" | "cache";
+  subscriptionMaximumFetchedAt?: string;
   productPoolRemaining?: number;
   subscriptionStartsAt?: string;
   subscriptionEndsAt?: string;
@@ -37,6 +40,14 @@ export type LiveRate = {
   eligibilityLabel?: string;
   eligibilityStatus?: EligibilityStatus;
   rateCoverage?: RateCoverage;
+  /** Field validity is separate from completeness of the combined schedule. */
+  aprStatus?: "available" | "unavailable";
+  capacityStatus?: "available" | "unavailable";
+  /** Incomplete row counts or incompatible tier boundaries cannot be spliced. */
+  tierStructureStatus?: "complete" | "incomplete";
+  /** APR source and timestamp are independent from other product fields. */
+  aprSource?: "live" | "cache";
+  aprFetchedAt?: string;
   capacitySource?: "live" | "cache";
   capacityFetchedAt?: string;
   externalProductId?: string;
@@ -59,7 +70,7 @@ export type LiveRate = {
 export type ApiFieldNotice = { accountId: string; asset: Product["asset"]; productName: string; externalProductId?: string; fields: string[] };
 
 type BybitEndpoint = {
-  platform: "Bybit.com" | "Bybit EU";
+  platform: "Bybit Global" | "Bybit EU";
   accountId: "bybit-global" | "bybit-eu";
   coin: Product["asset"];
   label: string;
@@ -89,15 +100,15 @@ type BybitFlexibleRow = {
 
 const bybitEndpointDefinitions: BybitEndpoint[] = (["bybit-global", "bybit-eu"] as const).flatMap((accountId) => (
   publicProductAssetsFor(accountId, "flexible").map((coin) => ({
-    platform: accountId === "bybit-eu" ? "Bybit EU" as const : "Bybit.com" as const,
+    platform: accountId === "bybit-eu" ? "Bybit EU" as const : "Bybit Global" as const,
     accountId,
     coin: coin as Product["asset"],
-    label: accountId === "bybit-eu" ? "Bybit EU 官方公开 API" : "Bybit 官方公开 API",
+    label: accountId === "bybit-eu" ? "Bybit EU 官方公开 API" : "Bybit Global 官方公开 API",
   }))
 ));
 
 const bybitEndpoints = bybitEndpointDefinitions.filter((endpoint) => {
-  const accountId = endpoint.platform === "Bybit.com" ? "bybit-global" : "bybit-eu";
+  const accountId = endpoint.platform === "Bybit Global" ? "bybit-global" : "bybit-eu";
   return publicProductAssetsFor(accountId, "flexible").includes(endpoint.coin as "USDT" | "USDC" | "USDGO" | "BTC");
 });
 
@@ -137,6 +148,9 @@ async function fetchBybitEuFixedRates(): Promise<{ rates: LiveRate[]; partial: b
       name: `Fixed Saving · ${row.duration}`,
       apr: tiers[0]?.apr ?? 0,
       rateShape: row.rateShape,
+      aprStatus: row.aprStatus,
+      capacityStatus: row.capacityStatus,
+      tierStructureStatus: row.tierStructureStatus,
       tiers,
       fetchedAt: new Date().toISOString(),
       sourceLabel: "Bybit EU 官方公开定期产品 API",
@@ -148,6 +162,9 @@ async function fetchBybitEuFixedRates(): Promise<{ rates: LiveRate[]; partial: b
       eligibilityLabel: row.isVip ? "VIP 用户" : row.specialUserGroupRequired ? "需满足特殊用户组资格" : undefined,
       eligibilityStatus: eligibilityRequired ? "unknown" : undefined,
       rateCoverage: row.rateCoverage ?? (tiers.length ? "complete" : "unavailable"),
+      subscriptionMaximum: row.maxAmount,
+      subscriptionMaximumStatus: row.maxAmountStatus,
+      subscriptionMaximumSource: row.maxAmountSource,
       catalog: {
         accountId: "bybit-eu",
         exchange: "bybit",
@@ -184,7 +201,7 @@ function bybitDurationDays(value: string) {
 
 export function summarizePublicFailures(failures: string[]) {
   const expectedAssets: Record<string, string[]> = {
-    "Bybit.com": publicProductAssetsFor("bybit-global", "flexible"),
+    "Bybit Global": publicProductAssetsFor("bybit-global", "flexible"),
     "Bybit EU": publicProductAssetsFor("bybit-eu", "flexible"),
   };
   const grouped = new Map<string, Set<string>>();
@@ -227,33 +244,36 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
         const rawMaximum = parseFiniteAmount(item.maxStakeAmount);
         const productMaximumUnreadable = item.maxStakeAmount !== undefined
           && (rawMaximum === undefined || (rawMaximum !== -1 && rawMaximum <= 0));
-        const baseApr = parsePercent(item.estimateApr ?? item.apr);
+        const baseApr = parsePercent(item.estimateApr ?? item.apr ?? item.estimateApy ?? item.apy);
         const tierSchedule = parseBybitFlexibleTiers(item.tierAprDetails, rawMaximum, productMaximumUnreadable);
-        const rateScheduleComplete = tierSchedule.complete && !(productMaximumUnreadable && tierSchedule.hasTiers);
+        const aprAvailable = tierSchedule.hasTiers
+          ? tierSchedule.aprStatus === "available"
+          : Number.isFinite(baseApr) && baseApr >= 0;
+        const capacityAvailable = tierSchedule.hasTiers
+          ? tierSchedule.capacityStatus === "available"
+          : !productMaximumUnreadable;
+        const rateScheduleComplete = aprAvailable && capacityAvailable;
         const productMaximum = rawMaximum !== undefined && rawMaximum > 0 ? rawMaximum : undefined;
-        const parsedTiers = tierSchedule.tiers.flatMap((tier) => {
-          const apr = tier.apr ?? tier.apy;
-          return apr === undefined ? [] : [{ min: tier.min, max: tier.max, apr, ...(tier.maxStatus ? { maxStatus: tier.maxStatus } : {}) }];
-        });
-        const tiers = parsedTiers.length > 0
+        const parsedTiers = tierSchedule.tiers.map((tier) => ({ min: tier.min, max: tier.max, apr: tier.apr ?? tier.apy ?? 0, ...(tier.maxStatus ? { maxStatus: tier.maxStatus } : {}) }));
+        const tiers = tierSchedule.hasTiers
           ? productMaximum === undefined
             ? parsedTiers
             : parsedTiers.flatMap((tier) => {
               if (tier.min >= productMaximum) return [];
               const cappedTier = {
                 ...tier,
-                max: tier.max === null ? productMaximum : Math.min(tier.max, productMaximum),
+                max: tier.max === null
+                  ? tier.maxStatus === "unlimited" ? productMaximum : null
+                  : Math.min(tier.max, productMaximum),
               };
               delete cappedTier.maxStatus;
               return [cappedTier];
             })
-          : Number.isFinite(baseApr)
-            ? [{ min: 0, max: productMaximum ?? null, apr: baseApr,
-              ...(productMaximum === undefined && (item.maxStakeAmount === undefined || rawMaximum === -1) ? { maxStatus: "unlimited" as const } : {}) }]
-            : [];
-        const apr = tiers[0]?.apr ?? baseApr;
+          : [{ min: 0, max: productMaximum ?? null, apr: aprAvailable ? baseApr : 0,
+            ...(productMaximum === undefined && (item.maxStakeAmount === undefined || rawMaximum === -1) ? { maxStatus: "unlimited" as const } : {}) }];
+        const apr = tiers[0]?.apr ?? 0;
         const fields = [
-          ...(!Number.isFinite(apr) ? ["APR 未获取"] : []),
+          ...(!aprAvailable ? ["APR 未获取"] : []),
           ...(!rateScheduleComplete ? ["阶梯结构未获取"] : []),
           ...(productMaximumUnreadable ? ["额度未获取"] : []),
         ];
@@ -268,12 +288,15 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
           || (typeof item.remainingPoolAmount !== "undefined" && parseFiniteAmount(item.remainingPoolAmount) !== undefined);
         const subscriptionMaximumStatus: NonNullable<LiveRate["subscriptionMaximumStatus"]> = item.maxStakeAmount === undefined
           ? !tierSchedule.hasTiers ? "unlimited" : "not_returned"
-          : rawMaximum === -1 ? "unlimited" : rawMaximum === undefined ? "unreadable" : "limited";
+          : rawMaximum === -1 ? "unlimited" : productMaximumUnreadable ? "unreadable" : "limited";
         const rate: LiveRate = {
           productId: identity.identityKey,
           ...identity,
-          apr: Number.isFinite(apr) ? apr : 0,
-          rateShape: tierSchedule.hasTiers ? "tiered_rate" : Number.isFinite(baseApr) ? "single_rate" : "no_rate",
+          apr,
+          aprStatus: aprAvailable ? "available" : "unavailable",
+          capacityStatus: capacityAvailable ? "available" : "unavailable",
+          tierStructureStatus: tierSchedule.hasTiers ? tierSchedule.tierStructureStatus : "complete",
+          rateShape: tierSchedule.hasTiers ? "tiered_rate" : aprAvailable ? "single_rate" : "no_rate",
           ...(tiers.length > 0 ? { tiers } : {}),
           fetchedAt,
           sourceLabel: endpoint.label,
@@ -282,7 +305,7 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
             : item.status
               ? "unavailable"
               : "unknown",
-          rateCoverage: !Number.isFinite(apr) ? "unavailable" : rateScheduleComplete ? "complete" : "partial",
+          rateCoverage: !aprAvailable ? "unavailable" : rateScheduleComplete ? "complete" : "partial",
           subscriptionMaximum: rawMaximum === undefined || rawMaximum === -1 ? null : rawMaximum,
           subscriptionMaximumStatus,
           subscriptionMaximumSource: item.maxStakeAmount === undefined ? "not_returned" : "api",
@@ -291,7 +314,7 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
           catalog: {
             accountId: endpoint.accountId,
             exchange: "bybit",
-            region: endpoint.platform === "Bybit.com" ? "global" : "eu",
+            region: endpoint.platform === "Bybit Global" ? "global" : "eu",
             asset: endpoint.coin as Product["asset"],
             holdingDataMode: endpoint.accountId === "bybit-global" ? "api" : "manual",
             apiAccess: "public",

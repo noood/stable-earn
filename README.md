@@ -52,7 +52,7 @@ npx playwright install chromium
 - Cloudflare 账号，以及已登录的 Wrangler（`npx wrangler login`）。
 - 一个 D1 数据库，名称使用 `stablecoin-earn-monitor`。
 - 一个 Queue，名称使用 `stable-earn-sync`。
-- Cloudflare Access 应用，路径规则使用 `/private*`，覆盖 `/private` 页面入口及其子路径（当前线上使用此规则）。如果新增其他以 `/private` 开头的公开路径，应重新检查匹配范围。
+- Cloudflare Access 应用，路径规则使用 `/private*`，覆盖 `/private` 页面入口及其子路径。如果新增其他以 `/private` 开头的公开路径，应重新检查匹配范围。
 - 交易所只读 API Key；关闭交易、转账、申购、赎回和提现权限。
 
 ### 第一次部署
@@ -82,7 +82,7 @@ npm ci
 npm run deploy
 ```
 
-3. 在 Cloudflare Worker 的 Settings → Variables and Secrets 中添加 `CREDENTIAL_ENCRYPTION_KEY` Secret。它必须是 **32 字节随机密钥的 Base64 编码**；例如可在本机用 `openssl rand -base64 32` 生成，再直接填入 Cloudflare Secret。不要把密钥写进代码、README、`.env.example` 或 GitHub Issue。之后确认 Access 已保护 `/private/*`，再开始使用应用。
+3. 在 Cloudflare Worker 的 Settings → Variables and Secrets 中添加 `CREDENTIAL_ENCRYPTION_KEY` Secret。它必须是 **32 字节随机密钥的 Base64 编码**；例如可在本机用 `openssl rand -base64 32` 生成，再直接填入 Cloudflare Secret。不要把密钥写进代码、README、`.env.example` 或 GitHub Issue。之后确认 Access 已保护 `/private*`（包括 `/private` 页面入口及其子路径），再开始使用应用。
 
 ### 数据库说明
 

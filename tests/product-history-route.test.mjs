@@ -36,7 +36,7 @@ test("opening product history persists read state for the caller only", async ()
   const response = await authorized.POST(new Request("https://example.test/private/api/product-history", {
     method: "POST",
     headers: { origin: "https://example.test", "content-type": "application/json" },
-    body: JSON.stringify({ productId: "product-a" }),
+    body: JSON.stringify({ productId: "product-a", eventIds: ["event-user-1"] }),
   }));
   assert.equal(response.status, 200);
   const listed = await authorized.GET(new Request("https://example.test/private/api/product-history?productId=product-a"));
@@ -46,13 +46,13 @@ test("opening product history persists read state for the caller only", async ()
   assert.equal((await crossOrigin.POST(new Request("https://example.test/private/api/product-history", {
     method: "POST",
     headers: { origin: "https://attacker.example", "content-type": "application/json" },
-    body: JSON.stringify({ productId: "product-a" }),
+    body: JSON.stringify({ productId: "product-a", eventIds: ["event-user-1"] }),
   }))).status, 403);
 
   const unauthorized = routeFixture(null);
   assert.equal((await unauthorized.POST(new Request("https://example.test/private/api/product-history", {
     method: "POST",
     headers: { origin: "https://example.test", "content-type": "application/json" },
-    body: JSON.stringify({ productId: "product-a" }),
+    body: JSON.stringify({ productId: "product-a", eventIds: ["event-user-1"] }),
   }))).status, 401);
 });

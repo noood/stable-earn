@@ -62,6 +62,36 @@ test("sync changes are classified and persisted in one shared event table", asyn
   assert.equal(stored.some((event) => event.type === "holding" && event.after === "120.00"), true);
 });
 
+test("a cached APR does not create a rate event, while a live quota change is still recorded", () => {
+  const previous = {
+    rates: [{
+      productId: "api-usdt",
+      apr: 8,
+      tiers: [{ min: 0, max: 300, apr: 8 }],
+      fetchedAt: "2026-10-09T12:00:00.000Z",
+      sourceLabel: "API",
+    }],
+  };
+  const current = {
+    rates: [{
+      productId: "api-usdt",
+      apr: 7,
+      aprSource: "cache",
+      aprFetchedAt: "2026-10-09T12:00:00.000Z",
+      tiers: [{ min: 0, max: 250, apr: 7 }],
+      capacitySource: "live",
+      fetchedAt: observedAt,
+      sourceLabel: "API",
+      catalog: { asset: "USDT" },
+    }],
+  };
+
+  const events = buildSyncChangeEvents(previous, current, "手动刷新", observedAt);
+  assert.deepEqual(events.map((event) => event.type), ["capacity"]);
+  assert.equal(events[0].before, "300.00 USDT");
+  assert.equal(events[0].after, "250.00 USDT");
+});
+
 test("product history can page beyond the former global 2,000 event limit", async () => {
   const db = sqliteDb();
   const insert = db.sqlite.prepare(`INSERT INTO product_change_events
@@ -148,7 +178,7 @@ test("an omitted quota is unknown, while an explicit unlimited quota is comparab
   assert.equal(missingMax.some((event) => event.attention), false);
 
   const unlimitedToLimited = buildSyncChangeEvents(
-    { rates: [{ productId: "api-usdt", apr: 6, tiers: [{ min: 0, max: null, apr: 6 }] }] },
+    { rates: [{ productId: "api-usdt", apr: 6, tiers: [{ min: 0, max: null, maxStatus: "unlimited", apr: 6 }] }] },
     {
       rates: [{ productId: "api-usdt", apr: 6, tiers: [{ min: 0, max: 300, apr: 6 }], capacitySource: "live", catalog: { asset: "USDT" } }],
     },
@@ -160,7 +190,7 @@ test("an omitted quota is unknown, while an explicit unlimited quota is comparab
   const limitedToUnlimited = buildSyncChangeEvents(
     { rates: [{ productId: "api-usdt", apr: 6, tiers: [{ min: 0, max: 300, apr: 6 }] }] },
     {
-      rates: [{ productId: "api-usdt", apr: 6, tiers: [{ min: 0, max: null, apr: 6 }], capacitySource: "live", catalog: { asset: "USDT" } }],
+      rates: [{ productId: "api-usdt", apr: 6, tiers: [{ min: 0, max: null, maxStatus: "unlimited", apr: 6 }], capacitySource: "live", catalog: { asset: "USDT" } }],
     },
     "定时刷新",
     observedAt,
@@ -294,7 +324,7 @@ test("manual fixed-term maturity produces one stable attention event while the s
 
   const db = sqliteDb();
   await db.batch(prepareProductChangeEventStatements(db, "user-1", first));
-  await markProductChangeEventsRead(db, "user-1", product.id, observedAt);
+  await markProductChangeEventsRead(db, "user-1", product.id, first.map((event) => event.id), observedAt);
   await db.batch(prepareProductChangeEventStatements(db, "user-1", repeated));
   const stored = await loadProductChangeEvents(db, "user-1");
   assert.equal(stored.filter((event) => event.productId === product.id).length, 1);
@@ -316,7 +346,7 @@ test("opening history persists read state only for that owner's attention events
     VALUES (?, ?, ?, 'holding', '持仓变化', ?, '手动编辑', 0)`)
     .bind("user-1", "ordinary", "product-a", observedAt).run();
 
-  await markProductChangeEventsRead(db, "user-1", "product-a", observedAt);
+  await markProductChangeEventsRead(db, "user-1", "product-a", ["unread-a", "ordinary", "unread-b"], observedAt);
   const mine = await loadProductChangeEvents(db, "user-1");
   const others = await loadProductChangeEvents(db, "user-2");
   assert.equal(mine.find((event) => event.id === "unread-a").readAt, observedAt);

@@ -3,6 +3,7 @@ import { productTermDays } from "./product-overrides";
 
 export const minimumOpportunityApr = 6;
 export const maximumShortTermDays = 7;
+export const minimumStablecoinCatalogHolding = 0.01;
 
 export function meetsOpportunityApr(apr: number) {
   return Number.isFinite(apr) && apr >= minimumOpportunityApr;
@@ -84,6 +85,11 @@ export function productQualifiesAsOpportunity(product: Product) {
     || (termDays !== null && termDays <= maximumShortTermDays);
 }
 
+export function productHoldingQualifiesForCatalog(product: Product, amount: number) {
+  const minimum = product.asset === "BTC" ? 0 : minimumStablecoinCatalogHolding;
+  return Number.isFinite(amount) && amount > minimum;
+}
+
 export function productShouldBeActive(
   product: Product,
   holding: { known: boolean; amount: number },
@@ -91,19 +97,30 @@ export function productShouldBeActive(
 ) {
   if (product.productDataMode === "manual") return true;
   // A partial/failed holding response is not evidence that an existing
-  // product is empty. Keep the row until a complete snapshot explicitly
-  // confirms zero; otherwise an APR change during a partial sync could archive
+  // product is below its holding threshold. Keep the row until sufficient
+  // evidence is available; otherwise an APR change during a partial sync could archive
   // a product whose holding is merely unknown.
   if (!holding.known && alreadyActive) return true;
-  if (holding.known && holding.amount > 0) return true;
+  if (holding.known && productHoldingQualifiesForCatalog(product, holding.amount)) return true;
+  if (product.availability === "unavailable" || product.eligibilityStatus === "ineligible") {
+    return false;
+  }
+  // Preserve an active row while its APR/term data is too incomplete to decide
+  // whether it meets the opportunity threshold. This must happen before the
+  // eligibility gate, which otherwise hides the missing-data state.
+  if (alreadyActive && productRateDecisionIsIncomplete(product)) return true;
   // A required account qualification is not proof that the account can
   // subscribe. Keep unknown/ineligible products out of the ordinary
   // opportunity list; a positive holding or an existing row with unknown
   // holdings was handled above and remains visible.
   if (product.eligibilityRequired && product.eligibilityStatus !== "eligible") return false;
-  if (product.availability === "unavailable" || product.eligibilityStatus === "ineligible") {
-    return false;
-  }
   if (productQualifiesAsOpportunity(product)) return true;
+  return false;
+}
+
+function productRateDecisionIsIncomplete(product: Product) {
+  if (!productHasComparableApr(product) || product.rateCoverage !== "complete") return true;
+  if (product.productType === "fixed" && highestProductApr(product) >= minimumOpportunityApr
+    && productTermDays(product) === null) return true;
   return false;
 }

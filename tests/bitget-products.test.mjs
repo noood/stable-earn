@@ -205,7 +205,9 @@ test("Bitget labels single APY offers correctly and rejects a ladder with a miss
   assert.equal(result.productApi.status, "returned");
   assert.equal(result.productApi.rows.find((row) => row.productId === "single").rateShape, "single_rate");
   assert.deepEqual(result.productApi.rows.find((row) => row.productId === "single").tiers, [{ min: 0, max: 1000, apr: 8 }]);
-  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "gap").tiers, []);
+  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "gap").tiers, [
+    { min: 0, max: 300, apr: 8 }, { min: 400, max: 1000, apr: 3 },
+  ]);
   assert.deepEqual(result.productApi.rows.find((row) => row.productId === "open").tiers, [
     { min: 0, max: 300, apr: 8 },
     { min: 300, max: null, apr: 3, maxStatus: "unlimited" },
@@ -213,7 +215,7 @@ test("Bitget labels single APY offers correctly and rejects a ladder with a miss
   assert.deepEqual(result.productApi.rows.find((row) => row.productId === "explicit-open").tiers, [
     { min: 0, max: null, apr: 3, maxStatus: "unlimited" },
   ]);
-  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "bad-bound").tiers, []);
+  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "bad-bound").tiers, [{ min: 0, max: null, apr: 3 }]);
 });
 
 test("Bitget keeps a complete query separate from an unreadable APY schedule", async () => {
@@ -270,8 +272,10 @@ test("Bitget treats null APR as missing and rejects numeric prefixes", async () 
   const [result] = await probeBitgetAssets({ apiKey: "key", apiSecret: "secret", passphrase: "pass" }, ["USDT"]);
 
   assert.equal(result.productApi.status, "returned");
-  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "null-apr").tiers, []);
-  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "malformed-apr").tiers, []);
+  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "null-apr").tiers, [{ min: 0, max: 1000, apr: 0 }]);
+  assert.deepEqual(result.productApi.rows.find((row) => row.productId === "malformed-apr").tiers, [{ min: 0, max: 1000, apr: 0 }]);
+  assert.equal(result.productApi.rows.find((row) => row.productId === "null-apr").aprStatus, "unavailable");
+  assert.equal(result.productApi.rows.find((row) => row.productId === "malformed-apr").aprStatus, "unavailable");
   assert.deepEqual(result.productApi.rows.find((row) => row.productId === "null-open-boundary").tiers, [
     { min: 0, max: null, apr: 3, maxStatus: "unlimited" },
   ]);

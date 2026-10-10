@@ -72,7 +72,8 @@ test("private route serves a static shell and keeps account data client-loaded",
   assert.match(dashboard, /isHistoryPreviewProduct/);
   assert.match(dashboard, /readOnlyHistoryPreview=\{isHistoryPreviewProduct\}/);
   assert.match(history, /product-history-loading/);
-  assert.match(history, /initialHistoryRequestStartedRef/);
+  assert.match(history, /requestedRevisionRef/);
+  assert.match(history, /mergeProductHistoryEvents/);
   assert.match(history, /historyLoading \? "加载中…"/);
   assert.doesNotMatch(history, /product-history-loading-more/);
   assert.match(history, /暂无变更记录/);
@@ -87,5 +88,6 @@ test("remote product history does not show an empty result before its first page
   assert.match(history, /initialHistoryLoadComplete/);
   assert.match(history, /className="product-history-state"/);
   assert.match(history, /loadPage && !initialHistoryLoadComplete\s*\?\s*null/);
-  assert.match(history, /if \(isFirstInitialLoad\) setInitialHistoryLoadComplete\(true\)/);
+  assert.match(history, /if \(cursor === null\) setInitialHistoryLoadComplete\(true\)/);
+  assert.match(history, /loadedRevision !== eventsRevision/);
 });

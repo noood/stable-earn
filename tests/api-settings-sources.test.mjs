@@ -6,6 +6,23 @@ test("Bybit EU has public product APR and manual holdings, without a useless Ear
   const load = moduleLoader({ "cloudflare:workers": { env: {} } });
   const { credentialAccounts, credentialAccount, manualDataAccounts } = load("@/lib/credentials");
   const { accounts } = load("@/lib/seed-data");
+  assert.equal(credentialAccount("binance-global").label, "Binance Global");
+  assert.equal(credentialAccount("bybit-global").label, "Bybit Global");
+  assert.equal(accounts.find((account) => account.id === "binance-global").name, "Binance Global");
+  assert.equal(accounts.find((account) => account.id === "bybit-global").name, "Bybit Global");
+  assert.deepEqual(
+    accounts.map(({ id, name }) => [id, name]),
+    [
+      ["binance-global", "Binance Global"],
+      ["binance-bahrain", "Binance Bahrain"],
+      ["bybit-global", "Bybit Global"],
+      ["bybit-eu", "Bybit EU"],
+      ["bitget-global", "Bitget"],
+      ["okx-global", "OKX"],
+      ["mexc-ph", "MEXC · PH 🇵🇭"],
+      ["mexc-uk", "MEXC · UK 🇬🇧"],
+    ],
+  );
   assert.deepEqual(Array.from(manualDataAccounts, (source) => source.id), ["bybit-eu", "mexc-ph", "mexc-uk"]);
   const eu = manualDataAccounts.find((source) => source.id === "bybit-eu");
   assert.equal(credentialAccount("bybit-eu"), null);

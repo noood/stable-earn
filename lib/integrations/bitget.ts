@@ -107,6 +107,9 @@ export type BitgetCapabilityProbe = {
       rateShape: "single_rate" | "tiered_rate" | "no_rate";
       eligibleForMonitoring?: boolean;
       tiers: BitgetNormalizedTier[];
+      aprStatus: "available" | "unavailable";
+      capacityStatus: "available" | "unavailable";
+      tierStructureStatus: "complete" | "incomplete";
     }>;
     diagnostic?: string;
   };
@@ -444,7 +447,8 @@ function buildBitgetCapabilityProbe(
         const eligibleForMonitoring = row.periodType === "flexible"
           ? row.status !== "off_line" && !isBitgetVipLevel(row.productLevel)
           : undefined;
-        const tiers = normalizeTiers(row.apyList, row.apyType);
+        const schedule = normalizeTierSchedule(row.apyList, row.apyType);
+        const tiers = schedule.tiers;
         return {
           productId: row.periodType === "fixed"
             ? bitgetFixedIdentityId(row.productId, row.period) ?? null
@@ -459,6 +463,9 @@ function buildBitgetCapabilityProbe(
               : row.apyType === "ladder" || tiers.length > 1 ? "tiered_rate" as const : "single_rate" as const,
           ...(eligibleForMonitoring !== undefined ? { eligibleForMonitoring } : {}),
           tiers,
+          aprStatus: schedule.aprStatus,
+          capacityStatus: schedule.capacityStatus,
+          tierStructureStatus: schedule.tierStructureStatus,
         };
       });
       const eligibleFlexibleCount = normalizedRows.filter((row) => row.eligibleForMonitoring === true && row.tiers.length > 0).length;
@@ -568,6 +575,8 @@ export async function fetchBitgetSavingsSnapshot(
         status: row.status ?? null,
         productLevel: row.productLevel ?? null,
         apy: normalizeTiers(row.apyList, row.apyType),
+        aprStatus: normalizeTierSchedule(row.apyList, row.apyType).aprStatus,
+        capacityStatus: normalizeTierSchedule(row.apyList, row.apyType).capacityStatus,
       })),
   });
 
@@ -615,6 +624,10 @@ export async function fetchBitgetSavingsSnapshot(
         name: bitgetProductName(item.row, index),
         apr: item.hasProductRow ? item.tiers[0]?.apr ?? 0 : 0,
         tiers: item.hasProductRow ? item.tiers : [],
+        rateShape: item.hasProductRow ? item.rateShape : "no_rate",
+        aprStatus: item.hasProductRow ? item.aprStatus : "unavailable",
+        capacityStatus: item.hasProductRow ? item.capacityStatus : "unavailable",
+        tierStructureStatus: item.hasProductRow ? item.tierStructureStatus : "incomplete",
         fetchedAt,
         sourceLabel: item.hasProductRow
           ? item.tiers.length ? "Bitget 官方账户产品 API" : "Bitget 产品 APR 未获取"
@@ -633,7 +646,7 @@ export async function fetchBitgetSavingsSnapshot(
           eligibilityLabel: "Bitget VIP 专属产品，账号资格需确认",
           eligibilityStatus: "unknown" as const,
         } : {}),
-        rateCoverage: item.hasProductRow && item.tiers.length > 0 ? "complete" : "unavailable",
+        rateCoverage: item.hasProductRow ? item.rateCoverage : "unavailable",
       });
     });
   }
@@ -763,15 +776,15 @@ export async function fetchBitgetFixedSnapshot(
     const offerRows = productRows.filter((row) => row.coin === asset && row.periodType === "fixed");
     const assetHoldingRows = holdingRows.filter((row) => row.productCoin === asset && row.periodType === "fixed");
 
-    const byId = new Map<string, { row: BitgetProductRow & Partial<BitgetAssetRow>; tiers: BitgetNormalizedTier[]; hasProduct: boolean }>();
+    const byId = new Map<string, { row: BitgetProductRow & Partial<BitgetAssetRow>; hasProduct: boolean } & ReturnType<typeof normalizeTierSchedule>>();
     for (const row of offerRows) {
       const id = bitgetFixedIdentityId(row.productId, row.period);
       if (!id || row.status === "off_line") continue;
       if (duplicateOfferIds.has(`${asset}:${id}`)) continue;
       const matchingHolding = assetHoldingRows.find((holding) => bitgetFixedIdentityId(holding.productId, holding.period) === id);
-      const tiers = normalizeTiers(row.apyList, row.apyType);
+      const schedule = normalizeTierSchedule(row.apyList, row.apyType);
       if (isBitgetVipLevel(row.productLevel) && finiteNumber(matchingHolding?.holdAmount) <= 0) continue;
-      byId.set(id, { row: { ...row, ...matchingHolding }, tiers, hasProduct: true });
+      byId.set(id, { row: { ...row, ...matchingHolding }, ...schedule, hasProduct: true });
     }
     for (const row of assetHoldingRows) {
       const id = bitgetFixedIdentityId(row.productId, row.period);
@@ -784,8 +797,8 @@ export async function fetchBitgetFixedSnapshot(
       const current = byId.get(id);
       if (!current && amount <= 0) continue;
       byId.set(id, {
+        ...(current ?? normalizeTierSchedule(undefined)),
         row: { ...current?.row, ...row },
-        tiers: current?.tiers ?? [],
         hasProduct: current?.hasProduct ?? false,
       });
       const identity = buildPlatformProductIdentity({ accountId: "bitget-global", asset, productType: "fixed", externalProductId: id });
@@ -801,6 +814,10 @@ export async function fetchBitgetFixedSnapshot(
         name: bitgetProductName(item.row, 0, "fixed"),
         apr: item.hasProduct ? item.tiers[0]?.apr ?? 0 : 0,
         tiers: item.hasProduct ? item.tiers : [],
+        rateShape: item.hasProduct ? item.rateShape : "no_rate",
+        aprStatus: item.hasProduct ? item.aprStatus : "unavailable",
+        capacityStatus: item.hasProduct ? item.capacityStatus : "unavailable",
+        tierStructureStatus: item.hasProduct ? item.tierStructureStatus : "incomplete",
         fetchedAt,
         sourceLabel: item.hasProduct
           ? item.tiers.length ? "Bitget 官方 Savings 定期产品 API" : "Bitget 定期产品 APR 未获取"
@@ -821,7 +838,7 @@ export async function fetchBitgetFixedSnapshot(
           eligibilityLabel: "Bitget VIP 专属产品，账号资格需确认",
           eligibilityStatus: "unknown" as const,
         } : {}),
-        rateCoverage: item.hasProduct && item.tiers.length ? "complete" as const : "unavailable" as const,
+        rateCoverage: item.hasProduct ? item.rateCoverage : "unavailable" as const,
       };
       rates.push(rowRate);
       if (holdingsListComplete && !Object.hasOwn(holdings, identity.identityKey)) holdings[identity.identityKey] = 0;
@@ -938,46 +955,65 @@ async function fetchBitgetAssetPages(
 }
 
 function normalizeTiers(rows: BitgetApyRow[] | undefined, apyType?: string) {
-  if (!Array.isArray(rows) || rows.length === 0) return [];
+  return normalizeTierSchedule(rows, apyType).tiers;
+}
+
+function normalizeTierSchedule(rows: BitgetApyRow[] | undefined, apyType?: string) {
+  const unavailable = {
+    tiers: [] as BitgetNormalizedTier[],
+    aprStatus: "unavailable" as const,
+    capacityStatus: "unavailable" as const,
+    tierStructureStatus: "incomplete" as const,
+    rateCoverage: "unavailable" as const,
+    rateShape: "no_rate" as const,
+  };
+  if (!Array.isArray(rows) || rows.length === 0) return unavailable;
   // The API's declared shape is part of the data contract: a single-rate
   // product must contain exactly one APY row. A mismatch is incomplete data,
   // not a reason to guess which field wins. Ladder products can currently
   // return a single open-ended row, so their row count is not constrained here.
-  if (apyType === "single" && rows.length !== 1) return [];
+  if (apyType === "single" && rows.length !== 1) return unavailable;
   const parsed = rows.map((row) => {
     const min = strictBitgetNumber(row.minStepVal);
     const max = strictBitgetNumber(row.maxStepVal);
     const apr = strictBitgetNumber(row.currentApy);
     const maxFieldOmitted = row.maxStepVal === undefined || row.maxStepVal === null;
-    return min !== undefined && min >= 0 && apr !== undefined && apr >= 0
-      && (maxFieldOmitted || max !== undefined)
-      ? { min, max, maxFieldOmitted, apr }
-      : null;
+    return { min, max, maxFieldOmitted, apr };
   });
-  if (parsed.some((tier) => tier === null)) return [];
-  const ordered = parsed.filter((tier): tier is NonNullable<typeof tier> => tier !== null)
+  const ordered = parsed.filter((tier): tier is typeof tier & { min: number } => tier.min !== undefined && tier.min >= 0)
     .sort((left, right) => left.min - right.min);
   const tiers: BitgetNormalizedTier[] = ordered.flatMap((tier, index): BitgetNormalizedTier[] => {
+    // A placeholder is never an observed zero: aprStatus below carries the
+    // failure while retaining readable boundaries for field-level recovery.
+    const apr = tier.apr !== undefined && tier.apr >= 0 ? tier.apr : 0;
     if (tier.max === -1) {
-      return index === ordered.length - 1 ? [{ min: tier.min, max: null, apr: tier.apr, maxStatus: "unlimited" as const }] : [];
+      return index === ordered.length - 1 ? [{ min: tier.min, max: null, apr, maxStatus: "unlimited" as const }] : [{ min: tier.min, max: null, apr }];
     }
-    if (tier.max !== undefined) return tier.max > tier.min ? [{ min: tier.min, max: tier.max, apr: tier.apr }] : [];
+    if (tier.max !== undefined) return [{ min: tier.min, max: tier.max > tier.min ? tier.max : null, apr }];
     return tier.maxFieldOmitted && index === ordered.length - 1
-      ? [{ min: tier.min, max: null, apr: tier.apr, maxStatus: "unlimited" as const }]
-      : [];
+      ? [{ min: tier.min, max: null, apr, maxStatus: "unlimited" as const }]
+      : [{ min: tier.min, max: null, apr }];
   });
-  if (tiers.length !== ordered.length) return [];
-  const complete = tiers[0]?.min === 0
-    && tiers.every((tier, index) => index === 0 || tiers[index - 1]!.max === tier.min);
-  return complete ? tiers : [];
+  const aprAvailable = parsed.every((tier) => tier.apr !== undefined && tier.apr >= 0);
+  const shapeComplete = tiers.length === rows.length && tiers[0]?.min === 0
+    && tiers.every((tier, index) => index === 0 || tier.min > tiers[index - 1]!.min
+      && (tiers[index - 1]!.max === null && tiers[index - 1]!.maxStatus !== "unlimited" || tiers[index - 1]!.max === tier.min));
+  const capacityAvailable = shapeComplete && tiers.every((tier) => tier.max !== null || tier.maxStatus === "unlimited");
+  return {
+    tiers,
+    aprStatus: aprAvailable ? "available" as const : "unavailable" as const,
+    capacityStatus: capacityAvailable ? "available" as const : "unavailable" as const,
+    tierStructureStatus: shapeComplete ? "complete" as const : "incomplete" as const,
+    rateCoverage: !aprAvailable ? "unavailable" as const : capacityAvailable ? "complete" as const : "partial" as const,
+    rateShape: rows.length > 1 || apyType === "ladder" ? "tiered_rate" as const : "single_rate" as const,
+  };
 }
 
 type BitgetMergedRow = {
   row: BitgetProductRow & Partial<BitgetAssetRow>;
-  tiers: BitgetNormalizedTier[];
   externalProductId?: string;
   hasProductRow: boolean;
-};
+} & ReturnType<typeof normalizeTierSchedule>;
 
 function mergeBitgetRows(asset: SupportedAsset, productRows: BitgetProductRow[], assetRows: BitgetAssetRow[]) {
   const merged = new Map<string, BitgetMergedRow>();
@@ -988,13 +1024,14 @@ function mergeBitgetRows(asset: SupportedAsset, productRows: BitgetProductRow[],
     .map((row) => ({
       key: normalizeExternalProductId(row.productId)!,
       row,
-      tiers: normalizeTiers(row.apyList, row.apyType),
+      schedule: normalizeTierSchedule(row.apyList, row.apyType),
     }));
   for (const candidate of productCandidates) {
     const current = merged.get(candidate.key);
     merged.set(candidate.key, {
       row: { ...current?.row, ...candidate.row },
-      tiers: candidate.tiers.length > 0 ? mergeTiers(current?.tiers ?? [], candidate.tiers) : current?.tiers ?? [],
+      ...candidate.schedule,
+      tiers: candidate.schedule.tiers.length > 0 ? mergeTiers(current?.tiers ?? [], candidate.schedule.tiers) : [],
       externalProductId: normalizeExternalProductId(candidate.row.productId) ?? current?.externalProductId,
       hasProductRow: true,
     });
@@ -1013,6 +1050,7 @@ function mergeBitgetRows(asset: SupportedAsset, productRows: BitgetProductRow[],
       // longer lists it, retain it rather than manufacturing a second row for
       // the same account position.
       merged.set(key, {
+        ...(current ?? normalizeTierSchedule(undefined)),
         row: { ...current?.row, ...row },
         // Once the product endpoint has supplied a row, its APY ladder is
         // authoritative. The assets endpoint is only a fallback for a held
@@ -1029,7 +1067,7 @@ function mergeBitgetRows(asset: SupportedAsset, productRows: BitgetProductRow[],
     // A positive balance is authoritative evidence that the account owns a
     // real product, even when the product/APR endpoint no longer returns it
     // or the holding response has no usable rate ladder.
-    .filter((item) => item.tiers.length > 0 || finiteNumber(item.row.holdAmount) > 0)
+    .filter((item) => item.hasProductRow || item.tiers.length > 0 || finiteNumber(item.row.holdAmount) > 0)
     .sort((left, right) => (left.externalProductId ?? "").localeCompare(right.externalProductId ?? ""));
 }
 

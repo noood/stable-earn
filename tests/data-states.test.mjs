@@ -4,7 +4,7 @@ import { moduleLoader } from "./helpers/load-ts.mjs";
 
 const load = moduleLoader();
 const { productCapacityIsIncomplete, productInformationIssues, productParticipatesInInterest, holdingSyncNote } = load("@/lib/product-status");
-const { bestAvailableFirstTierProduct, productHasComparableApr, productHasKnownCapacity, productKnownNotSubscribable, productShouldBeActive, totalHighYieldRemaining } = load("@/lib/opportunity-policy");
+const { bestAvailableFirstTierProduct, productHasComparableApr, productHasKnownCapacity, productHoldingQualifiesForCatalog, productKnownNotSubscribable, productShouldBeActive, totalHighYieldRemaining } = load("@/lib/opportunity-policy");
 const { remainingHighYield } = load("@/lib/domain");
 const { applyProductOverride, formatShortDate, productTermStatus } = load("@/lib/product-overrides");
 const { completedDataSummary, syncFailureSummary, sanitizeSyncFailure, nextScheduledRefreshAt, scheduledRefreshPending } = load("@/lib/sync-notice");
@@ -190,6 +190,46 @@ test("opportunity boundary is inclusive at 6%, long terms need a holding", () =>
   assert.equal(holdingSyncNote("synced"), "接口未返回该产品持仓");
 });
 
+test("catalog uses a strict 0.01 holding threshold for non-BTC API products across platforms", () => {
+  const accountIds = ["binance-global", "binance-bahrain", "bybit-global", "bybit-eu", "bitget-global", "okx-global", "mexc-ph", "mexc-uk"];
+  for (const asset of ["USDT", "USDC", "USDGO"]) {
+    for (const accountId of accountIds) {
+      const product = { ...base, id: `${accountId}-${asset}`, accountId, asset, productDataMode: "api",
+        rateCoverage: "complete", tiers: [{ min: 0, max: 100, apr: 5 }] };
+      assert.equal(productHoldingQualifiesForCatalog(product, 0.01), false, `${accountId} ${asset} exact boundary`);
+      assert.equal(productShouldBeActive(product, { known: true, amount: 0.01 }), false, `${accountId} ${asset} exact boundary`);
+      assert.equal(productShouldBeActive(product, { known: true, amount: 0.010000001 }), true, `${accountId} ${asset} above boundary`);
+    }
+  }
+});
+
+test("BTC threshold, APR opportunity, and manual product activity retain their separate rules", () => {
+  const btc = { ...base, asset: "BTC", productDataMode: "api", rateCoverage: "complete", tiers: [{ min: 0, max: 1, apr: 5 }] };
+  assert.equal(productShouldBeActive(btc, { known: true, amount: 0.00000001 }), true);
+  assert.equal(productShouldBeActive(btc, { known: true, amount: 0 }), false);
+
+  const stablecoin = { ...base, asset: "USDGO", productDataMode: "api", rateCoverage: "complete", tiers: [{ min: 0, max: 100, apr: 6 }] };
+  assert.equal(productShouldBeActive(stablecoin, { known: true, amount: 0.01 }), true);
+  assert.equal(productShouldBeActive({ ...stablecoin, productType: "fixed", termDays: 7 }, { known: true, amount: 0 }), true);
+  assert.equal(productShouldBeActive({ ...stablecoin, productType: "fixed", termDays: 8 }, { known: true, amount: 0 }), false);
+
+  const manual = { ...stablecoin, productDataMode: "manual", rateCoverage: "unavailable", tiers: [] };
+  assert.equal(productShouldBeActive(manual, { known: true, amount: 0 }), true);
+});
+
+test("active API products are retained when APR or its opportunity range is unknown", () => {
+  const unavailable = { ...base, productDataMode: "api", rateCoverage: "unavailable", tiers: [] };
+  const partialBelowThreshold = { ...base, productDataMode: "api", rateCoverage: "partial", tiers: [{ min: 0, max: 100, apr: 5 }] };
+  assert.equal(productShouldBeActive(unavailable, { known: true, amount: 0 }, true), true);
+  assert.equal(productShouldBeActive(unavailable, { known: true, amount: 0 }, false), false);
+  assert.equal(productShouldBeActive(partialBelowThreshold, { known: true, amount: 0 }, true), true);
+  assert.equal(productShouldBeActive(partialBelowThreshold, { known: true, amount: 0 }, false), false);
+  assert.equal(productShouldBeActive({ ...partialBelowThreshold, rateCoverage: "complete" }, { known: true, amount: 0 }, true), false);
+  assert.equal(productShouldBeActive(partialBelowThreshold, { known: false, amount: 0 }, true), true);
+  assert.equal(productShouldBeActive({ ...unavailable, eligibilityRequired: true, eligibilityStatus: "unknown" }, { known: true, amount: 0 }, true), true);
+  assert.equal(productShouldBeActive({ ...unavailable, availability: "unavailable" }, { known: true, amount: 0 }, true), false);
+});
+
 test("qualification-restricted products need eligibility or a positive holding", () => {
   const restricted = {
     ...base,
@@ -214,8 +254,16 @@ test("banner distinguishes whole failure, interface scope and page network failu
     "Bitget 持仓数据未完整返回，OKX API 暂不可用",
   );
   assert.equal(
-    syncFailureSummary(["Bybit.com 定期产品", "Bybit.com 定期持仓"]),
-    "Bybit.com 定期产品 API 暂不可用、Bybit.com 定期持仓 API 暂不可用",
+    syncFailureSummary(["Bybit Global 定期产品", "Bybit Global 定期持仓"]),
+    "Bybit Global 定期产品 API 暂不可用、Bybit Global 定期持仓 API 暂不可用",
+  );
+  assert.equal(
+    syncFailureSummary(["Bybit.com 定期产品"]),
+    "Bybit Global 定期产品 API 暂不可用",
+  );
+  assert.equal(
+    syncFailureSummary(["Binance.com（请求超时）"]),
+    "Binance Global API 暂不可用",
   );
   assert.equal(syncFailureSummary(["Bitget（USDGO 产品未返回）"]), "Bitget USDGO 产品未返回");
   assert.match(syncFailureSummary(["产品和持仓数据更新失败"]), /^本次产品和持仓数据更新失败/);

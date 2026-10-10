@@ -6,6 +6,7 @@ import { withCapabilityProbeRequestGuard } from "@/lib/exchange-fetch";
 import { parseExchangeNumber } from "@/lib/exchange-number";
 import type { LiveRate } from "@/lib/live-rates";
 import { apiAssetsFor, availableApiAssetsFor, capabilityApiReference, monitoredAssets, platformCapabilities, type CapabilityProductType, type PlatformApiMode } from "@/lib/platform-capabilities";
+import { accountDisplayNames, capabilityPlatformName } from "@/lib/platform-display";
 import { collectSyncDiagnostics, withSyncPlatform } from "@/lib/sync-diagnostics";
 
 type ProbeCredential = { apiKey: string; apiSecret: string; passphrase?: string };
@@ -30,7 +31,7 @@ type SafeApiRow = {
   subscriptionMinimum?: number;
   subscriptionMaximum?: number | null;
   subscriptionMaximumStatus?: "limited" | "unlimited" | "not_returned" | "unreadable";
-  subscriptionMaximumSource?: "api" | "not_returned";
+  subscriptionMaximumSource?: "api" | "not_returned" | "cache";
   productPoolRemaining?: number;
   apyType?: string;
   limitFieldsComplete?: boolean;
@@ -461,16 +462,6 @@ type CapabilityCheck = {
 function buildCapabilityChecks(scopes: CapabilityScope[]): CapabilityCheck[] {
   const checks: CapabilityCheck[] = [];
   const mexcByScope = new Map<string, CapabilityCheck>();
-  const platformLabels: Record<string, string> = {
-    "binance-global": "Binance Global",
-    "binance-bahrain": "Binance Bahrain",
-    "bybit-global": "Bybit Global",
-    "bybit-eu": "Bybit EU",
-    "bitget-global": "Bitget Global",
-    "okx-global": "OKX Global",
-    "mexc-ph": "MEXC",
-    "mexc-uk": "MEXC",
-  };
   const regionLabels: Record<string, string> = {
     global: "Global",
     bahrain: "Bahrain",
@@ -519,7 +510,7 @@ function buildCapabilityChecks(scopes: CapabilityScope[]): CapabilityCheck[] {
             : "未接入";
       const record: CapabilityCheck = {
         accountId: scope.accountId,
-        platform: platformLabels[scope.accountId] ?? scope.accountId,
+        platform: capabilityPlatformName(scope.accountId),
         region: scope.accountId.startsWith("mexc-") ? "PH/UK" : regionLabels[capability.region],
         asset: scope.asset,
         productType: scope.productType,
@@ -734,7 +725,7 @@ function applyCapturedRecord(
     return;
   }
   if (record.event === "bybit_flexible_rows") {
-    const accountId = record.platform === "Bybit EU" ? "bybit-eu" : "bybit-global";
+    const accountId = record.platform === accountDisplayNames["bybit-eu"] ? "bybit-eu" : "bybit-global";
     const asset = String(record.coin ?? "");
     const entries = rows(record.rows);
     const included = rows(record.includedProducts);

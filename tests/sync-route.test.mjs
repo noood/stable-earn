@@ -38,7 +38,26 @@ function fixture({ scheduledEnabled = true, includeOkxProduct = false } = {}) {
     id: "okx-usdt", accountId: "okx-global", asset: "USDT", productType: "flexible",
     holdingDataMode: "api", productDataMode: "manual", source: { kind: "manual" },
   }] : []);
-  const rate = (productId) => ({ productId, apr: 6, fetchedAt: new Clock().toISOString() });
+  const rate = (productId, overrides = {}) => {
+    const isBinance = productId === "bn-g-usdt";
+    const accountId = isBinance ? "binance-global" : "bitget-global";
+    const asset = isBinance ? "USDT" : "USDC";
+    const identityKey = `${accountId}:${asset}:flexible:${productId}`;
+    return {
+      productId,
+      identityKey,
+      canonicalProductId: identityKey,
+      productDataMode: "api",
+      apr: 6,
+      rateShape: "single_rate",
+      tiers: [{ min: 0, max: 300, apr: 6 }],
+      rateCoverage: "complete",
+      fetchedAt: new Clock().toISOString(),
+      sourceLabel: "API",
+      catalog: { accountId, exchange: isBinance ? "binance" : "bitget", region: "global", asset, holdingDataMode: "api", apiAccess: "authenticated" },
+      ...overrides,
+    };
+  };
   const load = moduleLoader({
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     "@/lib/db": {
@@ -54,7 +73,9 @@ function fixture({ scheduledEnabled = true, includeOkxProduct = false } = {}) {
       if (pause) await pause;
       if (mode === "error") throw Error("timeout");
       return {
-        rates: mode === "rate-missing" ? [] : [rate("bn-g-usdt")],
+        rates: mode === "rate-missing" ? [] : [rate("bn-g-usdt", mode === "apr-missing" ? {
+          apr: 0, rateShape: "no_rate", rateCoverage: "unavailable", tiers: [],
+        } : {})],
         holdings: { "bn-g-usdt": 0 },
         productApiStatus: "complete", positionApiStatus: "complete",
         productListsComplete: true, positionListsComplete: true,
@@ -175,6 +196,27 @@ test("first opening is one refresh per Shanghai day across devices, separate fro
   f.setTime("2026-09-05T16:00:00Z"); // midnight in Shanghai, not UTC
   assert.equal((await f.read("?visit=1")).cache.state, "updated");
   assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 3);
+});
+
+test("the product sync route restores a missing APR from the same identity before catalog processing", async () => {
+  const f = fixture();
+  const first = await f.read("?visit=1");
+  const firstRate = first.rates.find((item) => item.productId === "bn-g-usdt");
+  assert.equal(firstRate.apr, 6);
+  assert.equal(firstRate.aprSource, undefined);
+
+  f.step("apr-missing");
+  const refreshed = await f.read("?refresh=1");
+  const mergedRate = refreshed.rates.find((item) => item.productId === "bn-g-usdt");
+  const catalogInputRate = f.catalogCalls.at(-1)[2].find((item) => item.productId === "bn-g-usdt");
+
+  assert.equal(catalogInputRate.apr, 6);
+  assert.equal(catalogInputRate.aprSource, "cache");
+  assert.equal(catalogInputRate.aprFetchedAt, firstRate.fetchedAt);
+  assert.equal(mergedRate.apr, 6);
+  assert.equal(mergedRate.aprSource, "cache");
+  assert.equal(mergedRate.aprFetchedAt, firstRate.fetchedAt);
+  assert.equal(mergedRate.capacitySource, "cache");
 });
 
 test("failed daily opening consumes the day; ordinary polling never starts initial exchange requests", async () => {

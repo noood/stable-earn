@@ -21,12 +21,12 @@ export function localPrivateProductsPreview(now = new Date()) {
     // fixed-term data. The product catalogue also includes an unavailable API
     // row below so edit mode can show the no-rate state.
     previewRate("bn-bh-usdt", [[0, 500, 6.2], [500, null, 2.5]], freshAt, "Binance Bahrain 官方账户 API"),
-    previewRate("bn-g-usdt", [[0, 300, 5.8], [300, null, 2.5]], cachedAt, "Binance.com 官方账户 API"),
-    previewRate("bn-g-usdc", [[0, 200, 5.8], [200, null, 2.2]], freshAt, "Binance.com 官方账户 API"),
-    previewRate("by-g-usdc", [[0, 300, 4.2]], freshAt, "Bybit.com 官方公开 API", { rateCoverage: "base_only" }),
+    previewRate("bn-g-usdt", [[0, 300, 5.8], [300, null, 2.5]], cachedAt, "Binance Global 官方账户 API"),
+    previewRate("bn-g-usdc", [[0, 200, 5.8], [200, null, 2.2]], freshAt, "Binance Global 官方账户 API"),
+    previewRate("by-g-usdc", [[0, 300, 4.2]], freshAt, "Bybit Global 官方公开 API", { rateCoverage: "base_only" }),
     previewRate("by-eu-usdt", [[0, null, 5.2]], freshAt, "Bybit EU 官方公开 API"),
-    previewRate("by-g-usdt-short-fixed", [[0, null, 8.8]], freshAt, "Bybit.com 官方固定期限 API", { productType: "fixed", termDays: 7, rateCoverage: "max_only" }),
-    previewRate("by-g-btc-3d", [[0, 1, 6.4]], freshAt, "Bybit.com 官方固定期限 API", { productType: "fixed", termDays: 3 }),
+    previewRate("by-g-usdt-short-fixed", [[0, null, 8.8]], freshAt, "Bybit Global 官方固定期限 API", { productType: "fixed", termDays: 7, rateCoverage: "max_only" }),
+    previewRate("by-g-btc-3d", [[0, 1, 6.4]], freshAt, "Bybit Global 官方固定期限 API", { productType: "fixed", termDays: 3 }),
     // Bitget returns two distinct flexible offers for the same coin. This
     // preview keeps the 300 USDT position on the 0–300 offer and leaves the
     // 0–100000 promotion empty, matching the production regression case.
@@ -283,7 +283,7 @@ export function localPrivateProductsPreview(now = new Date()) {
     ],
     changeEvents,
     note: "本地测试数据：包含完整、缓存、字段缺失、资格待确认、未获取、同步失败、部分同步和两种 Bybit 持仓来源。",
-    failures: ["Bybit.com 定期产品"],
+    failures: ["Bybit Global 定期产品"],
     fallbackUpdatedAt: cachedAt,
     cache: {
       state: "fresh" as const,
@@ -402,7 +402,7 @@ function previewBybitFixedProduct(
     productType: "fixed",
     termDays: 7,
     tiers: [{ id: `${id}-tier-0`, min: 0, max: 200, apr: 6.5 }],
-    source: { kind: "live", label: "Bybit.com 官方固定期限 API", fetchedAt },
+    source: { kind: "live", label: "Bybit Global 官方固定期限 API", fetchedAt },
     rateCoverage: "complete",
     availability: "available",
     identityKey: id,
@@ -423,7 +423,7 @@ function previewBinanceFixedProduct(id: string, patch: Partial<Product> = {}, no
     productType: "fixed",
     termDays: 5,
     tiers: [{ id: `${id}-tier-0`, min: 0, max: 300, apr: 20 }],
-    source: { kind: "live", label: "Binance.com 定期账户 API", fetchedAt: now.toISOString() },
+    source: { kind: "live", label: "Binance Global 定期账户 API", fetchedAt: now.toISOString() },
     rateCoverage: "complete",
     availability: "unavailable",
     externalProductId: "Usdt*5*FS_Apac",

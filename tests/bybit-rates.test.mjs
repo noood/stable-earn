@@ -119,16 +119,18 @@ test("Bybit public flexible APR keeps all product IDs and each complete tier lad
   assert.deepEqual(unknown.tiers, [{ min: 0, max: null, apr: 7, maxStatus: "unlimited" }]);
   const unreadableCap = result.rates.find((item) => item.externalProductId === "unreadable-product-cap");
   assert.equal(unreadableCap.rateCoverage, "partial");
-  assert.deepEqual(unreadableCap.tiers, [{ min: 0, max: null, apr: 2 }]);
+  assert.deepEqual(unreadableCap.tiers, [{ min: 0, max: null, apr: 7 }]);
+  assert.equal(unreadableCap.aprStatus, "available");
+  assert.equal(unreadableCap.capacityStatus, "unavailable");
   const malformedCap = result.rates.find((item) => item.externalProductId === "malformed-product-cap");
-  assert.equal(malformedCap.rateCoverage, "complete");
+  assert.equal(malformedCap.rateCoverage, "partial");
   assert.equal(malformedCap.subscriptionMaximum, null);
   assert.equal(malformedCap.subscriptionMaximumStatus, "unreadable");
   assert.deepEqual(malformedCap.tiers, [{ min: 0, max: null, apr: 2 }]);
   const malformedApr = result.rates.find((item) => item.externalProductId === "malformed-product-apr");
   assert.equal(malformedApr.rateCoverage, "unavailable");
   assert.equal(malformedApr.catalog.asset, "USDC");
-  assert.equal(result.partials.includes("Bybit.com USDC 公共 APR"), false);
+  assert.equal(result.partials.includes("Bybit Global USDC 公共 APR"), false);
   assert.ok(result.fieldNotices.some((notice) => notice.productName.includes("malformed-product-apr") && notice.fields.includes("APR 未获取")));
   assert.equal(rate.capacitySource, "live");
   assert.ok(rate.capacityFetchedAt);
@@ -150,7 +152,8 @@ test("Bybit treats null tier boundaries as omitted, but rejects malformed APR te
 
   const malformed = parseBybitFlexibleTiers([{ min: "0", max: "-1", estimateApr: "7%oops" }]);
   assert.equal(malformed.complete, false);
-  assert.deepEqual(malformed.tiers, []);
+  assert.equal(malformed.aprStatus, "unavailable");
+  assert.deepEqual(malformed.tiers, [{ min: 0, max: null, maxStatus: "unlimited", maxSource: "api" }]);
 });
 
 test("Bybit can use a returned product maximum only to fill a missing final tier boundary", () => {
@@ -168,6 +171,9 @@ test("Bybit can use a returned product maximum only to fill a missing final tier
     ],
     complete: true,
     hasTiers: true,
+    aprStatus: "available",
+    capacityStatus: "available",
+    tierStructureStatus: "complete",
   });
   assert.deepEqual(parseBybitFlexibleTiers(tiers), {
     tiers: [
@@ -176,6 +182,9 @@ test("Bybit can use a returned product maximum only to fill a missing final tier
     ],
     complete: true,
     hasTiers: true,
+    aprStatus: "available",
+    capacityStatus: "available",
+    tierStructureStatus: "complete",
   });
   assert.equal(parseBybitFlexibleTiers(tiers, 100).complete, false);
   assert.equal(parseBybitFlexibleTiers(tiers, undefined, true).complete, false);
@@ -387,7 +396,7 @@ test("Bybit repeated cursor marks product result partial instead of accepting a 
   const { fetchPublicRateSnapshot } = load("@/lib/live-rates");
   const result = await fetchPublicRateSnapshot();
 
-  assert.equal(result.partials.includes("Bybit.com USDT 公共 APR"), true);
+  assert.equal(result.partials.includes("Bybit Global USDT 公共 APR"), true);
 });
 
 test("Bybit fixed product scan preserves first-page rows but marks a failed next page incomplete", async () => {

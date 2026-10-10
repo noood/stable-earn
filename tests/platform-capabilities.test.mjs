@@ -95,6 +95,10 @@ test("capability document contains a complete 112-row Markdown matrix with API s
   assert.deepEqual(headers.slice(0, 7), ["平台/地区", "币种", "期限", "信息项", "是否支持 API", "最近结果", "最近检查/依据日期"]);
   assert.equal(dataRows.every((row) => row.length === headers.length), true);
   assert.equal(dataRows.every((row) => /^(支持|不支持|待确认)$/.test(row[4])), true);
+  assert.deepEqual([...new Set(dataRows.map((row) => row[0]))], [
+    "Binance Global", "Binance Bahrain", "Bybit Global", "Bybit EU", "Bitget", "OKX", "MEXC（PH/UK）",
+  ]);
+  assert.doesNotMatch(section, /^\| (?:Binance Global|Binance Bahrain|Bybit Global|Bybit EU|Bitget|OKX)（(?:Global|Bahrain|EU)） \|/m);
   assert.equal(dataRows.filter((row) => row[0].includes("MEXC（PH/UK）")).length, 16);
   assert.equal(section.includes("PH 官方目录"), true);
   assert.equal(section.includes("UK 官方目录"), true);

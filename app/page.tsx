@@ -14,6 +14,7 @@ import { effectiveApr, formatAmount, type Account, type Asset, type HoldingMap, 
 import { applyProductOverride, dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { holdingSyncNote, productCapacityIsIncomplete, productInformationIssues, productInformationNote, productParticipatesInInterest, type ProductInformationIssue } from "@/lib/product-status";
 import { apiFieldCapability } from "@/lib/api-capabilities";
+import { rateHeadlineFor } from "@/lib/product-rate-presentation";
 import { completedDataSummary, dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
 import { publicDemoChangeEvents, publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
 import { accounts } from "@/lib/seed-data";
@@ -48,6 +49,8 @@ type ApiResult = {
     eligibilityLabel?: string;
     eligibilityStatus?: Product["eligibilityStatus"];
     rateCoverage?: Product["rateCoverage"];
+    aprSource?: Product["aprSource"];
+    aprFetchedAt?: string;
     capacitySource?: Product["capacitySource"];
     capacityFetchedAt?: string;
     externalProductId?: string;
@@ -813,8 +816,12 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
               <h2 className="type-title font-semibold tracking-[-0.02em]">{asset} 持仓</h2>
               <p className="table-toolbar-subtitle text-muted type-caption">
                 {editing
-                  ? <>展示手动产品和 API 产品，<ActionButton variant="text" className="button-text-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置 API</ActionButton></>
-                  : `仅展示已有持仓，或 APR ≥ ${minimumOpportunityApr}% 的活期及 ${maximumShortTermDays} 天内定期产品`}
+                  ? asset === "BTC"
+                    ? <>仅展示已有持仓，或 APR ≥ {minimumOpportunityApr}% 的活期及 {maximumShortTermDays} 天内定期产品，去<ActionButton variant="text" className="button-text-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置 API</ActionButton></>
+                    : <>仅展示持仓 &gt; 0.01，或 APR ≥ {minimumOpportunityApr}% 的活期及 {maximumShortTermDays} 天内定期产品，去<ActionButton variant="text" className="button-text-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置 API</ActionButton></>
+                  : asset === "BTC"
+                    ? `仅展示已有持仓，或 APR ≥ ${minimumOpportunityApr}% 的活期及 ${maximumShortTermDays} 天内定期产品`
+                    : `仅展示持仓 > 0.01，或 APR ≥ ${minimumOpportunityApr}% 的活期及 ${maximumShortTermDays} 天内定期产品`}
               </p>
             </div>
             {editing
@@ -846,7 +853,11 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             const loadHistoryPage = isHistoryPreviewProduct
               ? (cursor: string | null) => historyPreviewLoader(listedProduct.id, cursor)
               : isDemo || localPreview ? undefined : (cursor: string | null) => loadProductHistoryPage(listedProduct.id, cursor);
-            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingTiming={holdingTimingByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} apiDeleteDisabled={apiDeleteBlocked} apiDeleteDisabledReason={apiDeleteDisabledReason} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} changeEvents={changeEvents.filter((event) => event.productId === listedProduct.id)} loadHistoryPage={loadHistoryPage} readOnlyHistoryPreview={isHistoryPreviewProduct} onEventsRead={(readAt) => setChangeEvents((current) => current.map((event) => event.productId === listedProduct.id && event.attention && !event.readAt ? { ...event, readAt } : event))} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
+            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingTiming={holdingTimingByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} apiDeleteDisabled={apiDeleteBlocked} apiDeleteDisabledReason={apiDeleteDisabledReason} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} changeEvents={changeEvents.filter((event) => event.productId === listedProduct.id)} loadHistoryPage={loadHistoryPage} readOnlyHistoryPreview={isHistoryPreviewProduct} onEventsRead={(readAt, eventIds) => {
+              const readIds = new Set(eventIds);
+              setChangeEvents((current) => current.map((event) => event.productId === listedProduct.id
+                && event.attention && !event.readAt && readIds.has(event.id) ? { ...event, readAt } : event));
+            }} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
           }) : <tr><td colSpan={5}><EmptyProductState /></td></tr>}</tbody></table></div>
         </section>
 
@@ -922,7 +933,7 @@ async function loadProductHistoryPage(productId: string, cursor: string | null):
   return response.json() as Promise<ProductHistoryPage>;
 }
 
-function ProductRow({ product, baseProduct, manualSettings, holdingTiming, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, apiDeleteDisabled, apiDeleteDisabledReason, rateFallbackAt, holdingFallbackAt, changeEvents, loadHistoryPage, readOnlyHistoryPreview = false, onEventsRead, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingTiming?: HoldingTiming; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; apiDeleteDisabled: boolean; apiDeleteDisabledReason?: string; rateFallbackAt?: string; holdingFallbackAt?: string; changeEvents: ProductChangeEvent[]; loadHistoryPage?: (cursor: string | null) => Promise<ProductHistoryPage>; readOnlyHistoryPreview?: boolean; onEventsRead: (readAt: string) => void; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
+function ProductRow({ product, baseProduct, manualSettings, holdingTiming, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, apiDeleteDisabled, apiDeleteDisabledReason, rateFallbackAt, holdingFallbackAt, changeEvents, loadHistoryPage, readOnlyHistoryPreview = false, onEventsRead, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingTiming?: HoldingTiming; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; apiDeleteDisabled: boolean; apiDeleteDisabledReason?: string; rateFallbackAt?: string; holdingFallbackAt?: string; changeEvents: ProductChangeEvent[]; loadHistoryPage?: (cursor: string | null) => Promise<ProductHistoryPage>; readOnlyHistoryPreview?: boolean; onEventsRead: (readAt: string, eventIds: string[]) => void; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
   const account = accounts.find((item) => item.id === product.accountId)!;
   const hasApiTiming = hasCompletePurchaseTiming(holdingTiming, holding);
   const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming, holdingAvailable && holding > 0);
@@ -994,15 +1005,26 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
   const apiTiming = (hasApiTiming || holding <= 0) && holdingPosition && (holdingPosition.purchaseAt || holdingPosition.redeemAt) ? holdingPosition : undefined;
   const apiPurchaseDate = apiTiming?.purchaseAt ? dateOnlyFromTimestamp(apiTiming.purchaseAt) : null;
   const apiDateSupported = apiManaged && apiFieldCapability(product, "purchaseAt") === "supported";
+  const showManualPurchaseDate = !apiDateSupported && productNeedsPurchaseDate(product) && Boolean(durationDays);
+  const showManualFields = manualApr || manualLimit || manualTerm || manualProductTerm || showManualPurchaseDate;
   const multipleApiPositions = apiDateSupported && (holdingTiming?.positions.length ?? 0) > 1;
   const termStatus = productTermStatus(product, manualSettings?.purchaseDate);
   const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming, holding > 0);
   const rateHeadline = rateHeadlineFor(product, apiManaged);
-  const sourceText = rateFallbackAt && product.rateCoverage !== "unavailable"
-    ? `产品信息沿用 ${formatSyncDateTime(rateFallbackAt)} 的缓存数据`
-    : product.capacitySource === "cache" && product.capacityFetchedAt
+  const cacheNotes = [
+    rateFallbackAt && product.rateCoverage !== "unavailable"
+      ? `产品信息沿用 ${formatSyncDateTime(rateFallbackAt)} 的缓存数据`
+      : null,
+    product.aprSource === "cache" && product.aprFetchedAt
+      ? `APR 沿用 ${formatSyncDateTime(product.aprFetchedAt)} 的缓存数据`
+      : null,
+    product.capacitySource === "cache" && product.capacityFetchedAt
       ? `额度沿用 ${formatSyncDateTime(product.capacityFetchedAt)} 的缓存数据`
-      : productInfoIssues.length === 0 && apiManaged && editing ? "API 同步" : "";
+      : null,
+  ].filter((note): note is string => Boolean(note));
+  const sourceText = cacheNotes.length > 0
+    ? cacheNotes.join("；")
+    : productInfoIssues.length === 0 && apiManaged && editing ? "API 同步" : "";
   const termStatusText: ReactNode = multipleApiPositions
     ? hasApiTiming ? "各笔到期日请在交易所查看" : "到期日未获取"
     : apiTiming
@@ -1034,14 +1056,14 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
     {(!editing || !manualProduct) && qualificationFact && <ProductFact label="申购资格" value={qualificationFact} />}
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
     {!editing && manualTerm && <ProductFact label="活动期限" value={durationDays ? formatTerm(durationDays) : "待填写"} />}
-    {sourceText && <ProductMeta text={sourceText} danger={Boolean(rateFallbackAt || product.capacitySource === "cache")} />}
+    {sourceText && <ProductMeta text={sourceText} danger={Boolean(rateFallbackAt || product.aprSource === "cache" || product.capacitySource === "cache")} />}
     {incompleteText && <ProductMeta text={incompleteText} danger={product.rateCoverage === "partial" || holding > 0 || productInfoIssues.some((issue) => issue.endsWith("未获取"))} />}
-    {editing && (manualApr || manualLimit || manualTerm || manualProductTerm || (productNeedsPurchaseDate(product) && Boolean(durationDays))) && <div className="manual-fields">
+    {editing && showManualFields && <div className="manual-fields">
       {manualLimit && <ManualLimitInput value={manualSettings?.firstTierLimit ?? null} asset={product.asset} disabled={saving} onChange={(firstTierLimitValue) => onOverrideChange({ firstTierLimit: firstTierLimitValue })} />}
       {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
       {manualTerm && <ManualTermInput label="活动期限" value={manualSettings?.termDays ?? null} disabled={saving} onChange={(termDays) => onOverrideChange({ termDays })} />}
       {manualProductTerm && <ManualTermInput label={manualKind === "limited" ? "活动期限" : "锁定期限"} value={baseProduct.termDays ?? null} disabled={saving} onChange={(termDays) => onManualProductChange({ termDays: termDays ?? undefined })} />}
-      {!apiDateSupported && productNeedsPurchaseDate(product) && durationDays && <PurchaseDateInput value={manualSettings?.purchaseDate ?? null} durationDays={durationDays} disabled={saving} onChange={(purchaseDate) => onOverrideChange({ purchaseDate })} />}
+      {showManualPurchaseDate && durationDays && <PurchaseDateInput value={manualSettings?.purchaseDate ?? null} durationDays={durationDays} disabled={saving} onChange={(purchaseDate) => onOverrideChange({ purchaseDate })} />}
     </div>}
   </div>;
 }
@@ -1068,36 +1090,6 @@ function apiMaturityIsPast(value: string) {
 
 function ProductRateHeadline({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
   return <div className="product-rate-headline"><span>{label}</span><span className={`status-chip ${muted ? "status-chip-muted" : "status-chip-highlight"}`}>{value}</span></div>;
-}
-
-function rateHeadlineFor(product: Product, apiManaged: boolean) {
-  const firstTier = product.tiers[0];
-  const capacityName = product.productType === "fixed" ? "申购额度" : "首档";
-  if (product.rateCoverage === "unavailable") {
-    const knownManualLimit = !apiManaged && firstTier?.max !== null && firstTier?.max !== undefined;
-    return {
-      label: apiManaged ? "额度未获取" : knownManualLimit ? `${capacityName} · ${tierLabel(firstTier.min, firstTier.max)}` : `${capacityName}额度待填写`,
-      value: apiManaged ? "APR 未获取" : "APR 待填写",
-      muted: true,
-    };
-  }
-  if (product.rateCoverage === "max_only") {
-    return { label: "官网最高", value: `最高 ${firstTier?.apr.toFixed(2) ?? "0.00"}%` };
-  }
-  if (product.rateCoverage === "partial") {
-    return {
-      label: firstTier ? `${capacityName} · ${tierLabel(firstTier.min, firstTier.max)}` : "档位范围待确认",
-      value: `${firstTier?.apr.toFixed(2) ?? "0.00"}%`,
-      muted: true,
-    };
-  }
-  if (product.rateCoverage === "base_only" || (apiManaged && firstTier?.max === null && firstTier.maxStatus !== "unlimited")) {
-    return { label: apiManaged ? `${capacityName} · 上限未获取` : `${capacityName}额度待填写`, value: `${firstTier?.apr.toFixed(2) ?? "0.00"}%` };
-  }
-  return {
-    label: `${capacityName} · ${firstTier ? tierLabel(firstTier.min, firstTier.max) : "未获取"}`,
-    value: `${firstTier?.apr.toFixed(2) ?? "0.00"}%`,
-  };
 }
 
 function ProductFact({ label, value }: { label: string; value: ReactNode }) {
@@ -1246,7 +1238,6 @@ function HoldingInput({ value, asset, disabled, onChange }: { value: number; ass
   return <label className={`holding-editor holding-editor-editable ${disabled ? "holding-editor-disabled" : ""}`}><span className="text-muted type-micro pointer-events-none font-normal">{asset}</span><input type="text" inputMode="decimal" placeholder="0.00" value={displayValue} onFocus={(event) => event.currentTarget.select()} onChange={(event) => updateValue(event.target.value)} onBlur={() => setDisplayValue(value > 0 ? String(value) : "")} disabled={disabled} aria-label={`${asset} 产品持仓`} className="type-body min-w-0 flex-1 bg-transparent text-left font-semibold tabular-nums outline-none" /></label>;
 }
 
-function tierLabel(min: number, max: number | null) { return max === null ? `${formatAmount(min)} 以上` : `${formatAmount(min)}–${formatAmount(max)}`; }
 function accountName(accountId: string) {
   const account = accounts.find((item) => item.id === accountId);
   if (!account) return accountId;
