@@ -3,8 +3,8 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
 const load = moduleLoader();
-const { resolveProductKind } = load("@/lib/product-kind");
-const { applyProductOverride, productNeedsManualType, productParticipatesInInterest, productTermDays, productTypeSelectionAvailable } = {
+const { normalizeManualTermField, resolveProductKind } = load("@/lib/product-kind");
+const { applyProductOverride, productNeedsManualTerm, productNeedsManualType, productParticipatesInInterest, productTermDays, productTypeSelectionAvailable } = {
   ...load("@/lib/product-overrides"),
   ...load("@/lib/product-status"),
 };
@@ -52,6 +52,23 @@ test("only a complete missing-type product can accept a manual type; type absenc
   assert.equal(totalHighYieldRemaining([unknown], { [unknown.id]: 0 }, () => true), 100);
   assert.equal(productNeedsManualType({ ...missingTypeProduct, productTypeStatus: "unavailable" }), false);
   assert.equal(productNeedsManualType({ ...missingTypeProduct, productTypeStatus: "unrecognized" }), false);
+});
+
+test("a manual term marker is effective only for a resolved fixed or limited product", () => {
+  const markedUnknown = { ...missingTypeProduct, manualFields: { termDays: true } };
+  const staleOverride = { manualKind: null, apr: 8, firstTierLimit: 100, termDays: 180, purchaseDate: "2026-08-01" };
+  const unknown = applyProductOverride(markedUnknown, staleOverride);
+
+  assert.equal(productNeedsManualTerm(markedUnknown), false);
+  assert.equal(productNeedsManualTerm({ ...markedUnknown, productTypeStatus: "known" }), false);
+  assert.equal(productNeedsManualTerm({ ...markedUnknown, productType: "fixed", productTypeStatus: "known" }), true);
+  assert.equal(productNeedsManualTerm({ ...markedUnknown, manualKind: "limited", productTypeStatus: "manual" }), true);
+  assert.equal(productNeedsManualTerm({ ...markedUnknown, productType: "fixed", productTypeStatus: "unavailable" }), false);
+  assert.equal(normalizeManualTermField(markedUnknown).manualFields, undefined);
+  assert.deepEqual(normalizeManualTermField({ ...markedUnknown, productType: "fixed", productTypeStatus: "unavailable" }).manualFields, { termDays: true });
+  assert.equal(productTermDays(unknown), null);
+  assert.equal(productInformationIssues(unknown, staleOverride, false, true).some((issue) => issue.includes("期限") || issue.includes("买入日")), false);
+  assert.equal(productParticipatesInInterest(unknown, 50, staleOverride), true);
 });
 
 test("a complete unknown-type product enters the no-holding catalog; only confirmed long fixed terms are excluded", () => {

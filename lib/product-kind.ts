@@ -1,4 +1,4 @@
-import type { ProductKind } from "./domain";
+import type { Product, ProductKind, ProductTypeStatus } from "./domain";
 
 export type ProductKindResolution =
   | { status: "missing" }
@@ -35,4 +35,22 @@ export function productKindLabel(kind: ProductKind) {
 
 export function productTypeForKind(kind: ProductKind) {
   return kind === "fixed" ? "fixed" as const : "flexible" as const;
+}
+
+export function productTypeStatusIsResolved(status?: ProductTypeStatus) {
+  return status === undefined || status === "known" || status === "manual";
+}
+
+export function productTypeCanHaveTerm(product: Pick<Product, "productType" | "manualKind" | "productTypeStatus">) {
+  return productTypeStatusIsResolved(product.productTypeStatus)
+    && (product.productType === "fixed" || product.manualKind === "fixed" || product.manualKind === "limited");
+}
+
+export function normalizeManualTermField(product: Product): Product {
+  const retainUnavailableCache = product.productTypeStatus === "unavailable"
+    && (product.productType === "fixed" || product.manualKind === "fixed" || product.manualKind === "limited");
+  if (!product.manualFields?.termDays || productTypeCanHaveTerm(product) || retainUnavailableCache) return product;
+  const withoutManualFields = { ...product };
+  delete withoutManualFields.manualFields;
+  return withoutManualFields as Product;
 }

@@ -29,6 +29,41 @@ test("an existing API product keeps its row and marks APR unavailable after a co
   assert.equal(kept.productDataMode, "api");
 });
 
+test("an unknown OKX type drops a stale manual-term marker from the catalog and sync cache product", async () => {
+  const db = sqliteDb();
+  const product = load("@/lib/catalog-templates").catalogProductTemplates.find((item) => item.id === "okx-usdc");
+  assert.ok(product);
+  const now = "2026-10-10T00:00:00.000Z";
+  const staleProduct = { ...product, manualFields: { termDays: true } };
+  db.sqlite.prepare(`INSERT INTO product_catalog
+    (owner_id, product_id, canonical_product_id, identity_key, payload, status, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`)
+    .run("user", product.id, product.identityKey, product.identityKey, JSON.stringify(staleProduct), now, now);
+
+  const result = await prepareProductCatalogSync(db, "user", [{
+    productId: product.identityKey,
+    identityKey: product.identityKey,
+    productDataMode: "manual",
+    name: product.name,
+    apr: 0,
+    tiers: product.tiers,
+    rateCoverage: "unavailable",
+    fetchedAt: now,
+    sourceLabel: "OKX 账户 API",
+    productTypeStatus: "missing",
+    catalog: { accountId: product.accountId, exchange: product.exchange, region: product.region,
+      asset: product.asset, holdingDataMode: "api" },
+  }], { [product.id]: 100 });
+
+  const cleaned = result.products.find((item) => item.id === product.id);
+  assert.ok(cleaned);
+  assert.equal(cleaned.productTypeStatus, "missing");
+  assert.equal(cleaned.manualFields, undefined);
+  await db.batch(result.statements);
+  const stored = JSON.parse(db.sqlite.prepare("SELECT payload FROM product_catalog WHERE product_id = ?").get(product.id).payload);
+  assert.equal(stored.manualFields, undefined);
+});
+
 test("an active API product is retained when a partial APR schedule cannot prove it is below the threshold", async () => {
   const db = sqliteDb();
   const product = load("@/lib/local-preview").localPrivateProductsPreview().products

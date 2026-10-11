@@ -7,7 +7,7 @@ import { catalogProductTemplates } from "./catalog-templates";
 import { syncDiagnostic } from "./sync-diagnostics";
 import { scopedExternalProductAlias } from "./product-identity";
 import { platformCapabilityScopeKey } from "./platform-capabilities";
-import { productTypeForKind } from "./product-kind";
+import { normalizeManualTermField, productTypeCanHaveTerm, productTypeForKind } from "./product-kind";
 
 /**
  * The catalogue is user-scoped because authenticated APIs may expose a
@@ -558,14 +558,24 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
       : rateHasKnownCapacity
         ? "live"
         : capacityKnown ? base.capacitySource : undefined;
+  const productType = rate.productType ?? (rate.manualKind ? productTypeForKind(rate.manualKind) : base.productType);
+  const manualKind = rate.manualKind ?? base.manualKind;
+  const productTypeStatus = rate.productTypeStatus
+    ?? (rate.productType || rate.manualKind ? "known" : base.productTypeStatus);
+  const manualFields = normalizeManualTermField({
+    ...base,
+    productType,
+    manualKind,
+    productTypeStatus,
+    manualFields: rate.manualFields ?? base.manualFields,
+  }).manualFields;
   return {
     ...normalizedBase,
     id,
     name: rate.name ?? base.name,
-    productType: rate.productType ?? (rate.manualKind ? productTypeForKind(rate.manualKind) : base.productType),
-    manualKind: rate.manualKind ?? base.manualKind,
-    productTypeStatus: rate.productTypeStatus
-      ?? (rate.productType || rate.manualKind ? "known" : base.productTypeStatus),
+    productType,
+    manualKind,
+    productTypeStatus,
     termDays: rate.clearedProductFields?.includes("termDays") ? undefined : rate.termDays ?? base.termDays,
     minimumAmount: rate.minimumAmount ?? base.minimumAmount,
     subscriptionStartsAt: rate.subscriptionStartsAt ?? base.subscriptionStartsAt,
@@ -574,7 +584,7 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
     eligibilityRequired: rate.eligibilityRequired ?? base.eligibilityRequired,
     eligibilityLabel: rate.eligibilityLabel ?? base.eligibilityLabel,
     eligibilityStatus: rate.eligibilityStatus ?? base.eligibilityStatus,
-    manualFields: rate.manualFields ?? base.manualFields,
+    manualFields,
     externalProductId: rate.externalProductId ?? base.externalProductId,
     identityKey,
     tiers,
@@ -607,6 +617,12 @@ function productTemplateFromRate(rate: LiveRate, id: string, identityKey: string
   const tiers = rate.tiers?.length
     ? rate.tiers.map((tier, index) => ({ ...tier, id: `${id}-tier-${index}` }))
     : [{ id: `${id}-tier-0`, min: 0, max: null, apr: manualProduct ? 0 : rate.apr }];
+  const productType = rate.productType ?? (rate.manualKind ? productTypeForKind(rate.manualKind) : "flexible");
+  const productTypeStatus = rate.productTypeStatus
+    ?? (rate.productType || rate.manualKind ? "known" : "unavailable");
+  const manualFields = productTypeCanHaveTerm({ productType, manualKind: rate.manualKind, productTypeStatus })
+    ? rate.manualFields
+    : undefined;
   return {
     id,
     accountId: catalog.accountId,
@@ -617,10 +633,9 @@ function productTemplateFromRate(rate: LiveRate, id: string, identityKey: string
     productDataMode: manualProduct ? "manual" : "api",
     ...(!manualProduct ? { apiAccess: catalog.apiAccess } : {}),
     holdingDataMode: catalog.holdingDataMode,
-    productType: rate.productType ?? (rate.manualKind ? productTypeForKind(rate.manualKind) : "flexible"),
+    productType,
     manualKind: rate.manualKind,
-    productTypeStatus: rate.productTypeStatus
-      ?? (rate.productType || rate.manualKind ? "known" : "unavailable"),
+    productTypeStatus,
     termDays: rate.termDays,
     minimumAmount: rate.minimumAmount,
     subscriptionStartsAt: rate.subscriptionStartsAt,
@@ -629,7 +644,7 @@ function productTemplateFromRate(rate: LiveRate, id: string, identityKey: string
     eligibilityRequired: rate.eligibilityRequired,
     eligibilityLabel: rate.eligibilityLabel,
     eligibilityStatus: rate.eligibilityStatus,
-    manualFields: rate.manualFields,
+    manualFields,
     tiers,
     source: manualProduct
       ? { kind: "manual", label: rate.sourceLabel }
@@ -657,7 +672,7 @@ function parseProduct(payload: string) {
     const normalized = value.productTypeStatus || !compatibilityTemplate?.productTypeStatus
       ? value
       : { ...value, productTypeStatus: compatibilityTemplate.productTypeStatus };
-    if (raw.productDataMode === "api" || raw.productDataMode === "manual") return [normalized];
+    if (raw.productDataMode === "api" || raw.productDataMode === "manual") return [normalizeManualTermField(normalized)];
     // Rows created before productDataMode was introduced were system catalog
     // entries. Preserve their intended behavior without requiring a second
     // destructive migration: live/private sources are API-managed; the rest
@@ -668,9 +683,9 @@ function parseProduct(payload: string) {
     const apiManaged = sourceKind === "live" || sourceKind === "private";
     if (apiManaged) {
       const apiAccess = raw.apiAccess === "public" ? "public" : "authenticated";
-      return [{ ...value, productDataMode: "api", apiAccess } as Product];
+      return [normalizeManualTermField({ ...normalized, productDataMode: "api", apiAccess } as Product)];
     }
-    return [{ ...value, productDataMode: "manual" } as Product];
+    return [normalizeManualTermField({ ...normalized, productDataMode: "manual" } as Product)];
   } catch {
     return [];
   }
