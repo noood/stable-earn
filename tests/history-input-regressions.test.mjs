@@ -109,9 +109,9 @@ test("manual numeric fields reject coercible booleans, arrays, objects and malfo
 
 test("manual numeric parsing preserves explicit zero APR, valid numeric strings and optional empty values", () => {
   assert.deepEqual(parseProductOverride(manualProduct, { apr: 0, firstTierLimit: "300", termDays: "7", purchaseDate: "2026-10-10" }), {
-    productId: "manual", apr: 0, firstTierLimit: 300, termDays: 7, purchaseDate: "2026-10-10",
+    productId: "manual", apr: 0, firstTierLimit: 300, termDays: 7, purchaseDate: "2026-10-10", manualKind: null,
   });
   assert.deepEqual(parseProductOverride(manualProduct, { apr: "", firstTierLimit: null, termDays: undefined }), {
-    productId: "manual", apr: null, firstTierLimit: null, termDays: null, purchaseDate: null,
+    productId: "manual", apr: null, firstTierLimit: null, termDays: null, purchaseDate: null, manualKind: null,
   });
 });

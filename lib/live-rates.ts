@@ -1,4 +1,4 @@
-import type { EligibilityStatus, Product, ProductAvailability, RateCoverage } from "@/lib/domain";
+import type { EligibilityStatus, Product, ProductAvailability, ProductKind, ProductTypeStatus, RateCoverage } from "@/lib/domain";
 import { buildPlatformProductIdentity } from "@/lib/product-identity";
 import { parseExchangeNumber } from "@/lib/exchange-number";
 import { syncDiagnostic } from "@/lib/sync-diagnostics";
@@ -24,6 +24,9 @@ export type LiveRate = {
   fetchedAt: string;
   sourceLabel: string;
   productType?: "flexible" | "fixed";
+  /** `missing` is valid only for a complete product record with no type field. */
+  productTypeStatus?: ProductTypeStatus;
+  manualKind?: ProductKind;
   termDays?: number;
   /** Only set for an explicit upstream cancellation, never for null/omission. */
   clearedProductFields?: Array<"termDays" | "subscriptionEndsAt">;
@@ -292,6 +295,9 @@ async function fetchBybitRate(endpoint: BybitEndpoint): Promise<{ rates: LiveRat
         const rate: LiveRate = {
           productId: identity.identityKey,
           ...identity,
+          // The endpoint is the flexible-savings product list, so the type is
+          // known from the API path even when the row has no type field.
+          productType: "flexible",
           apr,
           aprStatus: aprAvailable ? "available" : "unavailable",
           capacityStatus: capacityAvailable ? "available" : "unavailable",

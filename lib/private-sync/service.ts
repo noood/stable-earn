@@ -1,6 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { HoldingMap, HoldingPosition } from "@/lib/domain";
 import type { ProductOverrideMap } from "@/lib/product-overrides";
+import { applyProductOverride } from "@/lib/product-overrides";
 import { loadCatalogProducts } from "@/lib/product-catalog";
 import { loadUserProducts } from "@/lib/user-products";
 import { buildManualMaturityEvents, buildSyncChangeEvents, prepareProductChangeEventStatements, type ProductSnapshotForChanges } from "@/lib/product-change-events";
@@ -18,7 +19,7 @@ export async function recordDueManualMaturities(db: D1Database, userId: string) 
     loadCatalogProducts(db, userId),
     loadUserProducts(db, userId),
     db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ?").bind(userId).all<{ product_id: string; amount: number }>(),
-    db.prepare("SELECT product_id, confirmed_apr, purchase_date, updated_at FROM product_overrides WHERE user_id = ?").bind(userId).all<{ product_id: string; confirmed_apr: number | null; purchase_date: string | null; updated_at: string }>(),
+    db.prepare("SELECT product_id, confirmed_apr, purchase_date, product_kind_override, updated_at FROM product_overrides WHERE user_id = ?").bind(userId).all<{ product_id: string; confirmed_apr: number | null; purchase_date: string | null; product_kind_override: "flexible" | "fixed" | "limited" | null; updated_at: string }>(),
     db.prepare("SELECT product_id, first_tier_limit FROM product_override_limits WHERE user_id = ?").bind(userId).all<{ product_id: string; first_tier_limit: number | null }>(),
     db.prepare("SELECT product_id, term_days FROM product_override_terms WHERE user_id = ?").bind(userId).all<{ product_id: string; term_days: number | null }>(),
   ]);
@@ -32,11 +33,9 @@ export async function recordDueManualMaturities(db: D1Database, userId: string) 
     termDays: terms.get(row.product_id) ?? null,
     purchaseDate: row.purchase_date,
     updatedAt: row.updated_at,
+    manualKind: row.product_kind_override,
   }])) as ProductOverrideMap;
-  const resolvedProducts = products.map((product) => {
-    const overrideTerm = terms.get(product.id);
-    return overrideTerm && overrideTerm > 0 ? { ...product, termDays: overrideTerm } : product;
-  });
+  const resolvedProducts = products.map((product) => applyProductOverride(product, overrides[product.id]));
   const holdings = Object.fromEntries(holdingRows.results.map((row) => [row.product_id, Number(row.amount)])) as HoldingMap;
   const events = buildManualMaturityEvents(resolvedProducts, holdings, overrides);
   if (events.length > 0) await db.batch(prepareProductChangeEventStatements(db, userId, events));

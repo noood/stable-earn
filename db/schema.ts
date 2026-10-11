@@ -34,6 +34,7 @@ export const schemaStatements = [
     confirmed_apr REAL CHECK (confirmed_apr IS NULL OR (confirmed_apr >= 0 AND confirmed_apr <= 10000)),
     purchase_date TEXT,
     eligibility_confirmed INTEGER,
+    product_kind_override TEXT CHECK (product_kind_override IS NULL OR product_kind_override IN ('flexible', 'fixed', 'limited')),
     updated_at TEXT NOT NULL,
     PRIMARY KEY (user_id, product_id)
   )`,

@@ -7,7 +7,9 @@ import { createProductTemplate } from "./product-template";
 const manualProductApiHolding = { productDataMode: "manual" as const, holdingDataMode: "api" as const };
 
 export const catalogProductTemplates: Product[] = [
-  { ...createProductTemplate("okx-usdt", "okx-global", "okx", "global", "USDT", "Simple Earn Flexible", [[0, null, 0]], { kind: "manual", label: "活动信息需人工确认" }, manualProductApiHolding), rateCoverage: "unavailable", manualFields: { termDays: true } },
-  { ...createProductTemplate("okx-usdc", "okx-global", "okx", "global", "USDC", "Simple Earn Flexible", [[0, null, 0]], { kind: "manual", label: "活动信息需人工确认" }, manualProductApiHolding), rateCoverage: "unavailable", manualFields: { termDays: true } },
-  { ...createProductTemplate("okx-btc", "okx-global", "okx", "global", "BTC", "Simple Earn Flexible", [[0, null, 0]], { kind: "manual", label: "活动信息需人工确认" }, manualProductApiHolding), rateCoverage: "unavailable", manualFields: { termDays: true } },
+  ...(["USDT", "USDC", "BTC"] as const).map((asset) => ({
+    ...createProductTemplate(`okx-${asset.toLowerCase()}`, "okx-global", "okx", "global", asset, "Simple Earn", [[0, null, 0]], { kind: "manual", label: "产品信息需人工确认" }, manualProductApiHolding),
+    rateCoverage: "unavailable" as const,
+    productTypeStatus: "missing" as const,
+  })),
 ];

@@ -142,7 +142,7 @@ test("an unknown API quota shows a red warning instead of unlimited capacity", a
   await expect(row).not.toContainText("不限额");
 });
 
-test("known quota and remaining capacity stay visible when unrelated product information is missing", async ({ page }) => {
+test("unknown product type keeps known APR, quota, and remaining capacity visible", async ({ page }) => {
   await page.route("**/private/api/products**", async (route) => {
     const url = new URL(route.request().url());
     if (route.request().method() !== "GET" || url.searchParams.get("preview") !== "1") return route.continue();
@@ -153,12 +153,45 @@ test("known quota and remaining capacity stay visible when unrelated product inf
   });
 
   await page.goto("/private");
-  const row = page.locator("tr.product-row").filter({ hasText: "OKX" }).filter({ hasText: "活动期限待填写" });
-  await expect(row).toContainText("活动期限待填写，不参与收益计算");
+  const row = page.locator("tr.product-row").filter({ hasText: "OKX" }).filter({ hasText: "产品类型未知" });
+  await expect(row.locator(".product-rate-headline")).toContainText("10.00%");
+  await expect(row.locator(".product-rate-headline")).not.toContainText("产品类型");
+  await expect(row.locator(".product-meta-danger")).toHaveCount(0);
   await expect(row.locator(".holding-summary")).toContainText("持仓 0.00 / 首档 500.00");
-  await expect(row.locator(".holding-summary")).toContainText("还可放 500.00 USDT");
+  await expect(row.locator(".holding-summary")).toContainText("首档剩余 500.00 USDT");
   await expect(row.getByRole("progressbar", { name: "OKX 首档使用进度" })).toBeVisible();
   await expect(row.locator("td").nth(3)).toHaveText("—");
+
+  await page.getByRole("button", { name: "编辑持仓" }).click();
+  const typeSelect = row.getByRole("combobox", { name: "产品类型" });
+  await expect(typeSelect).toHaveText("产品类型未知");
+  await typeSelect.scrollIntoViewIfNeeded();
+  await typeSelect.click();
+  const typeOptions = page.getByRole("listbox", { name: "产品类型" }).getByRole("option");
+  await expect(typeOptions).toHaveCount(3);
+  await expect(typeOptions).toHaveText(["活期理财", "定期理财", "限时活期"]);
+
+  await typeSelect.focus();
+  await page.keyboard.press("Escape");
+  await expect(typeSelect).toHaveAttribute("aria-expanded", "false");
+  await expect(typeSelect).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(typeSelect).toHaveAttribute("aria-expanded", "true");
+  await expect(typeSelect).toHaveAttribute("aria-activedescendant", /option-0$/);
+  await page.keyboard.press("End");
+  await expect(typeSelect).toHaveAttribute("aria-activedescendant", /option-2$/);
+  await page.keyboard.press("Enter");
+  const selectedTypeSelect = page.locator("tr.product-row").filter({ hasText: "OKX" }).getByRole("combobox", { name: "产品类型" });
+  await expect(selectedTypeSelect).toHaveAttribute("aria-expanded", "false");
+  await expect(selectedTypeSelect).toHaveText("限时活期");
+  await expect(selectedTypeSelect).toBeFocused();
+
+  await page.keyboard.press("Space");
+  await expect(selectedTypeSelect).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Tab");
+  await expect(selectedTypeSelect).toHaveAttribute("aria-expanded", "false");
+  await expect(selectedTypeSelect).toHaveText("限时活期");
+  await expect(selectedTypeSelect).not.toBeFocused();
 });
 
 for (const viewport of [{ name: "desktop", width: 889, height: 1001 }, { name: "mobile", width: 375, height: 812 }]) {
@@ -1142,7 +1175,7 @@ for (const viewport of [
     await expect(page.getByRole("heading", { name: "BTC 持仓" })).toBeVisible();
     await page.getByRole("button", { name: "编辑持仓" }).click();
     const btcSubtitle = page.locator(".table-toolbar-subtitle");
-    await expect(btcSubtitle).toContainText("仅展示已有持仓，或 APR ≥ 6% 的活期及 7 天内定期产品，去");
+    await expect(btcSubtitle).toContainText("仅展示已有持仓，或 APR ≥ 6% 的活期、限时活期、类型未知及 7 天内定期产品，去");
     await expect(btcSubtitle.getByRole("button", { name: "配置 API" })).toBeVisible();
   });
 

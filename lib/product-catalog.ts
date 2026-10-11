@@ -7,6 +7,7 @@ import { catalogProductTemplates } from "./catalog-templates";
 import { syncDiagnostic } from "./sync-diagnostics";
 import { scopedExternalProductAlias } from "./product-identity";
 import { platformCapabilityScopeKey } from "./platform-capabilities";
+import { productTypeForKind } from "./product-kind";
 
 /**
  * The catalogue is user-scoped because authenticated APIs may expose a
@@ -561,7 +562,10 @@ function productFromRate(base: Product, rate: LiveRate, id: string, identityKey:
     ...normalizedBase,
     id,
     name: rate.name ?? base.name,
-    productType: rate.productType ?? base.productType,
+    productType: rate.productType ?? (rate.manualKind ? productTypeForKind(rate.manualKind) : base.productType),
+    manualKind: rate.manualKind ?? base.manualKind,
+    productTypeStatus: rate.productTypeStatus
+      ?? (rate.productType || rate.manualKind ? "known" : base.productTypeStatus),
     termDays: rate.clearedProductFields?.includes("termDays") ? undefined : rate.termDays ?? base.termDays,
     minimumAmount: rate.minimumAmount ?? base.minimumAmount,
     subscriptionStartsAt: rate.subscriptionStartsAt ?? base.subscriptionStartsAt,
@@ -613,7 +617,10 @@ function productTemplateFromRate(rate: LiveRate, id: string, identityKey: string
     productDataMode: manualProduct ? "manual" : "api",
     ...(!manualProduct ? { apiAccess: catalog.apiAccess } : {}),
     holdingDataMode: catalog.holdingDataMode,
-    productType: rate.productType ?? "flexible",
+    productType: rate.productType ?? (rate.manualKind ? productTypeForKind(rate.manualKind) : "flexible"),
+    manualKind: rate.manualKind,
+    productTypeStatus: rate.productTypeStatus
+      ?? (rate.productType || rate.manualKind ? "known" : "unavailable"),
     termDays: rate.termDays,
     minimumAmount: rate.minimumAmount,
     subscriptionStartsAt: rate.subscriptionStartsAt,
@@ -646,7 +653,11 @@ function parseProduct(payload: string) {
     if (!raw || typeof raw.id !== "string" || typeof raw.identityKey !== "string") return [];
     delete raw.identityFingerprint;
     const value = raw as unknown as Product;
-    if (raw.productDataMode === "api" || raw.productDataMode === "manual") return [value];
+    const compatibilityTemplate = catalogProductTemplates.find((product) => product.id === value.id);
+    const normalized = value.productTypeStatus || !compatibilityTemplate?.productTypeStatus
+      ? value
+      : { ...value, productTypeStatus: compatibilityTemplate.productTypeStatus };
+    if (raw.productDataMode === "api" || raw.productDataMode === "manual") return [normalized];
     // Rows created before productDataMode was introduced were system catalog
     // entries. Preserve their intended behavior without requiring a second
     // destructive migration: live/private sources are API-managed; the rest

@@ -18,6 +18,18 @@ export function productHasComparableApr(product: Product) {
     && Number.isFinite(product.tiers[0]?.apr);
 }
 
+function productTypeCanBeScreened(product: Product) {
+  return product.productTypeStatus !== "unavailable" && product.productTypeStatus !== "unrecognized";
+}
+
+function productFitsOpportunityTerm(product: Product) {
+  if (!productTypeCanBeScreened(product)) return false;
+  if (product.productTypeStatus === "missing") return true;
+  if (product.productType !== "fixed") return true;
+  const termDays = productTermDays(product);
+  return termDays !== null && termDays <= maximumShortTermDays;
+}
+
 export function productHasKnownCapacity(product: Product) {
   const tier = product.tiers[0];
   return product.rateCoverage === "complete"
@@ -45,7 +57,7 @@ export function bestAvailableFirstTierProduct(
 ) {
   let best: Product | null = null;
   for (const product of products) {
-    if (product.rateCoverage !== "complete" || productHasUnknownTierCapacity(product) || productKnownNotSubscribable(product, now)) continue;
+    if (!productFitsOpportunityTerm(product) || product.rateCoverage !== "complete" || productHasUnknownTierCapacity(product) || productKnownNotSubscribable(product, now)) continue;
     const firstTier = product.tiers[0];
     if (!firstTier || !Number.isFinite(firstTier.apr)) continue;
 
@@ -70,7 +82,7 @@ export function totalHighYieldRemaining(
   now = Date.now(),
 ) {
   return products.reduce((sum, product) => {
-    if (product.rateCoverage !== "complete" || productHasUnknownTierCapacity(product) || productKnownNotSubscribable(product, now)) return sum;
+    if (!productFitsOpportunityTerm(product) || product.rateCoverage !== "complete" || productHasUnknownTierCapacity(product) || productKnownNotSubscribable(product, now)) return sum;
     const hasKnownUnlimitedHighYield = product.tiers.some((tier) => meetsOpportunityApr(tier.apr)
       && tier.max === null && tier.maxStatus === "unlimited");
     if (!isHoldingKnown(product) && !hasKnownUnlimitedHighYield) return sum;
@@ -79,10 +91,9 @@ export function totalHighYieldRemaining(
 }
 
 export function productQualifiesAsOpportunity(product: Product) {
-  if (!productHasComparableApr(product) || !meetsOpportunityApr(highestProductApr(product))) return false;
-  const termDays = productTermDays(product);
-  return product.productType !== "fixed"
-    || (termDays !== null && termDays <= maximumShortTermDays);
+  return productFitsOpportunityTerm(product)
+    && productHasComparableApr(product)
+    && meetsOpportunityApr(highestProductApr(product));
 }
 
 export function productHoldingQualifiesForCatalog(product: Product, amount: number) {

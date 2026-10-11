@@ -11,7 +11,7 @@ import { DashboardMetricsSkeleton, ProductTableSkeletonRows } from "@/app/compon
 import { DashboardFooter, DashboardPageFrame, DashboardProductTableSection, ProductTableEmptyState } from "@/app/components/dashboard/dashboard-frame";
 import { reportStartupDiagnostic } from "@/app/components/startup-diagnostics";
 import { effectiveApr, formatAmount, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent } from "@/lib/domain";
-import { applyProductOverride, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
+import { applyProductOverride, productTypeSelectionAvailable, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { productInformationIssues, productParticipatesInInterest, type ProductInformationIssue } from "@/lib/product-status";
 import { completedDataSummary, dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
 import { publicDemoChangeEvents, publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
@@ -21,6 +21,7 @@ import { buildManualChangeEvents, sameManualProduct } from "@/lib/product-change
 import { createLocalProductHistoryPreviewLoader } from "@/lib/product-history-preview";
 import { userProductInputToProduct } from "@/lib/user-products";
 import { hasCompletePurchaseTiming, summarizeHoldingTiming } from "@/lib/holding-timing";
+import { readLocalPreviewOverrides, saveLocalPreviewOverrides } from "@/lib/local-preview-storage";
 
 type ApiResult = {
   dailyRefreshPending?: boolean;
@@ -219,11 +220,15 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       const data = await response.json() as HoldingsApiResult;
       reportStartupDiagnostic("holdings", "持仓数据接口", "响应已读取");
       if (data.products) setProducts(data.products);
-      setProductOverrides(data.overrides ?? {});
+      const loadedOverrides = data.overrides ?? {};
+      const nextOverrides = localPreview
+        ? { ...loadedOverrides, ...readLocalPreviewOverrides() }
+        : loadedOverrides;
+      setProductOverrides(nextOverrides);
       setManualProducts(data.manualProducts ?? []);
       const hiddenIds = data.hiddenProductIds ?? [];
       setHiddenProductIds(hiddenIds);
-      productOverridesRef.current = data.overrides ?? {};
+      productOverridesRef.current = nextOverrides;
       manualProductsRef.current = data.manualProducts ?? [];
       hiddenProductIdsRef.current = hiddenIds;
       const next = { ...emptyHoldings, ...data.holdings };
@@ -444,6 +449,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     hiddenProductIdsRef.current = nextHiddenProductIds;
     try {
       const result = await persistPortfolio(nextHoldings, nextOverrides, nextManualProducts, changes);
+      if (localPreview) saveLocalPreviewOverrides(nextOverrides);
       setProductOverrides((current) => ({
         ...current,
         ...Object.fromEntries(changes.overrideProductIds.map((productId) => [productId, {
@@ -451,6 +457,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
           firstTierLimit: current[productId]?.firstTierLimit ?? null,
           termDays: current[productId]?.termDays ?? null,
           purchaseDate: current[productId]?.purchaseDate ?? null,
+          manualKind: current[productId]?.manualKind ?? null,
           updatedAt: result.updatedAt,
         }])),
       }));
@@ -499,6 +506,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         termDays: current[productId]?.termDays ?? productOverrides[productId]?.termDays ?? null,
         purchaseDate: current[productId]?.purchaseDate ?? productOverrides[productId]?.purchaseDate ?? null,
         updatedAt: current[productId]?.updatedAt ?? productOverrides[productId]?.updatedAt ?? null,
+        manualKind: current[productId]?.manualKind ?? productOverrides[productId]?.manualKind ?? null,
         ...patch,
       },
     }));
@@ -731,6 +739,8 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     }
   }
 
+  const catalogRuleText = `仅展示${asset === "BTC" ? "已有持仓" : "持仓 > 0.01"}，或 APR ≥ ${minimumOpportunityApr}% 的活期、限时活期、类型未知及 ${maximumShortTermDays} 天内定期产品`;
+
   return (
     <DashboardPageFrame
       asset={asset}
@@ -764,7 +774,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
           {initialLoading ? <DashboardMetricsSkeleton asset={asset} /> : <>
             <Metric highlight label={`总持仓 · ${asset}`} value={dataBlocked ? "—" : formatAmount(totalHolding)} note={dataBlocked ? "— 个持仓产品" : `${holdingProductCount} 个持仓产品`} />
             <Metric label="组合有效 APR" value={dataBlocked ? "—" : `${portfolioApr.toFixed(2)}%`} note="按各阶梯实际占用加权" />
-            <Metric label={`预计每日收益 · ${asset}`} value={dataBlocked ? "—" : formatAmount(annualEarn / 365)} note="含活期、定期" />
+            <Metric label={`预计每日收益 · ${asset}`} value={dataBlocked ? "—" : formatAmount(annualEarn / 365)} note="按可用 APR 和实际档位计算" />
             <Metric label="最佳首档 APR" value={!dataBlocked && bestProduct ? `${bestProduct.tiers[0]!.apr.toFixed(2)}%` : "—"} note={dataBlocked ? "—" : bestProduct ? accountName(bestProduct.accountId) : "暂无可确认的首档"} />
             <Metric label="高息剩余额度" value={dataBlocked ? "—" : highYieldLeft === Number.POSITIVE_INFINITY ? "不限" : formatAmount(highYieldLeft)} note="APR ≥ 6% 各档已知剩余额度" />
             <Metric label="超出首档" value={dataBlocked ? "—" : formatAmount(tierOneOverflow)} valueTone={!dataBlocked && tierOneOverflow > 0 ? "danger" : "default"} note={dataBlocked ? "—" : tierOneOverflow > 0 ? "已进入次档" : "未超出首档"} />
@@ -776,12 +786,8 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
           title={<h2 className="type-title font-semibold tracking-[-0.02em]">{asset} 持仓</h2>}
           subtitle={<p className="table-toolbar-subtitle text-muted type-caption">
             {editing
-              ? asset === "BTC"
-                ? <>仅展示已有持仓，或 APR ≥ {minimumOpportunityApr}% 的活期及 {maximumShortTermDays} 天内定期产品，去<ActionButton variant="text" className="button-text-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置 API</ActionButton></>
-                : <>仅展示持仓 &gt; 0.01，或 APR ≥ {minimumOpportunityApr}% 的活期及 {maximumShortTermDays} 天内定期产品，去<ActionButton variant="text" className="button-text-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置 API</ActionButton></>
-              : asset === "BTC"
-                ? `仅展示已有持仓，或 APR ≥ ${minimumOpportunityApr}% 的活期及 ${maximumShortTermDays} 天内定期产品`
-                : `仅展示持仓 > 0.01，或 APR ≥ ${minimumOpportunityApr}% 的活期及 ${maximumShortTermDays} 天内定期产品`}
+              ? <>{catalogRuleText}，去<ActionButton variant="text" className="button-text-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置 API</ActionButton></>
+              : catalogRuleText}
           </p>}
           actions={editing
             ? <div key="editing-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant="secondary" onClick={cancelEditing} disabled={savingHoldings}>取消</ActionButton><ActionButton variant="secondary" onClick={addManualProduct} disabled={savingHoldings}>添加产品</ActionButton><ActionButton onClick={() => void finishEditing()} disabled={savingHoldings}>{savingHoldings ? "保存中…" : "保存持仓"}</ActionButton></div>
@@ -797,6 +803,11 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             const isManualProduct = activeManualProducts.some((product) => product.id === baseProduct.id);
             const apiHoldingSource = !isDemo && apiHoldingProductIds.has(baseProduct.id);
             const holdingFromApi = baseProduct.holdingDataMode === "api" || apiHoldingSource;
+            const typeSelectionAvailable = productTypeSelectionAvailable(
+              baseProduct,
+              holdingSyncStates?.[listedProduct.id],
+              Boolean(holdingFallbacks[listedProduct.id]),
+            );
             const apiDeleteBlocked = !holdingIsKnown(baseProduct)
               || (holdingSyncStates?.[listedProduct.id] !== undefined && holdingSyncStates[listedProduct.id] !== "synced")
               || (activeHoldings[listedProduct.id] ?? 0) > 0
@@ -812,7 +823,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             const loadHistoryPage = isHistoryPreviewProduct
               ? (cursor: string | null) => historyPreviewLoader(listedProduct.id, cursor)
               : isDemo || localPreview ? undefined : (cursor: string | null) => loadProductHistoryPage(listedProduct.id, cursor);
-            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingTiming={holdingTimingByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} apiDeleteDisabled={apiDeleteBlocked} apiDeleteDisabledReason={apiDeleteDisabledReason} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} changeEvents={changeEvents.filter((event) => event.productId === listedProduct.id)} loadHistoryPage={loadHistoryPage} readOnlyHistoryPreview={isHistoryPreviewProduct} onEventsRead={(readAt, eventIds) => {
+            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingTiming={holdingTimingByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} typeSelectionAvailable={typeSelectionAvailable} apiDeleteDisabled={apiDeleteBlocked} apiDeleteDisabledReason={apiDeleteDisabledReason} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} changeEvents={changeEvents.filter((event) => event.productId === listedProduct.id)} loadHistoryPage={loadHistoryPage} readOnlyHistoryPreview={isHistoryPreviewProduct} onEventsRead={(readAt, eventIds) => {
               const readIds = new Set(eventIds);
               setChangeEvents((current) => current.map((event) => event.productId === listedProduct.id
                 && event.attention && !event.readAt && readIds.has(event.id) ? { ...event, readAt } : event));
@@ -878,7 +889,8 @@ function sameOverride(left?: ProductOverride, right?: ProductOverride) {
   return (left?.apr ?? null) === (right?.apr ?? null)
     && (left?.firstTierLimit ?? null) === (right?.firstTierLimit ?? null)
     && (left?.termDays ?? null) === (right?.termDays ?? null)
-    && (left?.purchaseDate ?? null) === (right?.purchaseDate ?? null);
+    && (left?.purchaseDate ?? null) === (right?.purchaseDate ?? null)
+    && (left?.manualKind ?? null) === (right?.manualKind ?? null);
 }
 
 function sameIdSet(left: string[], right: string[]) {

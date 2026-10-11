@@ -30,6 +30,9 @@ test("private preview still contains the long-history and manual-field scenarios
   const previewIds = new Set(preview.products.map((product) => product.id));
   assert.ok(previewIds.has("okx-usdt"));
   assert.ok(previewIds.has("mexc-ph-usdt"));
+  const okxProducts = preview.products.filter((product) => product.accountId === "okx-global");
+  assert.deepEqual(okxProducts.map((product) => product.asset), ["USDT", "USDC", "BTC"]);
+  assert.ok(okxProducts.every((product) => product.holdingDataMode === "api" && product.productTypeStatus === "missing"));
   assert.ok(preview.changeEvents.length >= 25);
   const holdingsPreview = localPrivateHoldingsPreview(new Date("2026-10-03T00:00:00.000Z"));
   assert.equal(holdingsPreview.found, true);

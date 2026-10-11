@@ -621,6 +621,9 @@ export async function fetchBitgetSavingsSnapshot(
       rates.push({
         productId: identity.identityKey,
         ...identity,
+        // This snapshot is built only from rows scoped to Bitget flexible
+        // savings (including its matching flexible-position rows).
+        productType: "flexible",
         name: bitgetProductName(item.row, index),
         apr: item.hasProductRow ? item.tiers[0]?.apr ?? 0 : 0,
         tiers: item.hasProductRow ? item.tiers : [],

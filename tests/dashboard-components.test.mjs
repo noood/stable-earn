@@ -59,6 +59,7 @@ test("extracted inline select retains current label and its closed listbox trigg
     options: [{ value: "bybit-global", label: "Bybit Global" }], disabled: false, onChange: noop,
   });
   assert.match(html, /inline-select-trigger inline-select-trigger-primary/);
+  assert.match(html, /role="combobox"/);
   assert.match(html, /aria-haspopup="listbox"/);
   assert.match(html, /aria-expanded="false"/);
   assert.match(html, /Bybit Global/);

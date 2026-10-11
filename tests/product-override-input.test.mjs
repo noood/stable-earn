@@ -12,13 +12,13 @@ const okxUsdc = {
 test("manual term and purchase date are saved together when the catalogue has no term", () => {
   assert.deepEqual(parseProductOverride(okxUsdc, {
     termDays: 180, purchaseDate: "2026-08-01", apr: null, firstTierLimit: null,
-  }), { productId: "okx-usdc", apr: null, firstTierLimit: null, termDays: 180, purchaseDate: "2026-08-01" });
+  }), { productId: "okx-usdc", apr: null, firstTierLimit: null, termDays: 180, purchaseDate: "2026-08-01", manualKind: null });
 });
 
 test("purchase date is not accepted without a manual term", () => {
   assert.deepEqual(parseProductOverride(okxUsdc, {
     termDays: null, purchaseDate: "2026-08-01", apr: null, firstTierLimit: null,
-  }), { productId: "okx-usdc", apr: null, firstTierLimit: null, termDays: null, purchaseDate: null });
+  }), { productId: "okx-usdc", apr: null, firstTierLimit: null, termDays: null, purchaseDate: null, manualKind: null });
 });
 
 test("invalid manual term or date still fails validation", () => {

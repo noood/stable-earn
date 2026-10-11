@@ -1,4 +1,5 @@
 import type { Product } from "./domain";
+import { catalogProductTemplates } from "./catalog-templates";
 import { createProductTemplate } from "./product-template";
 
 const manual = { kind: "manual" as const, label: "配置示例" };
@@ -24,7 +25,5 @@ export const previewProducts: Product[] = [
   { ...createProductTemplate("bg-usdgo", "bitget-global", "bitget", "global", "USDGO", "Simple Earn Flexible", [[0, null, 6.13]], { kind: "manual", label: "手动维护" }, manualProductManualHolding), rateCoverage: "unavailable" },
   { ...createProductTemplate("mexc-ph-usdt", "mexc-ph", "mexc", "philippines", "USDT", "活期理财", [[0, null, 0]], { kind: "manual", label: "尚未接入可验证的实时 APR" }), rateCoverage: "unavailable" },
   { ...createProductTemplate("mexc-ph-usdc", "mexc-ph", "mexc", "philippines", "USDC", "活期理财", [[0, null, 0]], { kind: "manual", label: "尚未接入可验证的实时 APR" }), rateCoverage: "unavailable" },
-  { ...createProductTemplate("okx-usdt", "okx-global", "okx", "global", "USDT", "Simple Earn Flexible", [[0, null, 0]], { kind: "manual", label: "活动信息需人工确认" }, { productDataMode: "manual", holdingDataMode: "api" }), rateCoverage: "unavailable", manualFields: { termDays: true } },
-  { ...createProductTemplate("okx-usdc", "okx-global", "okx", "global", "USDC", "Simple Earn Flexible", [[0, null, 0]], { kind: "manual", label: "活动信息需人工确认" }, { productDataMode: "manual", holdingDataMode: "api" }), rateCoverage: "unavailable", manualFields: { termDays: true } },
-  { ...createProductTemplate("okx-btc", "okx-global", "okx", "global", "BTC", "Simple Earn Flexible", [[0, null, 0]], { kind: "manual", label: "活动信息需人工确认" }, { productDataMode: "manual", holdingDataMode: "api" }), rateCoverage: "unavailable", manualFields: { termDays: true } },
+  ...catalogProductTemplates,
 ];

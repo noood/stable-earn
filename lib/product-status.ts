@@ -4,6 +4,7 @@ import {
   productNeedsManualLimit,
   productNeedsManualTerm,
   productNeedsPurchaseDate,
+  productTypeIsResolved,
   productTermDays,
   productTermStatus,
   type ProductOverride,
@@ -63,10 +64,12 @@ export function productInformationIssues(
   }
   if (productNeedsManualLimit(product) && (override?.firstTierLimit === null || override?.firstTierLimit === undefined)) issues.push("首档额度待填写");
 
-  const durationRequired = product.productType === "fixed" || product.manualKind === "limited" || productNeedsManualTerm(product);
+  const durationRequired = productTypeIsResolved(product)
+    && (product.productType === "fixed" || product.manualKind === "limited" || productNeedsManualTerm(product));
   const durationDays = productTermDays(product);
   if (durationRequired && durationDays === null) {
-    const activity = product.manualKind === "limited" || productNeedsManualTerm(product);
+    const activity = product.manualKind === "limited"
+      || (product.productType !== "fixed" && productNeedsManualTerm(product));
     issues.push(activity
       ? apiManaged ? "活动期限未获取" : "活动期限待填写"
       : apiManaged ? "锁定期限未获取" : "锁定期限待填写");

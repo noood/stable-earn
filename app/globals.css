@@ -446,6 +446,7 @@ input:focus-visible,
   font-weight: 400;
   line-height: var(--leading-caption);
 }
+.inline-select-trigger-secondary.text-danger { color: var(--danger-text); font-weight: 600; }
 .manual-product-delete { margin-top: var(--space-3); border: 0; padding: 0; background: transparent; }
 .manual-product-delete:disabled { cursor: not-allowed; opacity: .55; }
 .inline-select-menu {
@@ -456,7 +457,7 @@ input:focus-visible,
   overflow-y: auto;
   padding: var(--button-small-padding-y);
 }
-.inline-select-menu button {
+.inline-select-menu [role="option"] {
   display: flex;
   width: 100%;
   cursor: pointer;
@@ -473,9 +474,10 @@ input:focus-visible,
   line-height: var(--leading-caption);
   text-align: left;
 }
-.inline-select-menu button:hover,
-.inline-select-menu button[aria-selected="true"] { background: var(--surface-subtle); color: var(--text-primary); }
-.inline-select-menu button[aria-selected="true"] { font-weight: 600; }
+.inline-select-menu [role="option"]:hover,
+.inline-select-menu [role="option"][data-active="true"],
+.inline-select-menu [role="option"][aria-selected="true"] { background: var(--surface-subtle); color: var(--text-primary); }
+.inline-select-menu [role="option"][aria-selected="true"] { font-weight: 600; }
 .manual-date-trigger {
   cursor: pointer;
   justify-content: space-between;

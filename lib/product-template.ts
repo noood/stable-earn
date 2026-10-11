@@ -15,7 +15,7 @@ export function createProductTemplate(
   dataMode: ProductDataSource & Pick<Product, "holdingDataMode"> = manualProductManualHolding,
 ): Product {
   return {
-    id, accountId, exchange, region, asset, name, productType: "flexible", source, rateCoverage: "complete", ...dataMode,
+    id, accountId, exchange, region, asset, name, productType: "flexible", productTypeStatus: "known", source, rateCoverage: "complete", ...dataMode,
     identityKey: dataMode.productDataMode === "manual"
       ? buildManualProductIdentity({ accountId, asset, productType: "flexible", slug: "default" })
       : id,

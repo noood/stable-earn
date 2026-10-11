@@ -1,4 +1,4 @@
-import type { Product } from "./domain";
+import type { HoldingSyncState, Product, ProductKind } from "./domain";
 
 export type ProductOverride = {
   apr: number | null;
@@ -6,6 +6,7 @@ export type ProductOverride = {
   termDays: number | null;
   purchaseDate: string | null;
   updatedAt: string | null;
+  manualKind?: ProductKind | null;
 };
 
 export type ProductOverrideMap = Record<string, ProductOverride>;
@@ -24,14 +25,23 @@ export function applyProductOverride(product: Product, override?: ProductOverrid
   const hasTerm = override?.termDays !== null && override?.termDays !== undefined && Number.isFinite(override.termDays) && override.termDays > 0;
   const needsManualApr = productNeedsManualApr(product);
   const needsManualLimit = productNeedsManualLimit(product);
-  const needsManualTerm = productNeedsManualTerm(product);
+  const manualKindChanged = productNeedsManualType(product) && override?.manualKind !== undefined;
+  const manualKind = manualKindChanged ? override!.manualKind ?? undefined : product.manualKind;
+  const productType = manualKindChanged && manualKind
+    ? manualKind === "fixed" ? "fixed" as const : "flexible" as const
+    : product.productType;
+  const productTypeStatus = manualKindChanged
+    ? manualKind ? "manual" as const : "missing" as const
+    : product.productTypeStatus;
+  const nextProduct = { ...product, manualKind, productType, productTypeStatus };
+  const needsManualTerm = productNeedsManualTerm(nextProduct);
   const useManualApr = hasApr && needsManualApr;
   const useManualLimit = hasLimit && needsManualLimit;
   const useManualTerm = hasTerm && needsManualTerm;
-  if (!useManualApr && !useManualLimit && !useManualTerm && !needsManualApr && !needsManualLimit && !needsManualTerm) return product;
+  if (!manualKindChanged && !useManualApr && !useManualLimit && !useManualTerm && !needsManualApr && !needsManualLimit && !needsManualTerm) return product;
 
   return {
-    ...product,
+    ...nextProduct,
     termDays: useManualTerm ? override!.termDays! : needsManualTerm ? undefined : product.termDays,
     rateCoverage: needsManualApr
       ? !useManualApr ? "unavailable" as const : !useManualLimit ? "base_only" as const : "complete" as const
@@ -53,10 +63,35 @@ export function productNeedsManualLimit(product: Product) {
 }
 
 export function productNeedsManualTerm(product: Product) {
-  return Boolean(product.manualFields?.termDays);
+  return Boolean(product.manualFields?.termDays)
+    || (product.productTypeStatus === "manual" && product.manualKind !== "flexible");
+}
+
+export function productNeedsManualType(product: Product) {
+  return product.productTypeStatus === "missing";
+}
+
+export function productTypeSelectionAvailable(
+  product: Product,
+  holdingSyncState?: HoldingSyncState,
+  hasHoldingFallback = false,
+  syncFailed = false,
+) {
+  return productNeedsManualType(product)
+    && product.holdingDataMode === "api"
+    && holdingSyncState === "synced"
+    && !hasHoldingFallback
+    && !syncFailed;
+}
+
+export function productTypeIsResolved(product: Product) {
+  return product.productTypeStatus === undefined
+    || product.productTypeStatus === "known"
+    || product.productTypeStatus === "manual";
 }
 
 export function productTermDays(product: Product) {
+  if (!productTypeIsResolved(product)) return null;
   return product.productType === "fixed" || product.manualKind === "limited" || productNeedsManualTerm(product)
     ? product.termDays ?? null
     : null;

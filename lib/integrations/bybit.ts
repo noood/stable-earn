@@ -168,6 +168,8 @@ export async function fetchBybitFlexibleHoldings(
     return {
       productId: identity.identityKey,
       ...identity,
+      // These positions were requested with category=FlexibleSaving.
+      productType: "flexible",
       productDataMode: "manual",
       name: "Flexible Saving",
       apr: 0,

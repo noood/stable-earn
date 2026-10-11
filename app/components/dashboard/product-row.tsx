@@ -5,17 +5,20 @@ import { ProductHistory, type ProductHistoryPage } from "@/app/components/produc
 import { AccountBadge, HoldingSummary, TableCell } from "@/app/components/ui";
 import { HoldingInput, InlineSelect, ManualAprInput, ManualLimitInput, ManualTermInput } from "@/app/components/dashboard/product-inputs";
 import { PurchaseDateInput, parseCalendarDate } from "@/app/components/dashboard/purchase-date-input";
-import { effectiveApr, formatAmount, type Account, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent } from "@/lib/domain";
-import { dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsPurchaseDate, productTermDays, productTermStatus, type ProductOverride } from "@/lib/product-overrides";
+import { effectiveApr, formatAmount, type Account, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent, type ProductKind } from "@/lib/domain";
+import { dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsManualType, productNeedsPurchaseDate, productTermDays, productTermStatus, productTypeIsResolved, type ProductOverride } from "@/lib/product-overrides";
 import { holdingSyncNote, productCapacityIsIncomplete, productInformationIssues, productInformationNote, type ProductInformationIssue } from "@/lib/product-status";
 import { apiFieldCapability } from "@/lib/api-capabilities";
 import { rateHeadlineFor } from "@/lib/product-rate-presentation";
 import { accounts } from "@/lib/seed-data";
 import { hasCompletePurchaseTiming, type HoldingTiming } from "@/lib/holding-timing";
+import { productKindLabel } from "@/lib/product-kind";
 
 export type ManualProductPatch = { accountId?: string; manualKind?: Product["manualKind"]; termDays?: number };
+const productKindOptions = (["flexible", "fixed", "limited"] as const)
+  .map((value) => ({ value, label: productKindLabel(value) }));
 
-export function ProductRow({ product, baseProduct, manualSettings, holdingTiming, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, apiDeleteDisabled, apiDeleteDisabledReason, rateFallbackAt, holdingFallbackAt, changeEvents, loadHistoryPage, readOnlyHistoryPreview = false, onEventsRead, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingTiming?: HoldingTiming; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; apiDeleteDisabled: boolean; apiDeleteDisabledReason?: string; rateFallbackAt?: string; holdingFallbackAt?: string; changeEvents: ProductChangeEvent[]; loadHistoryPage?: (cursor: string | null) => Promise<ProductHistoryPage>; readOnlyHistoryPreview?: boolean; onEventsRead: (readAt: string, eventIds: string[]) => void; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
+export function ProductRow({ product, baseProduct, manualSettings, holdingTiming, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, typeSelectionAvailable = false, apiDeleteDisabled, apiDeleteDisabledReason, rateFallbackAt, holdingFallbackAt, changeEvents, loadHistoryPage, readOnlyHistoryPreview = false, onEventsRead, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingTiming?: HoldingTiming; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; typeSelectionAvailable?: boolean; apiDeleteDisabled: boolean; apiDeleteDisabledReason?: string; rateFallbackAt?: string; holdingFallbackAt?: string; changeEvents: ProductChangeEvent[]; loadHistoryPage?: (cursor: string | null) => Promise<ProductHistoryPage>; readOnlyHistoryPreview?: boolean; onEventsRead: (readAt: string, eventIds: string[]) => void; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
   const account = accounts.find((item) => item.id === product.accountId)!;
   const hasApiTiming = hasCompletePurchaseTiming(holdingTiming, holding);
   const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming, holdingAvailable && holding > 0);
@@ -24,7 +27,9 @@ export function ProductRow({ product, baseProduct, manualSettings, holdingTiming
       <TableCell>
         {editing && manualProduct
           ? <ManualProductIdentityEditor product={baseProduct} account={account} disabled={saving} onChange={onManualProductChange} onDelete={onDelete} />
-          : <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div><div className="text-muted type-caption mt-0.5 max-w-[220px] whitespace-normal break-words">{standardProductName(product)}</div>{editing && !manualProduct && <button type="button" className="manual-product-delete text-danger type-caption" disabled={saving || apiDeleteDisabled} title={apiDeleteDisabledReason} onClick={onDelete}>移除产品</button>}</div></div>}
+          : <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div>{editing && productNeedsManualType(baseProduct) && typeSelectionAvailable
+            ? <InlineSelect className={`inline-select-trigger-secondary ${manualSettings?.manualKind ? "" : "text-danger font-semibold"}`} ariaLabel="产品类型" value={manualSettings?.manualKind ?? ""} emptyValueLabel="产品类型未知" options={productKindOptions} disabled={saving} onChange={(value) => onOverrideChange({ manualKind: value as ProductKind, ...(value === "flexible" ? { termDays: null, purchaseDate: null } : {}) })} />
+            : <div className={`type-caption mt-0.5 max-w-[220px] whitespace-normal break-words ${productTypeIsResolved(product) ? "text-muted" : "text-danger font-semibold"}`}>{standardProductName(product)}</div>}{editing && !manualProduct && <button type="button" className="manual-product-delete text-danger type-caption" disabled={saving || apiDeleteDisabled} title={apiDeleteDisabledReason} onClick={onDelete}>移除产品</button>}</div></div>}
       </TableCell>
       <TableCell><ProductTierSummary product={product} baseProduct={baseProduct} manualSettings={manualSettings} holdingTiming={holdingTiming} holding={holding} editing={editing} saving={saving} manualProduct={manualProduct} rateFallbackAt={rateFallbackAt} onOverrideChange={onOverrideChange} onManualProductChange={onManualProductChange} /></TableCell>
       <TableCell><ProductHolding product={product} account={account} holding={holding} holdingAvailable={holdingAvailable} holdingSyncState={holdingSyncState} editing={editing} editable={editable} saving={saving} holdingFallbackAt={holdingFallbackAt} productInfoIssues={productInfoIssues} onHoldingChange={onHoldingChange} /></TableCell>
@@ -37,19 +42,20 @@ export function ProductRow({ product, baseProduct, manualSettings, holdingTiming
 }
 
 function ManualProductIdentityEditor({ product, account, disabled, onChange, onDelete }: { product: Product; account: Account; disabled: boolean; onChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
-  return <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="manual-identity-fields min-w-0 flex-1"><InlineSelect className="inline-select-trigger-primary" ariaLabel="平台" value={product.accountId} options={accounts.map((item) => ({ value: item.id, label: item.name }))} disabled={disabled} onChange={(accountId) => onChange({ accountId })} /><InlineSelect className="inline-select-trigger-secondary" ariaLabel="产品类型" value={product.manualKind ?? "flexible"} options={[{ value: "flexible", label: "活期理财" }, { value: "fixed", label: "定期理财" }, { value: "limited", label: "限时活期" }]} disabled={disabled} onChange={(manualKind) => onChange({ manualKind: manualKind as Product["manualKind"] })} /><button type="button" className="manual-product-delete text-danger type-caption" disabled={disabled} onClick={onDelete}>移除产品</button></div></div>;
+  return <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="manual-identity-fields min-w-0 flex-1"><InlineSelect className="inline-select-trigger-primary" ariaLabel="平台" value={product.accountId} options={accounts.map((item) => ({ value: item.id, label: item.name }))} disabled={disabled} onChange={(accountId) => onChange({ accountId })} /><InlineSelect className="inline-select-trigger-secondary" ariaLabel="产品类型" value={product.manualKind ?? "flexible"} options={productKindOptions} disabled={disabled} onChange={(manualKind) => onChange({ manualKind: manualKind as Product["manualKind"] })} /><button type="button" className="manual-product-delete text-danger type-caption" disabled={disabled} onClick={onDelete}>移除产品</button></div></div>;
 }
 
 function ProductTierSummary({ product, baseProduct, manualSettings, holdingTiming, holding, editing, saving, manualProduct, rateFallbackAt, onOverrideChange, onManualProductChange }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingTiming?: HoldingTiming; holding: number; editing: boolean; saving: boolean; manualProduct: boolean; rateFallbackAt?: string; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void }) {
   const manualApr = productNeedsManualApr(baseProduct);
   const manualLimit = productNeedsManualLimit(baseProduct);
-  const manualTerm = productNeedsManualTerm(baseProduct);
+  const manualTerm = productNeedsManualTerm(product);
   // Historical manual catalog rows may omit manualKind. Treat an omitted
   // kind as flexible, matching the editor's default, instead of showing a
   // fixed-term input for every old flexible product.
   const manualKind = baseProduct.manualKind ?? "flexible";
+  const manualTermLabel = product.manualKind === "limited" ? "活动期限" : product.productType === "fixed" ? "锁定期限" : "活动期限";
   const manualProductTerm = manualProduct && manualKind !== "flexible";
-  const fixedFacts = product.productType === "fixed" || product.manualKind === "limited" ? fixedProductFacts(product) : [];
+  const fixedFacts = productTypeIsResolved(product) && (product.productType === "fixed" || product.manualKind === "limited") ? fixedProductFacts(product) : [];
   const qualificationFact = product.eligibilityRequired ? qualificationLabel(product) : null;
   const durationDays = productTermDays(product);
   const apiManaged = baseProduct.productDataMode === "api";
@@ -108,13 +114,13 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
     {(!editing || !manualProduct) && fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
     {(!editing || !manualProduct) && qualificationFact && <ProductFact label="申购资格" value={qualificationFact} />}
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
-    {!editing && manualTerm && <ProductFact label="活动期限" value={durationDays ? formatTerm(durationDays) : "待填写"} />}
+    {!editing && manualTerm && <ProductFact label={manualTermLabel} value={durationDays ? formatTerm(durationDays) : "待填写"} />}
     {sourceText && <ProductMeta text={sourceText} danger={Boolean(rateFallbackAt || product.aprSource === "cache" || product.capacitySource === "cache")} />}
     {incompleteText && <ProductMeta text={incompleteText} danger={product.rateCoverage === "partial" || holding > 0 || productInfoIssues.some((issue) => issue.endsWith("未获取"))} />}
     {editing && showManualFields && <div className="manual-fields">
       {manualLimit && <ManualLimitInput value={manualSettings?.firstTierLimit ?? null} asset={product.asset} disabled={saving} onChange={(firstTierLimitValue) => onOverrideChange({ firstTierLimit: firstTierLimitValue })} />}
       {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
-      {manualTerm && <ManualTermInput label="活动期限" value={manualSettings?.termDays ?? null} disabled={saving} onChange={(termDays) => onOverrideChange({ termDays })} />}
+      {manualTerm && <ManualTermInput label={manualTermLabel} value={manualSettings?.termDays ?? null} disabled={saving} onChange={(termDays) => onOverrideChange({ termDays })} />}
       {manualProductTerm && <ManualTermInput label={manualKind === "limited" ? "活动期限" : "锁定期限"} value={baseProduct.termDays ?? null} disabled={saving} onChange={(termDays) => onManualProductChange({ termDays: termDays ?? undefined })} />}
       {showManualPurchaseDate && durationDays && <PurchaseDateInput value={manualSettings?.purchaseDate ?? null} durationDays={durationDays} disabled={saving} onChange={(purchaseDate) => onOverrideChange({ purchaseDate })} />}
     </div>}
@@ -161,7 +167,9 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
   const firstTierProgress = firstTierCapacity ? Math.min(100, usedInFirstTier / firstTierCapacity * 100) : 100;
   const overflow = overflowFromFirstTier(product, holding);
   const nextApr = product.tiers[1]?.apr;
-  const capacityLabel = product.productType === "fixed" ? "申购额度" : "首档";
+  const typeResolved = productTypeIsResolved(product);
+  const isFixed = typeResolved && product.productType === "fixed";
+  const capacityLabel = isFixed ? "申购额度" : "首档";
   const capacityIncomplete = productCapacityIsIncomplete(product, productInfoIssues);
   const laterTierIncomplete = productInfoIssues.some((issue) => issue === "阶梯 APR 未获取" || issue === "阶梯结构未获取" || issue === "阶梯额度未获取");
   const holdingAmountClassName = editing ? undefined : "holding-summary-amount";
@@ -181,9 +189,10 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
   } else if (firstTierCapacity === null) {
     summary = <HoldingSummary compact label={holdingLabel(`${capacityLabel}不限额`)} cacheNote={holdingCacheNote} />;
   } else {
+    const remainingLabel = !typeResolved ? "首档剩余" : isFixed ? "还可申购" : "还可放";
     const note = overflow > 0
       ? `超出${capacityLabel} +${formatAmount(overflow)} ${product.asset}${laterTierIncomplete ? " · 后续档位待确认" : nextApr !== undefined ? ` · 按 ${nextApr.toFixed(2)}%` : " · 不再计入本产品"}`
-      : `${product.productType === "fixed" ? "还可申购" : "还可放"} ${formatAmount(Math.max(0, firstTierCapacity - usedInFirstTier))} ${product.asset}`;
+      : `${remainingLabel} ${formatAmount(Math.max(0, firstTierCapacity - usedInFirstTier))} ${product.asset}`;
     summary = <HoldingSummary label={holdingLabel(`${capacityLabel} ${formatAmount(firstTierCapacity)}`)} cacheNote={holdingCacheNote} note={note} progress={firstTierProgress} progressLabel={`${account.name} ${capacityLabel}使用进度`} noteTone={overflow > 0 ? "danger" : "default"} compact={editing} />;
   }
 
@@ -194,9 +203,8 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
 
 export function overflowFromFirstTier(product: Product, holding: number) { const firstTierMax = product.tiers[0]?.max; return firstTierMax === null || firstTierMax === undefined ? 0 : Math.max(0, holding - firstTierMax); }
 function standardProductName(product: Product) {
-  if (product.manualKind === "limited") return "限时活期";
-  if (product.productType === "fixed") return "定期理财";
-  return "活期理财";
+  if (!productTypeIsResolved(product)) return "产品类型未知";
+  return productKindLabel(product.manualKind ?? product.productType);
 }
 function qualificationLabel(product: Product) {
   if (product.eligibilityStatus === "ineligible") return "账号不符合资格";

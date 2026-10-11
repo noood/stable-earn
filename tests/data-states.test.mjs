@@ -181,11 +181,20 @@ test("manual missing fields, maturity and eligibility do not invent a holding st
   assert.equal(productShouldBeActive(held, { known: true, amount: 0 }), false);
 });
 
-test("opportunity boundary is inclusive at 6%, long terms need a holding", () => {
+test("opportunity boundary is inclusive at 6%, unknown type can pass, and known long terms need a holding", () => {
   const fixed = { ...base, productType: "fixed", termDays: 7, tiers: [{ min: 0, max: 100, apr: 6 }] };
   assert.equal(productShouldBeActive(fixed, { known: true, amount: 0 }), true);
   assert.equal(productShouldBeActive({ ...fixed, termDays: 30 }, { known: true, amount: 0 }), false);
   assert.equal(productShouldBeActive({ ...fixed, termDays: 30 }, { known: true, amount: 10 }), true);
+
+  const missingType = { ...base, productTypeStatus: "missing", rateCoverage: "complete", tiers: [{ min: 0, max: 100, apr: 8 }] };
+  assert.equal(productShouldBeActive(missingType, { known: true, amount: 0 }), true);
+  assert.equal(productParticipatesInInterest(missingType, 50), true);
+  assert.equal(bestAvailableFirstTierProduct([missingType], {}, () => true), missingType);
+  assert.equal(totalHighYieldRemaining([missingType], {}, () => true), 100);
+  const longFixed = { ...fixed, termDays: 30 };
+  assert.equal(bestAvailableFirstTierProduct([longFixed], {}, () => true), null);
+  assert.equal(totalHighYieldRemaining([longFixed], {}, () => true), 0);
   assert.equal(holdingSyncNote("error"), "API 同步失败");
   assert.equal(holdingSyncNote("synced"), "接口未返回该产品持仓");
 });

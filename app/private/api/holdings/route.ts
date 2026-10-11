@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { getDatabase, getUserId } from "@/lib/db";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
-import type { HoldingMap } from "@/lib/domain";
-import { type ProductOverrideMap } from "@/lib/product-overrides";
+import type { HoldingMap, HoldingSyncState } from "@/lib/domain";
+import { productNeedsManualType, productTypeSelectionAvailable, type ProductOverrideMap } from "@/lib/product-overrides";
 import { parseProductOverride } from "@/lib/product-override-input";
 import { loadUserProducts, prepareUserProductStatements, productToUserProduct, sanitizeUserProducts, userProductInputToProduct } from "@/lib/user-products";
 import { delayLocalPreviewScenario, isLocalPreviewRequest, localPreviewTime, localPrivateHoldingsPreview } from "@/lib/local-preview";
@@ -17,10 +17,10 @@ import {
 export const dynamic = "force-dynamic";
 
 type HoldingRow = { product_id: string; amount: number };
-type OverrideRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null; updated_at: string };
+type OverrideRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null; product_kind_override: "flexible" | "fixed" | "limited" | null; updated_at: string };
 type LimitRow = { product_id: string; first_tier_limit: number | null };
 type TermRow = { product_id: string; term_days: number | null };
-type OverrideSnapshotRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null };
+type OverrideSnapshotRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null; product_kind_override: "flexible" | "fixed" | "limited" | null };
 type HiddenProductRow = { product_id: string };
 
 export async function GET(request: Request) {
@@ -43,7 +43,7 @@ export async function GET(request: Request) {
     loadUserProducts(db, userId),
     db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
     db.prepare("SELECT product_id, amount FROM holding_positions WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
-    db.prepare(`SELECT product_id, confirmed_apr, purchase_date, updated_at
+    db.prepare(`SELECT product_id, confirmed_apr, purchase_date, product_kind_override, updated_at
       FROM product_overrides WHERE user_id = ? ORDER BY product_id`).bind(userId).all<OverrideRow>(),
     db.prepare(`SELECT product_id, first_tier_limit
       FROM product_override_limits WHERE user_id = ? ORDER BY product_id`).bind(userId).all<LimitRow>(),
@@ -83,6 +83,7 @@ export async function GET(request: Request) {
       termDays: terms.get(row.product_id) === null || terms.get(row.product_id) === undefined ? null : Number(terms.get(row.product_id)),
       purchaseDate: row.purchase_date,
       updatedAt: row.updated_at,
+      manualKind: row.product_kind_override,
     }])) as ProductOverrideMap;
   return NextResponse.json({ products: catalogProducts, holdings, overrides, manualProducts, hiddenProductIds, found: holdingResult.results.length > 0 || overrideResult.results.length > 0 || manualProducts.length > 0 || hiddenProductIds.length > 0 }, { headers: privateResponseHeaders });
 }
@@ -109,7 +110,7 @@ export async function PUT(request: Request) {
     loadCatalogProducts(db, userId),
     db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
     db.prepare("SELECT product_id, amount FROM holding_positions WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
-    db.prepare(`SELECT product_id, confirmed_apr, purchase_date
+    db.prepare(`SELECT product_id, confirmed_apr, purchase_date, product_kind_override
       FROM product_overrides WHERE user_id = ? ORDER BY product_id`).bind(userId).all<OverrideSnapshotRow>(),
     db.prepare(`SELECT product_id, first_tier_limit
       FROM product_override_limits WHERE user_id = ? ORDER BY product_id`).bind(userId).all<LimitRow>(),
@@ -117,7 +118,7 @@ export async function PUT(request: Request) {
       FROM product_override_terms WHERE user_id = ? ORDER BY product_id`).bind(userId).all<TermRow>(),
     db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
     db.prepare("SELECT product_id FROM hidden_seed_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
-    db.prepare("SELECT payload FROM sync_snapshots WHERE owner_id = ? AND cache_key = 'private-products'").bind(userId).all<{ payload: string | null }>(),
+    db.prepare("SELECT payload, last_error FROM sync_snapshots WHERE owner_id = ? AND cache_key = 'private-products'").bind(userId).all<{ payload: string | null; last_error: string | null }>(),
   ]);
   const manualProductUpdates = payload?.manualProducts === undefined ? [] : sanitizeUserProducts(payload.manualProducts);
   if (!manualProductUpdates) return NextResponse.json({ error: "手动产品格式不正确。" }, { status: 400, headers: privateResponseHeaders });
@@ -184,6 +185,25 @@ export async function PUT(request: Request) {
   const overrideCandidate = typeof payload?.overrides === "object" && payload.overrides !== null && !Array.isArray(payload.overrides)
     ? payload.overrides as Record<string, unknown>
     : {};
+  const savedOverrides = new Map(overrideResult.results.map((row) => [row.product_id, row]));
+  const typeSnapshot = parseSyncSnapshot(syncSnapshotResult.results[0]?.payload);
+  const snapshotLastError = syncSnapshotResult.results[0]?.last_error;
+  for (const productId of changedOverrideProductIds) {
+    const raw = overrideCandidate[productId];
+    if (!isRecord(raw) || !Object.hasOwn(raw, "manualKind")) continue;
+    const product = allProducts.find((item) => item.id === productId)!;
+    const previousKind = savedOverrides.get(productId)?.product_kind_override ?? null;
+    const requestedKind = raw.manualKind ?? null;
+    if (productNeedsManualType(product) && requestedKind !== previousKind
+      && !productTypeSelectionAvailable(
+        product,
+        typeSnapshot?.holdingSyncStates?.[product.id],
+        Object.hasOwn(typeSnapshot?.holdingFallbacks ?? {}, product.id),
+        Boolean(snapshotLastError),
+      )) {
+      return NextResponse.json({ error: "产品类型数据暂不可用，需等待对应 API 同步成功后再修改。" }, { status: 409, headers: privateResponseHeaders });
+    }
+  }
   const overrideEntries = changedOverrideProductIds.map((productId) => {
     const product = allProducts.find((item) => item.id === productId)!;
     return parseProductOverride(product, overrideCandidate[productId]);
@@ -208,6 +228,7 @@ export async function PUT(request: Request) {
       termDays: entry.termDays,
       purchaseDate: entry.purchaseDate,
       updatedAt,
+      manualKind: entry.manualKind,
     };
   }
   const changeEvents = source === "手动编辑"
@@ -243,13 +264,14 @@ export async function PUT(request: Request) {
       DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`)
       .bind(userId, productId, amount, updatedAt)),
     ...overrideEntries.flatMap((entry) => entry ? [db.prepare(`INSERT INTO product_overrides
-        (user_id, product_id, confirmed_apr, purchase_date, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        (user_id, product_id, confirmed_apr, purchase_date, product_kind_override, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, product_id)
         DO UPDATE SET confirmed_apr = excluded.confirmed_apr,
           purchase_date = excluded.purchase_date,
+          product_kind_override = excluded.product_kind_override,
           updated_at = excluded.updated_at`)
-      .bind(userId, entry.productId, entry.apr, entry.purchaseDate, updatedAt)] : []),
+      .bind(userId, entry.productId, entry.apr, entry.purchaseDate, entry.manualKind, updatedAt)] : []),
     ...overrideEntries.flatMap((entry) => entry ? [db.prepare(`INSERT INTO product_override_limits
         (user_id, product_id, first_tier_limit, updated_at)
         VALUES (?, ?, ?, ?)
@@ -286,6 +308,7 @@ function buildOverrideMap(overrides: OverrideSnapshotRow[], limits: LimitRow[], 
     termDays: termMap.get(row.product_id) ?? null,
     purchaseDate: row.purchase_date,
     updatedAt: null,
+    manualKind: row.product_kind_override,
   }])) as ProductOverrideMap;
 }
 
@@ -304,11 +327,29 @@ function sanitizeHiddenProductIds(value: unknown, removableProductIds: Set<strin
 function parseSyncSnapshot(payload: string | null | undefined) {
   if (!payload) return null;
   try {
-    const value = JSON.parse(payload) as { holdingUpdates?: Record<string, number>; holdingSyncStates?: Record<string, string> };
-    return value && typeof value === "object" ? value : null;
+    const value = JSON.parse(payload) as {
+      holdingUpdates?: unknown;
+      holdingSyncStates?: unknown;
+      holdingFallbacks?: unknown;
+    };
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const holdingSyncStates = isRecord(value.holdingSyncStates)
+      ? Object.fromEntries(Object.entries(value.holdingSyncStates).filter((entry): entry is [string, HoldingSyncState] => isHoldingSyncState(entry[1])))
+      : undefined;
+    const holdingFallbacks = isRecord(value.holdingFallbacks) ? value.holdingFallbacks : undefined;
+    const holdingUpdates = isRecord(value.holdingUpdates) ? value.holdingUpdates : undefined;
+    return { holdingUpdates, holdingSyncStates, holdingFallbacks };
   } catch {
     return null;
   }
+}
+
+function isHoldingSyncState(value: unknown): value is HoldingSyncState {
+  return value === "not_configured" || value === "synced" || value === "partial" || value === "error";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function trustedSnapshotAmount(snapshot: ReturnType<typeof parseSyncSnapshot>, productId: string) {

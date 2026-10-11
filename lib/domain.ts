@@ -38,6 +38,9 @@ export type EligibilityStatus = "eligible" | "ineligible" | "unknown";
 /** Whether the upstream product can currently accept a new subscription. */
 export type ProductAvailability = "available" | "unavailable" | "unknown";
 
+export type ProductKind = "flexible" | "fixed" | "limited";
+export type ProductTypeStatus = "known" | "missing" | "unavailable" | "unrecognized" | "manual";
+
 export type ProductDataSource =
   | { productDataMode: "api"; apiAccess: "public" | "authenticated" }
   | { productDataMode: "manual"; apiAccess?: never };
@@ -51,7 +54,9 @@ export type Product = {
   name: string;
   holdingDataMode: "api" | "manual";
   productType: "flexible" | "fixed";
-  manualKind?: "flexible" | "fixed" | "limited";
+  manualKind?: ProductKind;
+  /** Whether the product category is backed by a source, missing, or user-selected. */
+  productTypeStatus?: ProductTypeStatus;
   termDays?: number;
   minimumAmount?: number;
   subscriptionStartsAt?: string;

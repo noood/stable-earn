@@ -37,6 +37,14 @@ test("both missing fields are named without converting either into zero or unlim
   assert.equal(productParticipatesInInterest(incomplete, 20), false);
 });
 
+test("an unknown product type does not replace known APR or quota information", () => {
+  const unknown = product({ productTypeStatus: "missing", rateCoverage: "complete",
+    tiers: [{ id: "tier", min: 0, max: 300, apr: 8 }] });
+  assert.deepEqual(rateHeadlineFor(unknown), { label: "首档 · 0.00–300.00", value: "8.00%" });
+  assert.deepEqual(productInformationIssues(unknown), []);
+  assert.equal(productParticipatesInInterest(unknown, 20), true);
+});
+
 test("manual template bounds do not claim an unfilled manual quota is unlimited or complete", () => {
   const manual = product({ productDataMode: "manual", rateCoverage: "base_only", source: { kind: "manual" },
     tiers: [{ id: "tier", min: 0, max: 300, apr: 7 }] });

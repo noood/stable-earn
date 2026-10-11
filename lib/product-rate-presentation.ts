@@ -1,4 +1,5 @@
 import { formatAmount, type Product } from "./domain";
+import { productTypeIsResolved } from "./product-overrides";
 
 /** A null bound is open-ended only when its explicit status confirms it. */
 export function productTierLabel(tier: Product["tiers"][number]) {
@@ -10,7 +11,7 @@ export function productTierLabel(tier: Product["tiers"][number]) {
 
 export function rateHeadlineFor(product: Product, apiManaged = product.productDataMode === "api") {
   const firstTier = product.tiers[0];
-  const capacityName = product.productType === "fixed" ? "申购额度" : "首档";
+  const capacityName = productTypeIsResolved(product) && product.productType === "fixed" ? "申购额度" : "首档";
   const hasCapacity = firstTier && Number.isFinite(firstTier.min)
     && !(product.productDataMode === "manual" && product.rateCoverage === "base_only")
     && (firstTier.max !== null

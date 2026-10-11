@@ -3,7 +3,7 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
-function fixture({ savedAmount = 0, snapshotAmount = 50, mixedSource = false, manualCatalog = false } = {}) {
+function fixture({ savedAmount = 0, snapshotAmount = 50, mixedSource = false, manualCatalog = false, productId = "bn-g-usdt" } = {}) {
   const db = sqliteDb();
   const load = moduleLoader({
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
@@ -12,7 +12,7 @@ function fixture({ savedAmount = 0, snapshotAmount = 50, mixedSource = false, ma
     "@/lib/local-preview": { isLocalPreviewRequest: () => false },
   });
   const previewProduct = moduleLoader()("@/lib/local-preview").localPrivateProductsPreview().products
-    .find((item) => item.id === "bn-g-usdt");
+    .find((item) => item.id === productId);
   const product = mixedSource || manualCatalog
     ? { ...previewProduct, productDataMode: "manual", holdingDataMode: manualCatalog ? "manual" : "api" }
     : previewProduct;
@@ -95,4 +95,31 @@ test("malformed override objects cannot silently clear a user's saved manual fie
   }
   const cleared = await f.route.PUT(f.request({ holdings: {}, changedHoldingProductIds: [], changedOverrideProductIds: [f.product.id], overrides: { [f.product.id]: { apr: null, firstTierLimit: null } } }));
   assert.equal(cleared.status, 200);
+});
+
+test("a missing product type is saved per user only after that product's API sync succeeds", async () => {
+  const f = fixture({ productId: "okx-usdt" });
+  const override = {
+    manualKind: "fixed", apr: 8, firstTierLimit: 100, termDays: 7, purchaseDate: "2026-10-01",
+  };
+  const saved = await f.route.PUT(f.request({
+    holdings: {}, changedHoldingProductIds: [], changedOverrideProductIds: [f.product.id],
+    overrides: { [f.product.id]: override },
+  }));
+  assert.equal(saved.status, 200);
+  assert.equal(f.db.sqlite.prepare("SELECT product_kind_override FROM product_overrides WHERE user_id = 'user' AND product_id = ?").get(f.product.id).product_kind_override, "fixed");
+  assert.equal(f.db.sqlite.prepare("SELECT amount FROM holdings WHERE user_id = 'user' AND product_id = ?").get(f.product.id).amount, 0);
+
+  const read = await f.route.GET(new Request("https://local.test/private/api/holdings"));
+  assert.equal((await read.json()).overrides[f.product.id].manualKind, "fixed");
+
+  const blocked = fixture({ productId: "okx-usdt" });
+  blocked.db.sqlite.prepare("UPDATE sync_snapshots SET payload = ?")
+    .run(JSON.stringify({ holdingUpdates: { [blocked.product.id]: 50 }, holdingSyncStates: { [blocked.product.id]: "partial" } }));
+  const rejected = await blocked.route.PUT(blocked.request({
+    holdings: {}, changedHoldingProductIds: [], changedOverrideProductIds: [blocked.product.id],
+    overrides: { [blocked.product.id]: override },
+  }));
+  assert.equal(rejected.status, 409);
+  assert.equal(blocked.db.sqlite.prepare("SELECT COUNT(*) AS count FROM product_overrides WHERE product_id = ?").get(blocked.product.id).count, 0);
 });

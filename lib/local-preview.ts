@@ -260,6 +260,9 @@ export function localPrivateProductsPreview(now = new Date()) {
       "preview-binance-fixed-expired-zero": "synced",
       "bg-usdt-simple": "synced",
       "bg-usdt-promo": "synced",
+      "okx-usdt": "synced",
+      "okx-usdc": "synced",
+      "okx-btc": "synced",
     },
     holdingPositions: [
       {
@@ -314,8 +317,8 @@ export function localPrivateHoldingsPreview(now = new Date()) {
     "mexc-ph-usdt": manualOverride(5.2, 2000, updatedAt),
     "mexc-ph-usdc": { apr: 4.8, firstTierLimit: null, termDays: null, purchaseDate: null, updatedAt },
     "okx-usdt": { apr: 10, firstTierLimit: 500, termDays: null, purchaseDate: null, updatedAt },
-    "okx-usdc": { apr: 10, firstTierLimit: 500, termDays: 180, purchaseDate: dateOnlyOffset(now, -190), updatedAt },
-    "okx-btc": { apr: 5, firstTierLimit: 0.01, termDays: 180, purchaseDate: dateOnlyOffset(now, -3), updatedAt },
+    "okx-usdc": { apr: 10, firstTierLimit: 500, termDays: null, purchaseDate: null, updatedAt },
+    "okx-btc": { apr: 5, firstTierLimit: 0.01, termDays: null, purchaseDate: null, updatedAt },
     "preview-apr-six": { apr: null, firstTierLimit: null, termDays: null, purchaseDate: dateOnlyOffset(now, -1), updatedAt },
     "preview-below-threshold-held": { apr: null, firstTierLimit: null, termDays: null, purchaseDate: dateOnlyOffset(now, -2), updatedAt },
     "preview-long-term-held": { apr: null, firstTierLimit: null, termDays: null, purchaseDate: dateOnlyOffset(now, -4), updatedAt },

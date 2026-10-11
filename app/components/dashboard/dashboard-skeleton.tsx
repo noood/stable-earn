@@ -9,7 +9,7 @@ export function DashboardMetricsSkeleton({ asset = null }: { asset?: Asset | nul
   const metrics = [
     { label: asset ? `总持仓 · ${asset}` : undefined },
     { label: "组合有效 APR", note: "按各阶梯实际占用加权" },
-    { label: asset ? `预计每日收益 · ${asset}` : undefined, note: "含活期、定期" },
+    { label: asset ? `预计每日收益 · ${asset}` : undefined, note: "按可用 APR 和实际档位计算" },
     { label: "最佳首档 APR" },
     { label: "高息剩余额度", note: `APR ≥ ${minimumOpportunityApr}% 各档已知剩余额度` },
     { label: "超出首档" },

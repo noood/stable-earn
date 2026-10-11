@@ -1,12 +1,14 @@
-import type { Product } from "./domain";
+import type { Product, ProductKind } from "./domain";
 import { parseExchangeNumber } from "./exchange-number";
-import { productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, type ProductOverride } from "./product-overrides";
+import { productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsManualType, type ProductOverride } from "./product-overrides";
+import { resolveProductKind } from "./product-kind";
 
 type RawProductOverride = {
   apr?: unknown;
   firstTierLimit?: unknown;
   termDays?: unknown;
   purchaseDate?: unknown;
+  manualKind?: unknown;
 };
 
 export function parseProductOverride(product: Product, input: unknown) {
@@ -14,13 +16,23 @@ export function parseProductOverride(product: Product, input: unknown) {
   const raw = input as RawProductOverride;
   const apr = productNeedsManualApr(product) ? optionalApr(raw.apr) : null;
   const firstTierLimit = productNeedsManualLimit(product) ? optionalLimit(raw.firstTierLimit) : null;
+  const manualKind = productNeedsManualType(product) ? optionalManualKind(raw.manualKind) : null;
   // A product may declare that its term is manual while the saved catalogue
   // row has no term yet. In that case the submitted term determines whether a
   // purchase date is applicable and must be persisted with it.
-  const termDays = productNeedsManualTerm(product) ? optionalTerm(raw.termDays) : product.termDays ?? null;
+  const manualTypeNeedsTerm = manualKind === "fixed" || manualKind === "limited";
+  const termDays = productNeedsManualTerm(product) || manualTypeNeedsTerm
+    ? optionalTerm(raw.termDays)
+    : product.termDays ?? null;
   const purchaseDate = termDays !== null && termDays !== undefined ? optionalDate(raw.purchaseDate) : null;
-  if (apr === undefined || firstTierLimit === undefined || termDays === undefined || purchaseDate === undefined) return null;
-  return { productId: product.id, apr, firstTierLimit, termDays, purchaseDate } satisfies Pick<ProductOverride, "apr" | "firstTierLimit" | "termDays" | "purchaseDate"> & { productId: string };
+  if (apr === undefined || firstTierLimit === undefined || manualKind === undefined || termDays === undefined || purchaseDate === undefined) return null;
+  return { productId: product.id, apr, firstTierLimit, termDays, purchaseDate, manualKind } satisfies Pick<ProductOverride, "apr" | "firstTierLimit" | "termDays" | "purchaseDate" | "manualKind"> & { productId: string };
+}
+
+function optionalManualKind(value: unknown): ProductKind | null | undefined {
+  if (value === null || value === undefined || value === "unknown") return null;
+  const parsed = resolveProductKind(value);
+  return parsed.status === "known" ? parsed.kind : undefined;
 }
 
 function optionalApr(value: unknown) {
