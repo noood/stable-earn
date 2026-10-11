@@ -88,6 +88,8 @@ test("manual fixed and limited choices preserve identity and require their own t
     assert.equal(selected.productType, expectedType);
     assert.equal(selected.identityKey, missingTypeProduct.identityKey);
     assert.equal(productTermDays(selected), 7);
+    assert.equal(parsed.termDays, 7);
+    assert.equal(parsed.purchaseDate, "2026-10-01");
     assert.equal(productInformationIssues(selected, parsed).includes("产品类型未知"), false);
     assert.equal(productParticipatesInInterest(selected, 50, parsed), true);
   }

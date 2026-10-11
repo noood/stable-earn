@@ -191,6 +191,9 @@ test("unknown product type keeps known APR, quota, and remaining capacity visibl
   await expect(selectedTypeSelect).toHaveAttribute("aria-expanded", "false");
   await expect(selectedTypeSelect).toHaveText("限时活期");
   await expect(selectedTypeSelect).toBeFocused();
+  const limitedOkxRow = page.locator("tr.product-row").filter({ hasText: "OKX" }).filter({ hasText: "限时活期" });
+  await expect(limitedOkxRow.locator(".product-fact").filter({ hasText: "活动期限" })).toHaveCount(0);
+  await expect(limitedOkxRow.getByRole("textbox", { name: "活动期限" })).toBeVisible();
 
   await page.keyboard.press("Space");
   await expect(selectedTypeSelect).toHaveAttribute("aria-expanded", "true");
