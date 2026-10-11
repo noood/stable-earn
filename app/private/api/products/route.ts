@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getDatabase, getUserIdentity, isScheduledSyncEnabled } from "@/lib/db";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
 import { loadManualRefreshCooldown, manualRefreshCooldownMs } from "@/lib/user-settings";
-import { isLocalPreviewRequest, localPreviewTime, localPrivateProductsPreview, localSyncScenarioPreview } from "@/lib/local-preview";
+import { delayLocalPreviewScenario, isLocalPreviewRequest, localPreviewTime, localPrivateProductsPreview, localSyncScenarioPreview } from "@/lib/local-preview";
 import { cachedHoldingTimes } from "@/lib/holding-cache";
 import { loadProductChangeEvents } from "@/lib/product-change-events";
 import { acquireRefresh, claimDailyRefresh, refreshIsLocked, releaseRefresh } from "@/lib/refresh-control";
@@ -57,6 +57,7 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
   if (isLocalPreviewRequest(request)) {
     const scenario = new URL(request.url).searchParams.get("syncScenario");
     if (scenario === "product-read-error" || scenario === "both-read-error") {
+      if (scenario === "both-read-error") await delayLocalPreviewScenario(request, scenario);
       return NextResponse.json({ error: "本地模拟：交易所缓存读取失败" }, { status: 503, headers: privateResponseHeaders });
     }
     const previewNow = localPreviewTime(request.url);

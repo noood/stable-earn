@@ -59,6 +59,7 @@ test("local Bybit USDT history previews assign errors and pagination to three se
 test("private route serves a static shell and keeps account data client-loaded", () => {
   const privatePage = readFileSync(new URL("../app/private/page.tsx", import.meta.url), "utf8");
   const privateClient = readFileSync(new URL("../app/private/private-dashboard-client.tsx", import.meta.url), "utf8");
+  const dashboardSkeleton = readFileSync(new URL("../app/components/dashboard/dashboard-skeleton.tsx", import.meta.url), "utf8");
   const dashboard = readFileSync(new URL("../app/components/dashboard/dashboard.tsx", import.meta.url), "utf8");
   const history = readFileSync(new URL("../app/components/product-history.tsx", import.meta.url), "utf8");
   const apiSettings = readFileSync(new URL("../app/components/api-settings.tsx", import.meta.url), "utf8");
@@ -67,6 +68,21 @@ test("private route serves a static shell and keeps account data client-loaded",
   assert.match(privatePage, /<PrivateDashboardClient \/>/);
   assert.doesNotMatch(privatePage, /searchParams|<Dashboard/);
   assert.match(privateClient, /ssr: false/);
+  assert.match(privateClient, /loading: \(\{ error \}\) => error/);
+  assert.doesNotMatch(privateClient, /onRetry|retryLocalModulePreview/);
+  assert.doesNotMatch(privateClient, /正在加载个人数据/);
+  assert.match(privateClient, /DashboardModuleFailure/);
+  assert.match(dashboardSkeleton, /页面加载失败，数据无法显示，请刷新页面/);
+  assert.match(dashboardSkeleton, /note="加载失败"/);
+  assert.match(dashboardSkeleton, /持仓信息加载失败/);
+  assert.doesNotMatch(dashboardSkeleton, /onRetry|>重试</);
+  assert.match(privateClient, /moduleScenario.*error/);
+  assert.match(privateClient, /process\.env\.NODE_ENV === "development"/);
+  assert.match(dashboardSkeleton, /DashboardMetricsSkeleton/);
+  assert.match(dashboardSkeleton, /ProductTableSkeletonRows/);
+  assert.match(dashboardSkeleton, /aria-busy="true"/);
+  assert.match(dashboard, /initialLoading \? <DashboardMetricsSkeleton \/>/);
+  assert.match(dashboard, /initialLoading \? <ProductTableSkeletonRows \/>/);
   assert.match(privateClient, /localPreview=\{process\.env\.NODE_ENV === "development"\}/);
   assert.match(dashboard, /useState\(\(\) => isDemo \? publicDemoProducts : \[\]\)/);
   assert.match(dashboard, /isHistoryPreviewProduct/);

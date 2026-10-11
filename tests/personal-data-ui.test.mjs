@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
 const source = ts.createSourceFile("dashboard.tsx", readFileSync(new URL("../app/components/dashboard/dashboard.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const frameSource = ts.createSourceFile("dashboard-frame.tsx", readFileSync(new URL("../app/components/dashboard/dashboard-frame.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const parts = {};
 function visit(node) {
   if (ts.isJsxElement(node)) {
@@ -15,10 +16,14 @@ function visit(node) {
     if (className?.startsWith("card type-caption mb-4 ")) parts.notice = node.getText(source);
     if (node.openingElement.tagName.getText(source) === "tbody") parts.body = node.getText(source);
   }
-  if (ts.isFunctionDeclaration(node) && node.name?.text === "EmptyProductState") parts.empty = node.getText(source);
   ts.forEachChild(node, visit);
 }
 visit(source);
+function findEmptyState(node) {
+  if (ts.isFunctionDeclaration(node) && node.name?.text === "ProductTableEmptyState") parts.empty = node.getText(frameSource).replace(/^export\s+/, "");
+  ts.forEachChild(node, findEmptyState);
+}
+findEmptyState(frameSource);
 assert.equal(Object.keys(parts).length, 4);
 const ui = moduleLoader()(new URL("../app/components/ui.tsx", import.meta.url).pathname);
 const { dashboardReadState, serverReadFailureMessage } = moduleLoader()("@/lib/sync-notice");
@@ -28,7 +33,9 @@ function render(part, overrides = {}) {
     totalHolding: 100, holdingProductCount: 1, portfolioApr: 8, annualEarn: 8,
     bestProduct: { accountId: "test", rateCoverage: "complete", tiers: [{ min: 0, max: 100, apr: 10 }] }, highYieldLeft: 50, tierOneOverflow: 20,
     formatAmount: (value) => value.toFixed(2), highestProductApr: () => 10, accountName: () => "Test Exchange",
-    tableProducts: [], ProductTableSkeleton: () => null,
+    tableProducts: [],
+    DashboardMetricsSkeleton: () => React.createElement(React.Fragment, null, ...Array.from({ length: 6 }, (_, index) => React.createElement(ui.MetricSkeleton, { key: index, highlight: index === 0 }))),
+    ProductTableSkeletonRows: () => null,
     ...overrides,
   };
   props.scheduledRefreshFailed ??= false;

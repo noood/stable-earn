@@ -1,7 +1,16 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
+import { DashboardModuleFailure, DashboardModuleSkeleton } from "@/app/components/dashboard/dashboard-skeleton";
+import type { Asset } from "@/lib/domain";
 import { reportStartupDiagnostic, StartupDiagnostics } from "@/app/components/startup-diagnostics";
+
+function assetFromLocation(): Asset | null {
+  if (typeof window === "undefined") return null;
+  const value = new URLSearchParams(window.location.search).get("asset")?.toUpperCase();
+  return value === "USDT" || value === "USDC" || value === "USDGO" || value === "BTC" ? value : "USDT";
+}
 
 const PrivateDashboard = dynamic(
   () => import("@/app/components/dashboard/dashboard").then((module) => {
@@ -10,25 +19,44 @@ const PrivateDashboard = dynamic(
   }),
   {
     ssr: false,
-    loading: () => (
-      <main className="min-h-screen" aria-busy="true">
-        <div className="page-width mx-auto px-5 py-5 lg:px-10 lg:py-6">
-          <div className="card type-caption flex items-center gap-3 px-5 py-4" role="status">
-            <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="8.5" />
-              <path d="M12 7.5V12l3 2" />
-            </svg>
-            <span className="text-muted">正在加载个人数据…</span>
-          </div>
-        </div>
-      </main>
-    ),
+    loading: ({ error }) => error
+      ? <DashboardModuleFailure asset={assetFromLocation()} />
+      : <DashboardModuleSkeleton asset={assetFromLocation()} />,
   },
 );
 
 export default function PrivateDashboardClient() {
+  const [modulePreview, setModulePreview] = useState<"checking" | "normal" | "error">("checking");
+  const [shellAsset, setShellAsset] = useState<Asset | null>(null);
+
+  useEffect(() => {
+    const shellTimer = window.setTimeout(() => setShellAsset(assetFromLocation()), 0);
+    const simulateFailure = process.env.NODE_ENV === "development"
+      && new URLSearchParams(window.location.search).get("moduleScenario") === "error";
+    // Keep the initial shell visible long enough to inspect before a simulated failure.
+    const timer = window.setTimeout(() => {
+      setModulePreview(simulateFailure ? "error" : "normal");
+    }, simulateFailure ? 1_000 : 0);
+    return () => {
+      window.clearTimeout(shellTimer);
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  function changeShellAsset(nextAsset: Asset) {
+    setShellAsset(nextAsset);
+    const url = new URL(window.location.href);
+    if (nextAsset === "USDT") url.searchParams.delete("asset");
+    else url.searchParams.set("asset", nextAsset);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+
   return <>
     <StartupDiagnostics />
-    <PrivateDashboard mode="private" localPreview={process.env.NODE_ENV === "development"} />
+    {modulePreview === "checking"
+      ? <DashboardModuleSkeleton asset={shellAsset} onAssetChange={changeShellAsset} />
+      : modulePreview === "error"
+        ? <DashboardModuleFailure asset={shellAsset} onAssetChange={changeShellAsset} />
+        : <PrivateDashboard mode="private" localPreview={process.env.NODE_ENV === "development"} />}
   </>;
 }
