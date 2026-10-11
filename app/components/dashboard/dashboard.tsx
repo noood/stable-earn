@@ -8,7 +8,7 @@ import { ProductRow, overflowFromFirstTier, formatSyncDateTime, type ManualProdu
 import type { ProductHistoryPage } from "@/app/components/product-history";
 import { ActionButton, Metric, ModalFrame } from "@/app/components/ui";
 import { DashboardMetricsSkeleton, ProductTableSkeletonRows } from "@/app/components/dashboard/dashboard-skeleton";
-import { DashboardFooter, DashboardPageFrame, ProductTableColumns, ProductTableEmptyState, ProductTableHeader } from "@/app/components/dashboard/dashboard-frame";
+import { DashboardFooter, DashboardPageFrame, DashboardProductTableSection, ProductTableEmptyState } from "@/app/components/dashboard/dashboard-frame";
 import { reportStartupDiagnostic } from "@/app/components/startup-diagnostics";
 import { effectiveApr, formatAmount, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent } from "@/lib/domain";
 import { applyProductOverride, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
@@ -761,7 +761,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
         </div>
         <section className="metrics-panel card mb-4 grid overflow-hidden sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6" aria-busy={initialLoading}>
-          {initialLoading ? <DashboardMetricsSkeleton /> : <>
+          {initialLoading ? <DashboardMetricsSkeleton asset={asset} /> : <>
             <Metric highlight label={`总持仓 · ${asset}`} value={dataBlocked ? "—" : formatAmount(totalHolding)} note={dataBlocked ? "— 个持仓产品" : `${holdingProductCount} 个持仓产品`} />
             <Metric label="组合有效 APR" value={dataBlocked ? "—" : `${portfolioApr.toFixed(2)}%`} note="按各阶梯实际占用加权" />
             <Metric label={`预计每日收益 · ${asset}`} value={dataBlocked ? "—" : formatAmount(annualEarn / 365)} note="含活期、定期" />
@@ -771,26 +771,24 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
           </>}
         </section>
 
-        <section className="card overflow-hidden">
-          <div className="table-toolbar">
-            <div className="table-toolbar-copy">
-              <h2 className="type-title font-semibold tracking-[-0.02em]">{asset} 持仓</h2>
-              <p className="table-toolbar-subtitle text-muted type-caption">
-                {editing
-                  ? asset === "BTC"
-                    ? <>仅展示已有持仓，或 APR ≥ {minimumOpportunityApr}% 的活期及 {maximumShortTermDays} 天内定期产品，去<ActionButton variant="text" className="button-text-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置 API</ActionButton></>
-                    : <>仅展示持仓 &gt; 0.01，或 APR ≥ {minimumOpportunityApr}% 的活期及 {maximumShortTermDays} 天内定期产品，去<ActionButton variant="text" className="button-text-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置 API</ActionButton></>
-                  : asset === "BTC"
-                    ? `仅展示已有持仓，或 APR ≥ ${minimumOpportunityApr}% 的活期及 ${maximumShortTermDays} 天内定期产品`
-                    : `仅展示持仓 > 0.01，或 APR ≥ ${minimumOpportunityApr}% 的活期及 ${maximumShortTermDays} 天内定期产品`}
-              </p>
-            </div>
+        <DashboardProductTableSection
+          tableBusy={initialLoading}
+          title={<h2 className="type-title font-semibold tracking-[-0.02em]">{asset} 持仓</h2>}
+          subtitle={<p className="table-toolbar-subtitle text-muted type-caption">
             {editing
-              ? <div key="editing-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant="secondary" onClick={cancelEditing} disabled={savingHoldings}>取消</ActionButton><ActionButton variant="secondary" onClick={addManualProduct} disabled={savingHoldings}>添加产品</ActionButton><ActionButton onClick={() => void finishEditing()} disabled={savingHoldings}>{savingHoldings ? "保存中…" : "保存持仓"}</ActionButton></div>
-              : <div key="view-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant={isDemo ? "secondary" : "primary"} onClick={beginEditing} disabled={!canEdit}>编辑持仓</ActionButton></div>}
-          </div>
-          {holdingSaveError && <div className="table-error-panel error-panel type-caption font-normal">保存失败，请检查网络后重试；表格中的修改仍然保留。</div>}
-          <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={initialLoading}><ProductTableColumns /><ProductTableHeader /><tbody>{dataBlocked ? <tr><td colSpan={5}><ProductTableEmptyState message={serverReadFailureMessage} /></td></tr> : initialLoading ? <ProductTableSkeletonRows /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
+              ? asset === "BTC"
+                ? <>仅展示已有持仓，或 APR ≥ {minimumOpportunityApr}% 的活期及 {maximumShortTermDays} 天内定期产品，去<ActionButton variant="text" className="button-text-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置 API</ActionButton></>
+                : <>仅展示持仓 &gt; 0.01，或 APR ≥ {minimumOpportunityApr}% 的活期及 {maximumShortTermDays} 天内定期产品，去<ActionButton variant="text" className="button-text-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置 API</ActionButton></>
+              : asset === "BTC"
+                ? `仅展示已有持仓，或 APR ≥ ${minimumOpportunityApr}% 的活期及 ${maximumShortTermDays} 天内定期产品`
+                : `仅展示持仓 > 0.01，或 APR ≥ ${minimumOpportunityApr}% 的活期及 ${maximumShortTermDays} 天内定期产品`}
+          </p>}
+          actions={editing
+            ? <div key="editing-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant="secondary" onClick={cancelEditing} disabled={savingHoldings}>取消</ActionButton><ActionButton variant="secondary" onClick={addManualProduct} disabled={savingHoldings}>添加产品</ActionButton><ActionButton onClick={() => void finishEditing()} disabled={savingHoldings}>{savingHoldings ? "保存中…" : "保存持仓"}</ActionButton></div>
+            : <div key="view-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant={isDemo ? "secondary" : "primary"} onClick={beginEditing} disabled={!canEdit}>编辑持仓</ActionButton></div>}
+          notice={holdingSaveError && <div className="table-error-panel error-panel type-caption font-normal">保存失败，请检查网络后重试；表格中的修改仍然保留。</div>}
+        >
+          {dataBlocked ? <tr><td colSpan={5}><ProductTableEmptyState message={serverReadFailureMessage} /></td></tr> : initialLoading ? <ProductTableSkeletonRows /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
             const baseProduct = activeBaseProducts.find((product) => product.id === listedProduct.id) ?? listedProduct;
             const manualSettings = activeOverrides[listedProduct.id];
             const displayProduct = applyProductOverride(baseProduct, manualSettings);
@@ -819,8 +817,8 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
               setChangeEvents((current) => current.map((event) => event.productId === listedProduct.id
                 && event.attention && !event.readAt && readIds.has(event.id) ? { ...event, readAt } : event));
             }} onHoldingChange={(value) => setDraftHoldings((current) => ({ ...current, [listedProduct.id]: value }))} onOverrideChange={(patch) => updateDraftOverride(listedProduct.id, patch)} onManualProductChange={(patch) => updateDraftManualProduct(listedProduct.id, patch)} onDelete={() => setPendingDeleteProductId(listedProduct.id)} />;
-          }) : <tr><td colSpan={5}><ProductTableEmptyState /></td></tr>}</tbody></table></div>
-        </section>
+          }) : <tr><td colSpan={5}><ProductTableEmptyState /></td></tr>}
+        </DashboardProductTableSection>
 
         <DashboardFooter />
       </div>

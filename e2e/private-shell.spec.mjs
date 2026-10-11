@@ -31,11 +31,17 @@ test("module-loading skeleton has no visible copy and gives way to the dashboard
     await page.goto("/private", { waitUntil: "domcontentloaded" });
     await expect.poll(() => dashboardRequestIntercepted).toBe(true);
     await expect(page.locator('.metrics-panel[aria-busy="true"] .skeleton-block').first()).toBeVisible();
+    await expect(page.locator('.metrics-panel[aria-busy="true"]')).toContainText("组合有效 APR");
+    await expect(page.locator('.metrics-panel[aria-busy="true"]')).toContainText("按各阶梯实际占用加权");
+    await expect(page.locator('.metrics-panel[aria-busy="true"]')).toContainText("总持仓 · USDT");
+    await expect(page.getByRole("button", { name: "编辑持仓" })).toBeDisabled();
     await expect(page.getByRole("navigation", { name: "主导航" })).toContainText("Stable Earn");
+    await expect(page.getByRole("button", { name: "USDT" })).toHaveAttribute("aria-current", "page");
     await expect(page.getByRole("columnheader", { name: "平台 / 产品" })).toBeVisible();
     await expect(page.getByText("实际到账以平台账户为准。", { exact: false })).toBeVisible();
     await expect(page.getByText("正在加载个人数据")).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "USDT 持仓" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+    await expect(page).toHaveScreenshot("private-module-loading.png", { animations: "disabled", caret: "hide" });
     releaseDashboard();
     await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
   } finally {
@@ -55,6 +61,9 @@ test("module-download failure keeps the fixed shell without a retry button", asy
   await expect(page.getByRole("alert")).toHaveText("页面加载失败，数据无法显示，请刷新页面。");
   await expect(page.getByRole("button", { name: "重试" })).toHaveCount(0);
   await expect(page.getByText("加载失败", { exact: true })).toHaveCount(6);
+  await expect(page.locator(".metrics-panel")).toContainText("总持仓 · USDT");
+  await expect(page.locator(".metrics-panel")).toContainText("预计每日收益 · USDT");
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
   await expect(page.getByText("持仓信息加载失败", { exact: true })).toBeVisible();
   await expect(page.locator(".empty-product-state > p")).toHaveText("页面加载失败，数据无法显示，请刷新页面。");
   await expect(page.getByRole("button", { name: "编辑持仓" })).toHaveClass(/button-primary/);
@@ -74,6 +83,9 @@ test("local-only module failure preview shows the failure style without a retry 
   await expect(page.locator('.metrics-panel[aria-busy="true"] .skeleton-block').first()).toBeVisible();
   await expect(page.getByRole("alert")).toHaveText("页面加载失败，数据无法显示，请刷新页面。");
   await expect(page.getByText("加载失败", { exact: true })).toHaveCount(6);
+  await expect(page.locator(".metrics-panel")).toContainText("总持仓 · USDT");
+  await expect(page.locator(".metrics-panel")).toContainText("预计每日收益 · USDT");
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
   await expect(page.getByText("持仓信息加载失败", { exact: true })).toBeVisible();
   await expect(page.locator(".empty-product-state > p")).toHaveText("页面加载失败，数据无法显示，请刷新页面。");
   await expect(page.getByRole("button", { name: "重试" })).toHaveCount(0);
