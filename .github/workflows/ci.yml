@@ -1,9 +1,15 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      update_linux_snapshots:
+        description: Generate Linux Playwright screenshot baselines and upload them as an artifact
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -14,7 +20,8 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out repository
@@ -31,3 +38,91 @@ jobs:
 
       - name: Lint, type-check, and build
         run: npm run check
+
+  security-audit:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.13.0
+
+      - name: Audit dependencies
+        run: npm run audit:security
+
+  e2e:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.13.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium and system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Check for Linux screenshot baselines
+        id: linux-snapshots
+        run: |
+          if find e2e -type f -name '*-linux.png' -print -quit | grep -q .; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Playwright E2E
+        if: (github.event_name == 'pull_request' && steps.linux-snapshots.outputs.present == 'true') || (github.event_name == 'workflow_dispatch' && !inputs.update_linux_snapshots)
+        run: npm run test:e2e -- --reporter=list,html
+
+      - name: Bootstrap missing Linux screenshots from this PR
+        if: github.event_name == 'pull_request' && steps.linux-snapshots.outputs.present == 'false'
+        run: npm run test:e2e -- --reporter=list,html --update-snapshots
+
+      - name: Generate Linux screenshot baselines (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch' && inputs.update_linux_snapshots
+        run: npm run test:e2e -- --reporter=list,html --update-snapshots
+
+      - name: Upload generated Linux screenshot baselines
+        if: always() && ((github.event_name == 'workflow_dispatch' && inputs.update_linux_snapshots) || (github.event_name == 'pull_request' && steps.linux-snapshots.outputs.present == 'false'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-linux-baselines-${{ github.run_id }}
+          path: e2e/**/*-linux.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Require reviewed Linux baselines before visual E2E can pass
+        if: github.event_name == 'pull_request' && steps.linux-snapshots.outputs.present == 'false' && success()
+        run: |
+          {
+            echo "## Linux screenshot baselines need review"
+            echo
+            echo "This first run generated Linux screenshots but did not compare them with an existing Linux baseline. Download the `playwright-linux-baselines` artifact, review the images, add them to this PR, and push the update. The next run will perform the normal screenshot comparisons."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Linux screenshots pending review::Download, review, and commit the generated Linux baseline artifact to this PR."
+          exit 1
+
+      - name: Upload Playwright report, screenshots, and traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failure-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
