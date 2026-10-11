@@ -150,6 +150,19 @@ test("extracted product row keeps API edits read-only and omits an empty manual-
   assert.doesNotMatch(manualEdit, /aria-label="锁定期限"|aria-label="活动期限"/);
 });
 
+test("a manually selected limited-flex term appears once and remains editable", () => {
+  const limited = {
+    productType: "flexible", productTypeStatus: "manual", manualKind: "limited", termDays: 180,
+  };
+  const readOnly = renderRow(limited);
+  assert.equal((readOnly.match(/活动期限/g) ?? []).length, 1);
+  assert.match(readOnly, /活动期限<\/span><span class="tabular-nums">180 天/);
+
+  const editing = renderRow(limited, { editing: true });
+  assert.match(editing, /aria-label="活动期限"/);
+  assert.doesNotMatch(editing, /class="product-fact"><span>活动期限<\/span>/);
+});
+
 test("shared row presentation helpers retain their exact boundary and Shanghai-time behavior", () => {
   assert.equal(overflowFromFirstTier(product, 100), 0);
   assert.equal(overflowFromFirstTier(product, 105), 5);

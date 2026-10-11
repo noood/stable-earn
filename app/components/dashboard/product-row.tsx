@@ -55,7 +55,9 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
   const manualKind = baseProduct.manualKind ?? "flexible";
   const manualTermLabel = product.manualKind === "limited" ? "活动期限" : product.productType === "fixed" ? "锁定期限" : "活动期限";
   const manualProductTerm = manualProduct && manualKind !== "flexible";
-  const fixedFacts = productTypeIsResolved(product) && (product.productType === "fixed" || product.manualKind === "limited") ? fixedProductFacts(product) : [];
+  const fixedFacts = productTypeIsResolved(product) && (product.productType === "fixed" || product.manualKind === "limited")
+    ? fixedProductFacts(product).filter(([label]) => !manualTerm || (label !== "活动期限" && label !== "锁定期限"))
+    : [];
   const qualificationFact = product.eligibilityRequired ? qualificationLabel(product) : null;
   const durationDays = productTermDays(product);
   const apiManaged = baseProduct.productDataMode === "api";
