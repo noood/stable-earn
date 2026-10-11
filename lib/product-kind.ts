@@ -50,6 +50,7 @@ export function normalizeManualTermField(product: Product): Product {
   const retainUnavailableCache = product.productTypeStatus === "unavailable"
     && (product.productType === "fixed" || product.manualKind === "fixed" || product.manualKind === "limited");
   if (!product.manualFields?.termDays || productTypeCanHaveTerm(product) || retainUnavailableCache) return product;
-  const { manualFields: _manualFields, ...withoutManualFields } = product;
+  const withoutManualFields = { ...product };
+  delete withoutManualFields.manualFields;
   return withoutManualFields as Product;
 }

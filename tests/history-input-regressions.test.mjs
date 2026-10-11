@@ -96,7 +96,10 @@ test("credentials PUT rejects non-object JSON without accessing credentials or t
   }
 });
 
-const manualProduct = { id: "manual", productDataMode: "manual", manualFields: { termDays: true }, tiers: [{ min: 0, max: null, apr: 0 }], source: { kind: "manual" } };
+const manualProduct = {
+  id: "manual", productDataMode: "manual", productType: "fixed", productTypeStatus: "known",
+  manualFields: { termDays: true }, tiers: [{ min: 0, max: null, apr: 0 }], source: { kind: "manual" },
+};
 
 test("manual numeric fields reject coercible booleans, arrays, objects and malformed numeric strings", () => {
   for (const field of ["apr", "firstTierLimit", "termDays"]) {
