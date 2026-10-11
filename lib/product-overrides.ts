@@ -1,4 +1,5 @@
 import type { HoldingSyncState, Product, ProductKind } from "./domain";
+import { productTypeCanHaveTerm, productTypeStatusIsResolved } from "./product-kind";
 
 export type ProductOverride = {
   apr: number | null;
@@ -63,8 +64,8 @@ export function productNeedsManualLimit(product: Product) {
 }
 
 export function productNeedsManualTerm(product: Product) {
-  return Boolean(product.manualFields?.termDays)
-    || (product.productTypeStatus === "manual" && product.manualKind !== "flexible");
+  return productTypeCanHaveTerm(product)
+    && (Boolean(product.manualFields?.termDays) || product.productTypeStatus === "manual");
 }
 
 export function productNeedsManualType(product: Product) {
@@ -85,9 +86,7 @@ export function productTypeSelectionAvailable(
 }
 
 export function productTypeIsResolved(product: Product) {
-  return product.productTypeStatus === undefined
-    || product.productTypeStatus === "known"
-    || product.productTypeStatus === "manual";
+  return productTypeStatusIsResolved(product.productTypeStatus);
 }
 
 export function productTermDays(product: Product) {

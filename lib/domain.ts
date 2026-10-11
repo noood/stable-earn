@@ -79,6 +79,7 @@ export type Product = {
   capacityFetchedAt?: string;
   externalProductId?: string;
   identityKey: string;
+  /** Source metadata: the term field needs manual input when the resolved product type requires a term. */
   manualFields?: {
     termDays?: boolean;
   };

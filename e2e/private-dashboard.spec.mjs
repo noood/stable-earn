@@ -143,12 +143,21 @@ test("an unknown API quota shows a red warning instead of unlimited capacity", a
 });
 
 test("unknown product type keeps known APR, quota, and remaining capacity visible", async ({ page }) => {
+  await page.route("**/private/api/holdings**", async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== "GET" || url.searchParams.get("preview") !== "1") return route.continue();
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.overrides["okx-usdt"] = { ...payload.overrides["okx-usdt"], termDays: 180, purchaseDate: "2026-08-01", manualKind: null };
+    await route.fulfill({ response, json: payload });
+  });
   await page.route("**/private/api/products**", async (route) => {
     const url = new URL(route.request().url());
     if (route.request().method() !== "GET" || url.searchParams.get("preview") !== "1") return route.continue();
     const response = await route.fetch();
     const payload = await response.json();
     payload.holdingUpdates["okx-usdt"] = 0;
+    payload.products.find((item) => item.id === "okx-usdt").manualFields = { termDays: true };
     await route.fulfill({ response, json: payload });
   });
 
@@ -157,12 +166,15 @@ test("unknown product type keeps known APR, quota, and remaining capacity visibl
   await expect(row.locator(".product-rate-headline")).toContainText("10.00%");
   await expect(row.locator(".product-rate-headline")).not.toContainText("产品类型");
   await expect(row.locator(".product-meta-danger")).toHaveCount(0);
+  await expect(row.locator(".product-fact").filter({ hasText: /期限/ })).toHaveCount(0);
   await expect(row.locator(".holding-summary")).toContainText("持仓 0.00 / 首档 500.00");
   await expect(row.locator(".holding-summary")).toContainText("首档剩余 500.00 USDT");
   await expect(row.getByRole("progressbar", { name: "OKX 首档使用进度" })).toBeVisible();
   await expect(row.locator("td").nth(3)).toHaveText("—");
 
   await page.getByRole("button", { name: "编辑持仓" }).click();
+  await expect(row.getByRole("textbox", { name: "活动期限" })).toHaveCount(0);
+  await expect(row.getByRole("textbox", { name: "锁定期限" })).toHaveCount(0);
   const typeSelect = row.getByRole("combobox", { name: "产品类型" });
   await expect(typeSelect).toHaveText("产品类型未知");
   await typeSelect.scrollIntoViewIfNeeded();
@@ -194,6 +206,7 @@ test("unknown product type keeps known APR, quota, and remaining capacity visibl
   const limitedOkxRow = page.locator("tr.product-row").filter({ hasText: "OKX" }).filter({ hasText: "限时活期" });
   await expect(limitedOkxRow.locator(".product-fact").filter({ hasText: "活动期限" })).toHaveCount(0);
   await expect(limitedOkxRow.getByRole("textbox", { name: "活动期限" })).toBeVisible();
+  await expect(limitedOkxRow.getByRole("textbox", { name: "活动期限" })).toHaveValue("");
 
   await page.keyboard.press("Space");
   await expect(selectedTypeSelect).toHaveAttribute("aria-expanded", "true");
@@ -201,6 +214,12 @@ test("unknown product type keeps known APR, quota, and remaining capacity visibl
   await expect(selectedTypeSelect).toHaveAttribute("aria-expanded", "false");
   await expect(selectedTypeSelect).toHaveText("限时活期");
   await expect(selectedTypeSelect).not.toBeFocused();
+
+  await selectedTypeSelect.click();
+  await page.getByRole("listbox", { name: "产品类型" }).getByRole("option", { name: "活期理财" }).click();
+  const flexibleOkxRow = page.locator("tr.product-row").filter({ hasText: "OKX" }).filter({ hasText: "活期理财" });
+  await expect(flexibleOkxRow.getByRole("textbox", { name: "活动期限" })).toHaveCount(0);
+  await expect(flexibleOkxRow).not.toContainText("期限未获取");
 });
 
 for (const viewport of [{ name: "desktop", width: 889, height: 1001 }, { name: "mobile", width: 375, height: 812 }]) {
