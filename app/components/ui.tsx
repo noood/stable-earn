@@ -20,8 +20,12 @@ export function Metric({ label, value, note, highlight = false, valueTone = "def
   return <div className={`metric-item ${highlight ? "metric-item-highlight" : ""}`}><p className="text-muted type-caption">{label}</p><p className={`metric-value type-metric ${valueTone === "danger" ? "text-danger" : ""}`}>{value}</p><p className="metric-note text-muted type-micro">{note}</p></div>;
 }
 
-export function MetricSkeleton({ highlight = false }: { highlight?: boolean }) {
-  return <div className={`metric-item ${highlight ? "metric-item-highlight" : ""}`} aria-hidden="true"><span className="skeleton-block skeleton-label" /><span className="skeleton-block skeleton-value" /><span className="skeleton-block skeleton-note" /></div>;
+export function MetricSkeleton({ highlight = false, label, note }: { highlight?: boolean; label?: string; note?: string }) {
+  return <div className={`metric-item ${highlight ? "metric-item-highlight" : ""}`}>
+    {label ? <p className="text-muted type-caption">{label}</p> : <span className="skeleton-block skeleton-label" aria-hidden="true" />}
+    <span className="skeleton-block skeleton-value" aria-hidden="true" />
+    {note ? <p className="metric-note text-muted type-micro">{note}</p> : <span className="skeleton-block skeleton-note" aria-hidden="true" />}
+  </div>;
 }
 
 export function TableCell({ children, className = "" }: { children: ReactNode; className?: string }) {

@@ -14,7 +14,10 @@ function visit(node) {
     const className = node.openingElement.attributes.properties.find((attribute) => attribute.name?.getText(source) === "className")?.initializer?.text;
     if (className?.startsWith("metrics-panel ")) parts.metrics = node.getText(source);
     if (className?.startsWith("card type-caption mb-4 ")) parts.notice = node.getText(source);
-    if (node.openingElement.tagName.getText(source) === "tbody") parts.body = node.getText(source);
+    if (node.openingElement.tagName.getText(source) === "DashboardProductTableSection") {
+      const rows = node.children.find((child) => ts.isJsxExpression(child));
+      if (rows?.expression) parts.body = rows.expression.getText(source);
+    }
   }
   ts.forEachChild(node, visit);
 }

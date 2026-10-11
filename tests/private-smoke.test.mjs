@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
 const load = moduleLoader();
@@ -81,7 +83,7 @@ test("private route serves a static shell and keeps account data client-loaded",
   assert.match(dashboardSkeleton, /DashboardMetricsSkeleton/);
   assert.match(dashboardSkeleton, /ProductTableSkeletonRows/);
   assert.match(dashboardSkeleton, /aria-busy="true"/);
-  assert.match(dashboard, /initialLoading \? <DashboardMetricsSkeleton \/>/);
+  assert.match(dashboard, /initialLoading \? <DashboardMetricsSkeleton asset=\{asset\} \/>/);
   assert.match(dashboard, /initialLoading \? <ProductTableSkeletonRows \/>/);
   assert.match(privateClient, /localPreview=\{process\.env\.NODE_ENV === "development"\}/);
   assert.match(dashboard, /useState\(\(\) => isDemo \? publicDemoProducts : \[\]\)/);
@@ -97,6 +99,42 @@ test("private route serves a static shell and keeps account data client-loaded",
   assert.match(styles, /\.modal-body\s*\{[^}]*overscroll-behavior:\s*contain/s);
   assert.match(styles, /\.product-history-popover\s*\{[^}]*overscroll-behavior:\s*contain/s);
   assert.match(dashboard, /const emptyHoldings: HoldingMap = \{\};/);
+});
+
+test("first-stage loading and failure retain the selected asset in metric labels and holdings title", () => {
+  const ui = moduleLoader()(new URL("../app/components/ui.tsx", import.meta.url).pathname);
+  const frame = {
+    DashboardPageFrame: ({ children }) => React.createElement("main", null, children),
+    DashboardProductTableSection: ({ title, subtitle, actions, children }) => React.createElement(
+      "section", null, title, subtitle, actions, React.createElement("table", null, React.createElement("tbody", null, children)),
+    ),
+    NavigationMenuPlaceholder: () => null,
+    ProductTableEmptyState: ({ message }) => React.createElement("p", null, message),
+    DashboardFooter: () => null,
+  };
+  const dashboardStates = moduleLoader({
+    "@/app/components/ui": ui,
+    "@/app/components/dashboard/dashboard-frame": frame,
+  })(new URL("../app/components/dashboard/dashboard-skeleton.tsx", import.meta.url).pathname);
+
+  for (const asset of ["USDT", "BTC"]) {
+    const html = renderToStaticMarkup(React.createElement(dashboardStates.DashboardModuleFailure, { asset }));
+    assert.ok(html.includes(`总持仓 · ${asset}`));
+    assert.ok(html.includes(`预计每日收益 · ${asset}`));
+    assert.ok(html.includes(`${asset} 持仓`));
+  }
+
+  const loading = renderToStaticMarkup(React.createElement(dashboardStates.DashboardModuleSkeleton, { asset: "USDT" }));
+  assert.ok(loading.includes(">USDT 持仓</h2>"));
+  assert.doesNotMatch(loading, /skeleton-block inline-block h-6 w-28/);
+
+  const unknownLoading = renderToStaticMarkup(React.createElement(dashboardStates.DashboardModuleSkeleton));
+  assert.match(unknownLoading, /skeleton-block inline-block h-6 w-28/);
+
+  const generic = renderToStaticMarkup(React.createElement(dashboardStates.DashboardModuleFailure));
+  assert.ok(generic.includes(">总持仓<"));
+  assert.ok(generic.includes(">预计每日收益<"));
+  assert.ok(generic.includes(">持仓<"));
 });
 
 test("remote product history does not show an empty result before its first page resolves", () => {

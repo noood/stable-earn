@@ -55,12 +55,43 @@ export function DashboardFooter() {
   return <footer className="site-footer text-muted type-caption"><p>数据仅用于监控与比较，不构成投资建议。实际到账以平台账户为准。</p><a className="github-footer-link" href="https://github.com/noood/stable-earn" target="_blank" rel="noreferrer" aria-label="GitHub 源码仓库" title="GitHub 源码仓库"><Image src="/GitHub_Lockup_Black_Clearspace.svg" width={448} height={127} alt="" aria-hidden="true" /></a></footer>;
 }
 
-export function ProductTableColumns() {
+function ProductTableColumns() {
   return <colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /><col className="product-table-col-history" /></colgroup>;
 }
 
-export function ProductTableHeader() {
+function ProductTableHeader() {
   return <thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th><th>变更</th></tr></thead>;
+}
+
+export function DashboardProductTableSection({
+  title,
+  subtitle,
+  actions,
+  children,
+  notice,
+  sectionBusy,
+  tableBusy,
+}: {
+  title: ReactNode;
+  subtitle: ReactNode;
+  actions: ReactNode;
+  children: ReactNode;
+  notice?: ReactNode;
+  sectionBusy?: boolean;
+  tableBusy?: boolean;
+}) {
+  return <section className="card overflow-hidden" aria-busy={sectionBusy}>
+    <div className="table-toolbar">
+      <div className="table-toolbar-copy">{title}{subtitle}</div>
+      {actions}
+    </div>
+    {notice}
+    <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={tableBusy}>
+      <ProductTableColumns />
+      <ProductTableHeader />
+      <tbody>{children}</tbody>
+    </table></div>
+  </section>;
 }
 
 export function ProductTableEmptyState({ message = "吸引人的稳定理财尚未出现！" }: { message?: string }) {
