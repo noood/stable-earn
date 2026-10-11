@@ -166,6 +166,12 @@ test("unknown product type keeps known APR, quota, and remaining capacity visibl
   const typeSelect = row.getByRole("combobox", { name: "产品类型" });
   await expect(typeSelect).toHaveText("产品类型未知");
   await typeSelect.scrollIntoViewIfNeeded();
+  const typeBox = await typeSelect.boundingBox();
+  const removeButton = row.getByRole("button", { name: "移除产品" });
+  const removeBox = await removeButton.boundingBox();
+  expect(typeBox).not.toBeNull();
+  expect(removeBox).not.toBeNull();
+  expect(removeBox.y).toBeGreaterThanOrEqual(typeBox.y + typeBox.height);
   await typeSelect.click();
   const typeOptions = page.getByRole("listbox", { name: "产品类型" }).getByRole("option");
   await expect(typeOptions).toHaveCount(3);
