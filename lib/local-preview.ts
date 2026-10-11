@@ -442,6 +442,13 @@ export function isLocalPreviewRequest(request: Request) {
     && new URL(request.url).searchParams.get("preview") === "1";
 }
 
+/** Keep local read-failure previews in their loading state long enough to inspect. */
+export async function delayLocalPreviewScenario(request: Request, scenario: string, delayMs = 1_000) {
+  if (!isLocalPreviewRequest(request)) return;
+  if (new URL(request.url).searchParams.get("syncScenario") !== scenario) return;
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 function previewRate(
   productId: string,
   tiers: Array<[number, number | null, number]>,

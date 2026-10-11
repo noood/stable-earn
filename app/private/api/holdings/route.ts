@@ -5,7 +5,7 @@ import type { HoldingMap } from "@/lib/domain";
 import { type ProductOverrideMap } from "@/lib/product-overrides";
 import { parseProductOverride } from "@/lib/product-override-input";
 import { loadUserProducts, prepareUserProductStatements, productToUserProduct, sanitizeUserProducts, userProductInputToProduct } from "@/lib/user-products";
-import { isLocalPreviewRequest, localPreviewTime, localPrivateHoldingsPreview } from "@/lib/local-preview";
+import { delayLocalPreviewScenario, isLocalPreviewRequest, localPreviewTime, localPrivateHoldingsPreview } from "@/lib/local-preview";
 import { loadCatalogProducts } from "@/lib/product-catalog";
 import {
   buildManualChangeEvents,
@@ -29,6 +29,7 @@ export async function GET(request: Request) {
   if (isLocalPreviewRequest(request)) {
     const scenario = new URL(request.url).searchParams.get("syncScenario");
     if (scenario === "personal-error" || scenario === "both-read-error") {
+      if (scenario === "both-read-error") await delayLocalPreviewScenario(request, scenario);
       return NextResponse.json({ error: "本地模拟：个人数据读取失败" }, { status: 503, headers: privateResponseHeaders });
     }
     return NextResponse.json(scenario
