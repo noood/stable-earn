@@ -102,16 +102,19 @@ test("a missing product type is saved per user only after that product's API syn
   const override = {
     manualKind: "fixed", apr: 8, firstTierLimit: 100, termDays: 7, purchaseDate: "2026-10-01",
   };
-  const saved = await f.route.PUT(f.request({
-    holdings: {}, changedHoldingProductIds: [], changedOverrideProductIds: [f.product.id],
-    overrides: { [f.product.id]: override },
-  }));
-  assert.equal(saved.status, 200);
-  assert.equal(f.db.sqlite.prepare("SELECT product_kind_override FROM product_overrides WHERE user_id = 'user' AND product_id = ?").get(f.product.id).product_kind_override, "fixed");
-  assert.equal(f.db.sqlite.prepare("SELECT amount FROM holdings WHERE user_id = 'user' AND product_id = ?").get(f.product.id).amount, 0);
-
-  const read = await f.route.GET(new Request("https://local.test/private/api/holdings"));
-  assert.equal((await read.json()).overrides[f.product.id].manualKind, "fixed");
+  for (const manualKind of ["fixed", "flexible", "limited", "fixed"]) {
+    const saved = await f.route.PUT(f.request({
+      holdings: {}, changedHoldingProductIds: [], changedOverrideProductIds: [f.product.id],
+      overrides: { [f.product.id]: { ...override, manualKind } },
+    }));
+    assert.equal(saved.status, 200);
+    const read = await f.route.GET(new Request("https://local.test/private/api/holdings"));
+    const settings = (await read.json()).overrides[f.product.id];
+    assert.equal(settings.manualKind, manualKind);
+    assert.equal(settings.termDays, manualKind === "flexible" ? null : 7);
+    assert.equal(settings.purchaseDate, manualKind === "flexible" ? null : "2026-10-01");
+    assert.equal(f.db.sqlite.prepare("SELECT amount FROM holdings WHERE user_id = 'user' AND product_id = ?").get(f.product.id).amount, 0);
+  }
 
   const blocked = fixture({ productId: "okx-usdt" });
   blocked.db.sqlite.prepare("UPDATE sync_snapshots SET payload = ?")

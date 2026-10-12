@@ -1,5 +1,6 @@
 import type { HoldingSyncState, Product, ProductKind } from "./domain";
 import { productTypeCanHaveTerm, productTypeStatusIsResolved } from "./product-kind";
+import { apiFieldCapability } from "./api-capabilities";
 
 export type ProductOverride = {
   apr: number | null;
@@ -98,6 +99,20 @@ export function productTermDays(product: Product) {
 
 export function productNeedsPurchaseDate(product: Product) {
   return productTermDays(product) !== null;
+}
+
+export function productNeedsManualPurchaseDate(product: Product) {
+  return Boolean(productTermDays(product)) && apiFieldCapability(product, "purchaseAt") !== "supported";
+}
+
+/** Clear hidden editable values only at the save boundary, never in the draft. */
+export function productOverrideForSave(product: Product, override: ProductOverride): ProductOverride {
+  const resolved = applyProductOverride(product, override);
+  return {
+    ...override,
+    termDays: productTypeCanHaveTerm(resolved) ? override.termDays : null,
+    purchaseDate: productNeedsManualPurchaseDate(resolved) ? override.purchaseDate : null,
+  };
 }
 
 export function productTermStatus(product: Product, purchaseDate: string | null | undefined, today = new Date()) {

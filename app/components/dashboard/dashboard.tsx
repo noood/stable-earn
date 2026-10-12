@@ -11,7 +11,7 @@ import { DashboardMetricsSkeleton, ProductTableSkeletonRows } from "@/app/compon
 import { DashboardFooter, DashboardPageFrame, DashboardProductTableSection, ProductTableEmptyState } from "@/app/components/dashboard/dashboard-frame";
 import { reportStartupDiagnostic } from "@/app/components/startup-diagnostics";
 import { effectiveApr, formatAmount, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent } from "@/lib/domain";
-import { applyProductOverride, productTypeSelectionAvailable, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
+import { applyProductOverride, productOverrideForSave, productTermDays, productTypeSelectionAvailable, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { productInformationIssues, productParticipatesInInterest, type ProductInformationIssue } from "@/lib/product-status";
 import { completedDataSummary, dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
 import { publicDemoChangeEvents, publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
@@ -501,12 +501,10 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     setDraftOverrides((current) => ({
       ...current,
       [productId]: {
-        apr: current[productId]?.apr ?? productOverrides[productId]?.apr ?? null,
-        firstTierLimit: current[productId]?.firstTierLimit ?? productOverrides[productId]?.firstTierLimit ?? null,
-        termDays: current[productId]?.termDays ?? productOverrides[productId]?.termDays ?? null,
-        purchaseDate: current[productId]?.purchaseDate ?? productOverrides[productId]?.purchaseDate ?? null,
-        updatedAt: current[productId]?.updatedAt ?? productOverrides[productId]?.updatedAt ?? null,
-        manualKind: current[productId]?.manualKind ?? productOverrides[productId]?.manualKind ?? null,
+        ...(current[productId] ?? productOverrides[productId] ?? {
+          apr: null, firstTierLimit: null, termDays: null,
+          purchaseDate: null, updatedAt: null, manualKind: null,
+        }),
         ...patch,
       },
     }));
@@ -539,7 +537,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         accountId: account.id,
         asset: next.asset,
         manualKind: kind,
-        termDays: kind === "flexible" ? null : next.termDays ?? null,
+        termDays: next.termDays ?? null,
       });
     }));
   }
@@ -562,12 +560,17 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
 
   async function finishEditing() {
     const hiddenProductIdSet = new Set(draftHiddenProductIds);
-    const workingProducts = [...products.filter((product) => !hiddenProductIdSet.has(product.id)), ...draftManualProducts];
+    const savedManualProducts = draftManualProducts.map((product) => ({ ...product, termDays: productTermDays(product) ?? undefined }));
+    const workingProducts = [...products.filter((product) => !hiddenProductIdSet.has(product.id)), ...savedManualProducts];
+    const savedOverrides = Object.fromEntries(Object.entries(draftOverrides).map(([id, override]) => {
+      const product = workingProducts.find((product) => product.id === id);
+      return [id, product ? productOverrideForSave(product, override) : override];
+    }));
     const holdingProductIds = workingProducts.flatMap((product) => (
       (draftHoldings[product.id] ?? 0) !== (holdings[product.id] ?? 0) ? [product.id] : []
     ));
     const overrideProductIds = workingProducts.flatMap((product) => (
-      !sameOverride(draftOverrides[product.id], productOverrides[product.id]) ? [product.id] : []
+      !sameOverride(savedOverrides[product.id], productOverrides[product.id]) ? [product.id] : []
     ));
     const manualProductIds = workingProducts.flatMap((product) => (
       product.id.startsWith("manual-") && !sameManualProduct(product, manualProducts.find((item) => item.id === product.id)) ? [product.id] : []
@@ -579,11 +582,11 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     }
     if (isDemo) {
       setHoldings(draftHoldings);
-      setProductOverrides(draftOverrides);
-      setManualProducts(draftManualProducts);
+      setProductOverrides(savedOverrides);
+      setManualProducts(savedManualProducts);
       setHiddenProductIds(draftHiddenProductIds);
       hiddenProductIdsRef.current = draftHiddenProductIds;
-      setChangeEvents((current) => [...buildManualChangeEvents(holdings, draftHoldings, productOverrides, draftOverrides, manualProducts, draftManualProducts, products, {
+      setChangeEvents((current) => [...buildManualChangeEvents(holdings, draftHoldings, productOverrides, savedOverrides, manualProducts, savedManualProducts, products, {
         holdingProductIds,
         overrideProductIds,
         manualProductIds,
@@ -595,7 +598,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     }
     setSavingHoldings(true);
     setHoldingSaveError(false);
-    const saved = await savePortfolio(draftHoldings, draftOverrides, draftManualProducts, draftHiddenProductIds, {
+    const saved = await savePortfolio(draftHoldings, savedOverrides, savedManualProducts, draftHiddenProductIds, {
       holdingProductIds,
       overrideProductIds,
       manualProductIds,
@@ -606,7 +609,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     setSavingHoldings(false);
     if (saved) {
       if (localPreview) {
-        setChangeEvents((current) => [...buildManualChangeEvents(holdings, draftHoldings, productOverrides, draftOverrides, manualProducts, draftManualProducts, products, {
+        setChangeEvents((current) => [...buildManualChangeEvents(holdings, draftHoldings, productOverrides, savedOverrides, manualProducts, savedManualProducts, products, {
           holdingProductIds,
           overrideProductIds,
           manualProductIds,

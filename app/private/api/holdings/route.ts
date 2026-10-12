@@ -32,9 +32,9 @@ export async function GET(request: Request) {
       if (scenario === "both-read-error") await delayLocalPreviewScenario(request, scenario);
       return NextResponse.json({ error: "本地模拟：个人数据读取失败" }, { status: 503, headers: privateResponseHeaders });
     }
-    return NextResponse.json(scenario
+    return NextResponse.json(scenario && scenario !== "api-dates"
       ? { holdings: {}, overrides: {}, manualProducts: [], hiddenProductIds: [], found: false }
-      : localPrivateHoldingsPreview(localPreviewTime(request.url)), { headers: privateResponseHeaders });
+      : localPrivateHoldingsPreview(localPreviewTime(request.url), scenario === "api-dates"), { headers: privateResponseHeaders });
   }
 
   const db = await getDatabase();

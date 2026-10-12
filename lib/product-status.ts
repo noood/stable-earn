@@ -3,6 +3,7 @@ import { apiFieldCapability } from "./api-capabilities";
 import {
   productNeedsManualLimit,
   productNeedsManualTerm,
+  productNeedsManualPurchaseDate,
   productNeedsPurchaseDate,
   productTypeIsResolved,
   productTermDays,
@@ -68,12 +69,12 @@ export function productInformationIssues(
     && (product.productType === "fixed" || product.manualKind === "limited" || productNeedsManualTerm(product));
   const durationDays = productTermDays(product);
   if (durationRequired && durationDays === null) {
+    const missingTerm = productNeedsManualTerm(product) || !apiManaged ? "待填写" : "未获取";
     const activity = product.manualKind === "limited"
       || (product.productType !== "fixed" && productNeedsManualTerm(product));
-    issues.push(activity
-      ? apiManaged ? "活动期限未获取" : "活动期限待填写"
-      : apiManaged ? "锁定期限未获取" : "锁定期限待填写");
-  } else if (hasHolding && productNeedsPurchaseDate(product) && !hasExternalPurchaseTiming && !productTermStatus(product, override?.purchaseDate)) {
+    issues.push(`${activity ? "活动期限" : "锁定期限"}${missingTerm}`);
+  } else if (hasHolding && productNeedsPurchaseDate(product) && !hasExternalPurchaseTiming
+    && (!productNeedsManualPurchaseDate(product) || !productTermStatus(product, override?.purchaseDate))) {
     issues.push(apiManaged && apiFieldCapability(product, "purchaseAt") === "supported" ? "买入日未获取" : "买入日待填写");
   }
 

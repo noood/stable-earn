@@ -44,19 +44,20 @@ export function sanitizeUserProducts(value: unknown): UserProductInput[] | null 
   for (const rawValue of value) {
     if (typeof rawValue !== "object" || rawValue === null) return null;
     const raw = rawValue as Partial<UserProductInput>;
-    const termDays = raw.termDays === null || raw.termDays === undefined ? null : Number(raw.termDays);
+    const termDays = raw.manualKind === "flexible" || raw.termDays === null || raw.termDays === undefined ? null : Number(raw.termDays);
     if (typeof raw.id !== "string" || !/^manual-[a-z0-9-]{8,80}$/i.test(raw.id) || seen.has(raw.id)) return null;
     if (typeof raw.accountId !== "string" || !validAccountIds.has(raw.accountId)) return null;
     if (typeof raw.asset !== "string" || !validAssets.has(raw.asset as Asset)) return null;
     if (typeof raw.manualKind !== "string" || !validKinds.has(raw.manualKind as UserProductInput["manualKind"])) return null;
-    if ((raw.manualKind === "fixed" || raw.manualKind === "limited") && (!Number.isFinite(termDays) || termDays! <= 0 || termDays! > 3650)) return null;
+    if (termDays !== null && (!Number.isFinite(termDays) || termDays <= 0 || termDays > 3650)) return null;
+    if ((raw.manualKind === "fixed" || raw.manualKind === "limited") && termDays === null) return null;
     seen.add(raw.id);
     products.push({
       id: raw.id,
       accountId: raw.accountId,
       asset: raw.asset as Asset,
       manualKind: raw.manualKind as UserProductInput["manualKind"],
-      termDays: raw.manualKind === "flexible" ? null : termDays,
+      termDays,
     });
   }
   return products;
