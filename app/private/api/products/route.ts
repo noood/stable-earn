@@ -61,7 +61,7 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
       return NextResponse.json({ error: "本地模拟：交易所缓存读取失败" }, { status: 503, headers: privateResponseHeaders });
     }
     const previewNow = localPreviewTime(request.url);
-    const preview = localSyncScenarioPreview(scenario, previewNow) ?? localPrivateProductsPreview(previewNow);
+    const preview = localSyncScenarioPreview(scenario, previewNow) ?? localPrivateProductsPreview(previewNow, scenario === "api-dates");
     const responsePreview = !scheduledSyncEnabled && preview.cache
       ? { ...preview, cache: { ...preview.cache, scheduledAt: null, scheduledState: "disabled" as const } }
       : preview;

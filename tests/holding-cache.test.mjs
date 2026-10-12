@@ -38,3 +38,17 @@ test("complete sync clears legacy cached positions using the catalog account map
     "legacy-fixed": "binance-global",
   }), []);
 });
+
+test("a failed position read retains cached dates, but a complete new read does not backfill missing dates", () => {
+  const previous = [{
+    productId: "bn-global-fixed", accountId: "binance-global", positionId: "p-1", amount: 100,
+    purchaseAt: "2026-09-01T00:00:00Z", redeemAt: "2026-09-08T00:00:00Z",
+    source: "api", updatedAt: sourceTime,
+  }];
+  assert.deepEqual(mergeHoldingPositions(previous, [], new Set(), {}), previous);
+  const fresh = [{
+    productId: "bn-global-fixed", accountId: "binance-global", positionId: "p-1", amount: 100,
+    source: "api", updatedAt: firstFailureTime,
+  }];
+  assert.deepEqual(mergeHoldingPositions(previous, fresh, new Set(["binance-global"]), {}), fresh);
+});

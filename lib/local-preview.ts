@@ -13,7 +13,7 @@ export function localPreviewTime(requestUrl: string) {
   return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value ? parsed : new Date();
 }
 
-export function localPrivateProductsPreview(now = new Date()) {
+export function localPrivateProductsPreview(now = new Date(), apiDatesPreview = false) {
   const freshAt = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
   const cachedAt = new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString();
   const rates = [
@@ -113,6 +113,20 @@ export function localPrivateProductsPreview(now = new Date()) {
     previewProduct("okx-usdc"),
     previewProduct("okx-btc"),
   ];
+  if (apiDatesPreview) {
+    products.push(
+      previewBinanceFixedProduct("preview-binance-date-missing", {
+        name: "定期理财 · API 买入日缺失", termDays: 7, availability: "available",
+        subscriptionStartsAt: undefined, subscriptionEndsAt: undefined,
+        tiers: [{ id: "preview-binance-date-missing-tier-0", min: 0, max: 100, apr: 6.2 }],
+      }, now),
+      previewBinanceFixedProduct("preview-binance-date-derived", {
+        name: "日期推算 · API 到期时间缺失", termDays: 7, availability: "available",
+        subscriptionStartsAt: undefined, subscriptionEndsAt: undefined,
+        tiers: [{ id: "preview-binance-date-derived-tier-0", min: 0, max: 200, apr: 7.5 }],
+      }, now),
+    );
+  }
   const holdingUpdates: HoldingMap = {
     "bn-bh-usdt": 180,
     "bn-g-usdt": 650,
@@ -139,6 +153,7 @@ export function localPrivateProductsPreview(now = new Date()) {
     "okx-usdt": 500,
     "okx-usdc": 500,
     "okx-btc": 0,
+    ...(apiDatesPreview ? { "preview-binance-date-missing": 40, "preview-binance-date-derived": 80 } : {}),
   };
   // Binance returns this position maturity through redeemAt. The timeline
   // uses that API date directly; production fallback remains purchase date +
@@ -263,8 +278,14 @@ export function localPrivateProductsPreview(now = new Date()) {
       "okx-usdt": "synced",
       "okx-usdc": "synced",
       "okx-btc": "synced",
+      ...(apiDatesPreview ? { "preview-binance-date-missing": "synced" as const, "preview-binance-date-derived": "synced" as const } : {}),
     },
     holdingPositions: [
+      ...(apiDatesPreview ? [
+        { productId: "preview-binance-date-missing", positionId: "date-missing", amount: 40, source: "api" as const, updatedAt: freshAt },
+        { productId: "preview-binance-date-derived", positionId: "date-derived", amount: 80,
+          purchaseAt: new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString(), source: "api" as const, updatedAt: freshAt },
+      ] : []),
       {
         productId: "preview-binance-fixed-expired-held",
         positionId: "preview-binance-position-expired-held",
@@ -301,7 +322,7 @@ export function localPrivateProductsPreview(now = new Date()) {
   };
 }
 
-export function localPrivateHoldingsPreview(now = new Date()) {
+export function localPrivateHoldingsPreview(now = new Date(), apiDatesPreview = false) {
   const updatedAt = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
   const holdings: HoldingMap = {
     "by-eu-usdt": 250,
@@ -341,6 +362,16 @@ export function localPrivateHoldingsPreview(now = new Date()) {
   overrides["manual-preview-fixed"] = { apr: 6.2, firstTierLimit: 100, termDays: 7, purchaseDate: dateOnlyOffset(now, -12), updatedAt };
   overrides["manual-preview-fixed-missing-term"] = { apr: 6.2, firstTierLimit: 100, termDays: null, purchaseDate: null, updatedAt };
   overrides["manual-preview-fixed-missing-date"] = { apr: 6.0, firstTierLimit: 100, termDays: null, purchaseDate: null, updatedAt };
+  // Only this opt-in preview replaces rows 5/9; default manual edit fixtures
+  // remain available to the existing save, delete and type-switch tests.
+  if (apiDatesPreview) {
+    for (const id of ["manual-preview-fixed", "manual-preview-limited"]) {
+      const index = manualProducts.findIndex((product) => product.id === id);
+      manualProducts.splice(index, 1);
+      delete holdings[id];
+      delete overrides[id];
+    }
+  }
   return { holdings, overrides, manualProducts, hiddenProductIds: [], found: true };
 }
 

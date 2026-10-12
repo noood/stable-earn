@@ -119,6 +119,7 @@ test("manual fixed and limited choices preserve identity and require their own t
   const flexible = parseProductOverride(missingTypeProduct, { manualKind: "flexible", apr: 8, firstTierLimit: 100, termDays: 7 });
   assert.equal(flexible.termDays, null);
   assert.equal(flexible.purchaseDate, null);
+  assert.equal(productTermDays(applyProductOverride(missingTypeProduct, flexible)), null);
   assert.equal(parseProductOverride(missingTypeProduct, { manualKind: "staking" }), null);
 });
 

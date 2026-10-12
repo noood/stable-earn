@@ -6,7 +6,7 @@ import { AccountBadge, HoldingSummary, TableCell } from "@/app/components/ui";
 import { HoldingInput, InlineSelect, ManualAprInput, ManualLimitInput, ManualTermInput } from "@/app/components/dashboard/product-inputs";
 import { PurchaseDateInput, parseCalendarDate } from "@/app/components/dashboard/purchase-date-input";
 import { effectiveApr, formatAmount, type Account, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent, type ProductKind } from "@/lib/domain";
-import { dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsManualType, productNeedsPurchaseDate, productTermDays, productTermStatus, productTypeIsResolved, type ProductOverride } from "@/lib/product-overrides";
+import { dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsManualType, productNeedsManualPurchaseDate, productTermDays, productTermStatus, productTypeIsResolved, type ProductOverride } from "@/lib/product-overrides";
 import { holdingSyncNote, productCapacityIsIncomplete, productInformationIssues, productInformationNote, type ProductInformationIssue } from "@/lib/product-status";
 import { apiFieldCapability } from "@/lib/api-capabilities";
 import { rateHeadlineFor } from "@/lib/product-rate-presentation";
@@ -28,7 +28,7 @@ export function ProductRow({ product, baseProduct, manualSettings, holdingTiming
         {editing && manualProduct
           ? <ManualProductIdentityEditor product={baseProduct} account={account} disabled={saving} onChange={onManualProductChange} onDelete={onDelete} />
           : <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div>{editing && productNeedsManualType(baseProduct) && typeSelectionAvailable
-            ? <InlineSelect className={`inline-select-trigger-secondary ${manualSettings?.manualKind ? "" : "text-danger font-semibold"}`} ariaLabel="产品类型" value={manualSettings?.manualKind ?? ""} emptyValueLabel="产品类型未知" options={productKindOptions} disabled={saving} onChange={(value) => onOverrideChange({ manualKind: value as ProductKind, termDays: null, purchaseDate: null })} />
+            ? <InlineSelect className={`inline-select-trigger-secondary ${manualSettings?.manualKind ? "" : "text-danger font-semibold"}`} ariaLabel="产品类型" value={manualSettings?.manualKind ?? ""} emptyValueLabel="产品类型未知" options={productKindOptions} disabled={saving} onChange={(value) => onOverrideChange({ manualKind: value as ProductKind })} />
             : <div className={`type-caption mt-0.5 max-w-[220px] whitespace-normal break-words ${productTypeIsResolved(product) ? "text-muted" : "text-danger font-semibold"}`}>{standardProductName(product)}</div>}{editing && !manualProduct && <button type="button" className="manual-product-delete text-danger type-caption" disabled={saving || apiDeleteDisabled} title={apiDeleteDisabledReason} onClick={onDelete}>移除产品</button>}</div></div>}
       </TableCell>
       <TableCell><ProductTierSummary product={product} baseProduct={baseProduct} manualSettings={manualSettings} holdingTiming={holdingTiming} holding={holding} editing={editing} saving={saving} manualProduct={manualProduct} rateFallbackAt={rateFallbackAt} onOverrideChange={onOverrideChange} onManualProductChange={onManualProductChange} /></TableCell>
@@ -66,21 +66,20 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
   const apiTiming = (hasApiTiming || holding <= 0) && holdingPosition && (holdingPosition.purchaseAt || holdingPosition.redeemAt) ? holdingPosition : undefined;
   const apiPurchaseDate = apiTiming?.purchaseAt ? dateOnlyFromTimestamp(apiTiming.purchaseAt) : null;
   const apiDateSupported = apiManaged && apiFieldCapability(product, "purchaseAt") === "supported";
-  const showManualPurchaseDate = !apiDateSupported && productNeedsPurchaseDate(product) && Boolean(durationDays);
+  const showManualPurchaseDate = productNeedsManualPurchaseDate(product);
   const showManualFields = manualApr || manualLimit || manualTerm || manualProductTerm || showManualPurchaseDate;
   const multipleApiPositions = apiDateSupported && (holdingTiming?.positions.length ?? 0) > 1;
-  const termStatus = productTermStatus(product, manualSettings?.purchaseDate);
+  const termStatus = showManualPurchaseDate ? productTermStatus(product, manualSettings?.purchaseDate) : null;
   const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming, holding > 0);
   const rateHeadline = rateHeadlineFor(product, apiManaged);
+  const aprCacheAt = product.aprSource === "cache" ? product.aprFetchedAt ?? rateFallbackAt : rateFallbackAt;
+  const capacityCacheAt = product.capacitySource === "cache" ? product.capacityFetchedAt ?? rateFallbackAt : rateFallbackAt;
   const cacheNotes = [
-    rateFallbackAt && product.rateCoverage !== "unavailable"
-      ? `产品信息沿用 ${formatSyncDateTime(rateFallbackAt)} 的缓存数据`
+    aprCacheAt && product.rateCoverage !== "unavailable" && Number.isFinite(product.tiers[0]?.apr)
+      ? `APR 沿用 ${formatSyncDateTime(aprCacheAt)} 的缓存数据`
       : null,
-    product.aprSource === "cache" && product.aprFetchedAt
-      ? `APR 沿用 ${formatSyncDateTime(product.aprFetchedAt)} 的缓存数据`
-      : null,
-    product.capacitySource === "cache" && product.capacityFetchedAt
-      ? `额度沿用 ${formatSyncDateTime(product.capacityFetchedAt)} 的缓存数据`
+    capacityCacheAt && product.capacityStatus !== "unavailable" && !productCapacityIsIncomplete(product, productInfoIssues)
+      ? `额度沿用 ${formatSyncDateTime(capacityCacheAt)} 的缓存数据`
       : null,
   ].filter((note): note is string => Boolean(note));
   const sourceText = cacheNotes.length > 0

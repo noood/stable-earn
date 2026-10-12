@@ -39,6 +39,23 @@ test("private preview still contains the long-history and manual-field scenarios
   assert.ok(holdingsPreview.manualProducts.some((product) => product.id === "manual-preview-fixed"));
 });
 
+test("API date preview replaces only two manual rows without changing the default fixtures", () => {
+  const now = new Date("2026-10-06T10:00:00.000Z");
+  const preview = localPrivateProductsPreview(now, true);
+  const holdings = localPrivateHoldingsPreview(now, true);
+  const missing = preview.holdingPositions.find((position) => position.productId === "preview-binance-date-missing");
+  const derived = preview.holdingPositions.find((position) => position.productId === "preview-binance-date-derived");
+  assert.equal(missing.amount, 40);
+  assert.equal(missing.purchaseAt, undefined);
+  assert.equal(missing.redeemAt, undefined);
+  assert.equal(derived.purchaseAt, "2026-10-03T10:00:00.000Z");
+  assert.equal(derived.redeemAt, undefined);
+  assert.equal(holdings.manualProducts.length, 3);
+  assert.ok(!holdings.manualProducts.some((product) => ["manual-preview-fixed", "manual-preview-limited"].includes(product.id)));
+  assert.equal(localPrivateHoldingsPreview(now).manualProducts.length, 5);
+  assert.ok(!localPrivateProductsPreview(now).products.some((product) => product.id === missing.productId));
+});
+
 test("local Bybit USDT history previews assign errors and pagination to three separate products", async () => {
   const loadPage = createLocalProductHistoryPreviewLoader();
   await assert.rejects(loadPage("by-g-usdt-short-fixed", null));

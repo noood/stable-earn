@@ -206,7 +206,7 @@ test("unknown product type keeps known APR, quota, and remaining capacity visibl
   const limitedOkxRow = page.locator("tr.product-row").filter({ hasText: "OKX" }).filter({ hasText: "限时活期" });
   await expect(limitedOkxRow.locator(".product-fact").filter({ hasText: "活动期限" })).toHaveCount(0);
   await expect(limitedOkxRow.getByRole("textbox", { name: "活动期限" })).toBeVisible();
-  await expect(limitedOkxRow.getByRole("textbox", { name: "活动期限" })).toHaveValue("");
+  await expect(limitedOkxRow.getByRole("textbox", { name: "活动期限" })).toHaveValue("180");
 
   await page.keyboard.press("Space");
   await expect(selectedTypeSelect).toHaveAttribute("aria-expanded", "true");
@@ -221,6 +221,112 @@ test("unknown product type keeps known APR, quota, and remaining capacity visibl
   await expect(flexibleOkxRow.getByRole("textbox", { name: "活动期限" })).toHaveCount(0);
   await expect(flexibleOkxRow).not.toContainText("期限未获取");
 });
+
+for (const fixture of [
+  { name: "user-created", id: "manual-preview-fixed", account: "Binance Global", manualProduct: true },
+  { name: "missing-API-type", id: "okx-usdt", account: "OKX", manualProduct: false },
+]) {
+  test(`${fixture.name} type switches keep draft values but clear hidden values on successful save`, async ({ page }) => {
+    const savedPayloads = [];
+    let savedOverride;
+    let savedManualProduct;
+    let failNextSave = true;
+    await page.route("**/private/api/holdings**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get("preview") !== "1") {
+        return route.fulfill({ status: 403, json: { error: "E2E blocked non-preview request" } });
+      }
+      if (route.request().method() === "PUT") {
+        const payload = JSON.parse(route.request().postData() ?? "{}");
+        savedPayloads.push(payload);
+        if (failNextSave) {
+          failNextSave = false;
+          return route.fulfill({ status: 500, json: { error: "simulated save failure" } });
+        }
+        if (payload.overrides[fixture.id]) savedOverride = payload.overrides[fixture.id];
+        const updated = payload.manualProducts.find((product) => product.id === fixture.id);
+        if (updated) savedManualProduct = updated;
+        return route.fulfill({ status: 200, json: { updatedAt: visualPreviewAt, preview: true } });
+      }
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch();
+      const payload = await response.json();
+      payload.overrides[fixture.id] = {
+        ...payload.overrides[fixture.id], apr: 9.87, termDays: 180, purchaseDate: "2026-08-01",
+        ...(!fixture.manualProduct ? { manualKind: "fixed" } : {}), ...savedOverride,
+      };
+      if (fixture.manualProduct) {
+        const product = payload.manualProducts.find((item) => item.id === fixture.id);
+        Object.assign(product, { termDays: 180 }, savedManualProduct);
+        product.productType = product.manualKind === "fixed" ? "fixed" : "flexible";
+      }
+      await route.fulfill({ response, json: payload });
+    });
+
+    await page.goto("/private");
+    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    const row = page.locator("tr.product-row").filter({ hasText: fixture.account })
+      .filter({ has: page.locator(".product-rate-headline").filter({ hasText: "9.87%" }) });
+    const selectType = async (label) => {
+      const control = row.getByRole("combobox", { name: "产品类型" });
+      // Scroll before opening: menus intentionally dismiss on page scrolling.
+      await control.scrollIntoViewIfNeeded();
+      await control.click();
+      await expect(control).toHaveAttribute("aria-expanded", "true");
+      await page.getByRole("listbox", { name: "产品类型" }).getByRole("option", { name: label, exact: true }).click();
+    };
+    const expectTerm = async (label) => {
+      await expect(row.getByRole("textbox", { name: label })).toHaveValue("180");
+      await expect(row.getByRole("button", { name: "买入日", exact: true })).toContainText(/2026\s*\/\s*08\s*\/\s*01/);
+    };
+    const expectHidden = async () => {
+      await expect(row.getByRole("textbox", { name: /活动期限|锁定期限/ })).toHaveCount(0);
+      await expect(row.getByRole("button", { name: "买入日", exact: true })).toHaveCount(0);
+      await expect(row.locator(".product-fact").filter({ hasText: /期限|买入日期/ })).toHaveCount(0);
+      await expect(row).not.toContainText(/期限待填写|期限未获取|买入日待填写|已于/);
+      await expect(row.locator("td").nth(3)).not.toHaveText("—");
+    };
+
+    await page.getByRole("button", { name: "编辑持仓" }).click();
+    await expectTerm("锁定期限");
+    await selectType("限时活期");
+    await expectTerm("活动期限");
+    await row.getByRole("textbox", { name: "活动期限" }).fill("");
+    await selectType("活期理财");
+    await selectType("定期理财");
+    await expect(row.getByRole("textbox", { name: "锁定期限" })).toHaveValue("");
+    await row.getByRole("textbox", { name: "锁定期限" }).fill("180");
+    await expectTerm("锁定期限");
+    await selectType("活期理财");
+    await expectHidden();
+    await page.getByRole("button", { name: "保存持仓" }).click();
+    await expect(page.getByText("保存失败，请检查网络后重试；表格中的修改仍然保留。")).toBeVisible();
+    await selectType("定期理财");
+    await expectTerm("锁定期限");
+    await selectType("活期理财");
+    await page.getByRole("button", { name: "保存持仓" }).click();
+    await expect(page.getByRole("button", { name: "编辑持仓" })).toBeVisible();
+    expect(savedPayloads).toHaveLength(2);
+    const savedFields = fixture.manualProduct ? savedManualProduct : savedOverride;
+    expect(savedFields).toMatchObject({ manualKind: "flexible", termDays: null });
+    expect(savedOverride.purchaseDate).toBeNull();
+
+    await page.reload();
+    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    await expectHidden();
+    await page.getByRole("button", { name: "编辑持仓" }).click();
+    await expectHidden();
+    await selectType("定期理财");
+    await expect(row.getByRole("textbox", { name: "锁定期限" })).toHaveValue("");
+    await row.getByRole("textbox", { name: "锁定期限" }).fill("180");
+    await expect(row.getByRole("button", { name: "买入日", exact: true })).toContainText("选择日期");
+    await page.getByRole("button", { name: "取消", exact: true }).click();
+    await expectHidden();
+    await page.getByRole("button", { name: "编辑持仓" }).click();
+    await selectType("限时活期");
+    await expect(row.getByRole("textbox", { name: "活动期限" })).toHaveValue("");
+  });
+}
 
 for (const viewport of [{ name: "desktop", width: 889, height: 1001 }, { name: "mobile", width: 375, height: 812 }]) {
   test(`read-only API product facts have no empty editor on ${viewport.name}`, async ({ page }) => {
@@ -258,6 +364,30 @@ test("a mixed-source product follows API holding rules when removed", async ({ p
   await expect(page.getByRole("dialog", { name: "移除产品" })).toBeVisible();
 });
 
+test("opt-in API date preview shows missing and derived dates at USDT rows 5 and 9", async ({ page }) => {
+  await page.clock.setFixedTime(new Date(visualPreviewAt));
+  await page.goto(`/private?syncScenario=api-dates&previewAt=${encodeURIComponent(visualPreviewAt)}`);
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+  const rows = page.locator("tr.product-row");
+  const missing = rows.nth(4);
+  const derived = rows.nth(8);
+  await expect(missing).toContainText("Binance Global");
+  await expect(missing).toContainText("持仓 40.00 / 申购额度 100.00");
+  await expect(missing.locator(".product-meta-danger")).toHaveText("买入日未获取，不参与收益计算");
+  await expect(missing.locator("td").nth(3)).toHaveText("—");
+  await expect(derived).toContainText("持仓 80.00 / 申购额度 200.00");
+  await expect(derived).toContainText("2026/10/03");
+  await expect(derived).toContainText("10/10");
+  await expect(derived).not.toContainText("买入日未获取");
+  await expect(derived.locator("td").nth(3)).toHaveText("7.50%");
+  await page.getByRole("button", { name: "编辑持仓" }).click();
+  for (const row of [missing, derived]) {
+    await expect(row.locator(".holding-editor-readonly")).toBeVisible();
+    await expect(row.getByRole("button", { name: "买入日" })).toHaveCount(0);
+    await expect(row.getByRole("textbox", { name: "锁定期限" })).toHaveCount(0);
+  }
+});
+
 test("multiple API positions do not borrow one purchase date for the whole product", async ({ page }) => {
   let missingDate = true;
   await page.route("**/private/api/products**", async (route) => {
@@ -284,6 +414,34 @@ test("multiple API positions do not borrow one purchase date for the whole produ
   await expect(row).toContainText("各笔到期日请在交易所查看");
   await expect(row).not.toContainText("买入日未获取");
   await expect(row.locator("td").nth(3)).not.toHaveText("—");
+});
+
+test("cache notes stay field-specific and retain field times through a full product fallback", async ({ page }) => {
+  await page.clock.setFixedTime(new Date(visualPreviewAt));
+  await page.route("**/private/api/products**", async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== "GET" || url.searchParams.get("preview") !== "1") return route.continue();
+    const response = await route.fetch();
+    const payload = await response.json();
+    const product = payload.products.find((product) => product.id === "bn-g-usdt");
+    Object.assign(product, {
+      aprSource: "cache", aprFetchedAt: "2026-10-12T02:03:00+08:00",
+      capacitySource: "cache", capacityFetchedAt: "2026-10-12T02:03:00+08:00",
+    });
+    payload.rateFallbacks = { ...payload.rateFallbacks, [product.id]: "2026-10-12T03:41:00+08:00" };
+    payload.holdingFallbacks = { ...payload.holdingFallbacks, [product.id]: "2026-10-12T03:41:00+08:00" };
+    await route.fulfill({ response, json: payload });
+  });
+  await page.goto("/private");
+  const row = page.locator("tr.product-row").filter({ hasText: "持仓 650.00 / 首档 300.00" });
+  for (const editing of [false, true]) {
+    if (editing) await page.getByRole("button", { name: "编辑持仓" }).click();
+    const productCell = row.locator("td").nth(1);
+    await expect(productCell).toContainText("APR 沿用 10/12 02:03 的缓存数据；额度沿用 10/12 02:03 的缓存数据");
+    await expect(productCell).not.toContainText("产品信息沿用");
+    await expect(productCell).not.toContainText("03:41");
+    await expect(row.locator("td").nth(2)).toContainText("持仓沿用 10/12 03:41 的缓存数据");
+  }
 });
 
 test("a known first tier stays visible without claiming an unknown later rate", async ({ page }) => {

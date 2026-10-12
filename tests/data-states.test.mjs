@@ -175,7 +175,8 @@ test("manual missing fields, maturity and eligibility do not invent a holding st
   assert.equal(productCapacityIsIncomplete({ ...product, tiers: [{ ...product.tiers[0], max: null }] }, issues), true);
   assert.equal(productHasKnownCapacity(product), true);
   const held = { ...base, productType: "fixed", termDays: 180, eligibilityStatus: "ineligible", availability: "unavailable" };
-  assert.equal(productParticipatesInInterest(held, 100, { purchaseDate: "2026-01-01" }), true);
+  assert.equal(productParticipatesInInterest(held, 100, { purchaseDate: "2026-01-01" }), false);
+  assert.equal(productParticipatesInInterest(held, 100, { purchaseDate: "2026-01-01" }, true), true);
   assert.ok(productTermStatus(held, "2026-01-01", new Date("2026-09-06T00:00:00Z")).remainingDays < 0);
   assert.equal(productShouldBeActive(held, { known: true, amount: 100 }), true);
   assert.equal(productShouldBeActive(held, { known: true, amount: 0 }), false);

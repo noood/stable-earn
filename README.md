@@ -31,19 +31,26 @@ npm run dev
 npm run test:file -- tests/data-states.test.mjs
 npx eslint lib/product-status.ts app/components/dashboard/product-row.tsx
 
-# PR 上的 GitHub Actions 会统一运行 npm run check、Playwright E2E 和安全审计。
-# 本地通常不必重复整套检查；需要完整本地复核时再运行：
-npm run check
+# UI 或用户行为改动：在本地运行相关 Playwright E2E，例如
+npm run test:e2e -- --grep "known quota|known first tier"
+
+# 生产部署前：在最终候选代码上完整运行一次本地 E2E
 npm run test:e2e
+
+# PR 上的 GitHub Actions 统一运行 npm run check 和安全审计，不运行 E2E。
+# 本地不必重复这两项；修改 CI/测试基础设施或需要完整本地复核时再运行：
+npm run check
 npm run audit:security
 
 # 首次运行浏览器测试时安装 Chromium
 npx playwright install chromium
 ```
 
-完整依赖审计（包含开发工具）会展示告警但不让审计检查失败；生产依赖审计失败会让检查失败。只有把相应检查设为 `main` 的必需 PR 检查后，GitHub 才会自动阻止未通过的 PR 合并。本地 Playwright 仍适合开发时快速查看页面和定位问题。
+完整依赖审计（包含开发工具）会展示告警但不让审计检查失败；生产依赖审计失败会让检查失败。只有把相应检查设为 `main` 的必需 PR 检查后，GitHub 才会自动阻止未通过的 PR 合并。Playwright E2E 仅在本地运行，不交给 GitHub；也可用于开发时快速查看页面和定位问题。
 
 端到端测试默认复用已经运行的 <http://localhost:3000>；该服务未运行时，Playwright 会自行启动。需要只跑部分浏览器测试时，可传入文件名或筛选条件，例如 `npm run test:e2e -- --grep "known quota|known first tier"`。发布前核对范围见 [发布检查清单](docs/RELEASE-CHECKLIST.md)。浏览器测试只访问本地预览与模拟数据，不连接生产账号或 D1。
+
+仓库目前只维护 macOS（`darwin`）截图基线；其他系统首次运行截图比较前，需要生成并审阅对应平台的基线。基线按系统分别保存，不跨系统比较；只有确认视觉变化符合预期后才更新。
 
 ## 代码组织
 

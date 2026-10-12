@@ -150,6 +150,31 @@ test("extracted product row keeps API edits read-only and omits an empty manual-
   assert.doesNotMatch(manualEdit, /aria-label="锁定期限"|aria-label="活动期限"/);
 });
 
+test("product cache notes name fields and prefer their original times over the record time", () => {
+  const fieldTime = "2026-10-12T02:03:00.000Z";
+  const recordTime = "2026-10-12T03:41:00.000Z";
+  for (const editing of [false, true]) {
+    const html = renderRow({
+      aprSource: "cache", aprFetchedAt: fieldTime,
+      capacitySource: "cache", capacityFetchedAt: fieldTime,
+    }, { rateFallbackAt: recordTime, editing });
+    assert.ok(html.includes(`APR 沿用 ${formatSyncDateTime(fieldTime)} 的缓存数据`));
+    assert.ok(html.includes(`额度沿用 ${formatSyncDateTime(fieldTime)} 的缓存数据`));
+    assert.doesNotMatch(html, /产品信息沿用/);
+    assert.ok(!html.includes(formatSyncDateTime(recordTime)));
+  }
+  const legacy = renderRow({}, { rateFallbackAt: recordTime });
+  assert.ok(legacy.includes(`APR 沿用 ${formatSyncDateTime(recordTime)} 的缓存数据`));
+  assert.ok(legacy.includes(`额度沿用 ${formatSyncDateTime(recordTime)} 的缓存数据`));
+  assert.doesNotMatch(legacy, /产品信息沿用/);
+  const missingApr = renderRow({ rateCoverage: "unavailable" }, { rateFallbackAt: recordTime });
+  assert.doesNotMatch(missingApr, /APR 沿用/);
+  assert.match(missingApr, /额度沿用/);
+  const missingCapacity = renderRow({ capacityStatus: "unavailable" }, { rateFallbackAt: recordTime });
+  assert.match(missingCapacity, /APR 沿用/);
+  assert.doesNotMatch(missingCapacity, /额度沿用/);
+});
+
 test("a manually selected limited-flex term appears once and remains editable", () => {
   const limited = {
     productType: "flexible", productTypeStatus: "manual", manualKind: "limited", termDays: 180,
@@ -161,6 +186,59 @@ test("a manually selected limited-flex term appears once and remains editable", 
   const editing = renderRow(limited, { editing: true });
   assert.match(editing, /aria-label="活动期限"/);
   assert.doesNotMatch(editing, /class="product-fact"><span>活动期限<\/span>/);
+});
+
+test("hidden saved terms and dates do not render controls, warnings or lifecycle facts", () => {
+  const settings = { apr: 8, firstTierLimit: 100, termDays: 180, purchaseDate: "2026-01-01" };
+  for (const [manualProduct, productTypeStatus, manualKind] of [
+    [true, undefined, "flexible"],
+    [false, "manual", "flexible"],
+    [false, "missing", undefined],
+  ]) {
+    for (const editing of [false, true]) {
+      const html = renderRow({
+        productDataMode: "manual", productType: "flexible", productTypeStatus, manualKind,
+        termDays: 180, manualFields: { termDays: true },
+      }, { editing, manualProduct, manualSettings: settings });
+      assert.doesNotMatch(html, /锁定期限|活动期限|买入日期|买入日|已于|不参与收益计算/);
+      assert.match(html, /8\.00%/);
+    }
+  }
+});
+
+test("an API-managed purchase date does not fall back to a hidden manual backup", () => {
+  const html = renderRow({
+    exchange: "binance", productType: "fixed", productTypeStatus: "known", termDays: 7,
+  }, { manualSettings: { purchaseDate: "2026-01-01" } });
+  assert.match(html, /买入日未获取/);
+  assert.doesNotMatch(html, /已于|01\/08 到期/);
+});
+
+test("missing API terms keep known APR and holdings visible and read-only", () => {
+  for (const editing of [false, true]) {
+    const html = renderRow({ exchange: "binance", productType: "fixed", productTypeStatus: "known" }, { editing });
+    assert.match(html, /锁定期限未获取，不参与收益计算/);
+    assert.match(html, /8\.00%|8%/);
+    assert.match(html, /持仓 20\.00/);
+    assert.match(html, /还可申购 80\.00 USDT/);
+    assert.doesNotMatch(html, /aria-label="锁定期限"|aria-label="买入日"/);
+  }
+  const manualTerm = renderRow({ productType: "fixed", productTypeStatus: "manual", manualKind: "fixed" }, { editing: true });
+  assert.match(manualTerm, /锁定期限待填写，不参与收益计算/);
+  assert.match(manualTerm, /aria-label="锁定期限"/);
+  assert.doesNotMatch(manualTerm, /锁定期限未获取/);
+});
+
+test("API maturity can be derived only from purchase timing matching the known holding", () => {
+  const position = { productId: product.id, amount: 20, purchaseAt: "2026-10-01T00:00:00Z", source: "api" };
+  const timing = { positions: [position], singlePosition: position, completePurchaseTiming: true };
+  const fixed = { exchange: "binance", productType: "fixed", productTypeStatus: "known", termDays: 7 };
+  const valid = renderRow(fixed, { holdingTiming: timing });
+  assert.match(valid, /10\/08/);
+  assert.doesNotMatch(valid, /买入日未获取/);
+  const mismatch = renderRow(fixed, { holding: 30, holdingTiming: timing });
+  assert.match(mismatch, /买入日未获取，不参与收益计算/);
+  assert.doesNotMatch(mismatch, /10\/08/);
 });
 
 test("shared row presentation helpers retain their exact boundary and Shanghai-time behavior", () => {
