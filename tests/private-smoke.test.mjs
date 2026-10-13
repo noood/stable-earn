@@ -56,6 +56,21 @@ test("API date preview replaces only two manual rows without changing the defaul
   assert.ok(!localPrivateProductsPreview(now).products.some((product) => product.id === missing.productId));
 });
 
+test("cache-pair preview marks APR and quota cached in the same displayed minute without changing defaults", () => {
+  const now = new Date("2026-10-06T10:00:00.000Z");
+  const preview = localPrivateProductsPreview(now, false, true);
+  const product = preview.products.find((item) => item.id === "bn-g-usdt");
+  assert.equal(product.aprSource, "cache");
+  assert.equal(product.capacitySource, "cache");
+  assert.equal(Date.parse(product.capacityFetchedAt) - Date.parse(product.aprFetchedAt), 40_000);
+  assert.equal(new Date(product.capacityFetchedAt).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+  }), new Date(product.aprFetchedAt).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+  }));
+  assert.equal(localPrivateProductsPreview(now).products.find((item) => item.id === "bn-g-usdt").aprSource, undefined);
+});
+
 test("local Bybit USDT history previews assign errors and pagination to three separate products", async () => {
   const loadPage = createLocalProductHistoryPreviewLoader();
   await assert.rejects(loadPage("by-g-usdt-short-fixed", null));

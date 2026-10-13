@@ -158,21 +158,24 @@ test("product cache notes name fields and prefer their original times over the r
       aprSource: "cache", aprFetchedAt: fieldTime,
       capacitySource: "cache", capacityFetchedAt: fieldTime,
     }, { rateFallbackAt: recordTime, editing });
-    assert.ok(html.includes(`APR 沿用 ${formatSyncDateTime(fieldTime)} 的缓存数据`));
-    assert.ok(html.includes(`额度沿用 ${formatSyncDateTime(fieldTime)} 的缓存数据`));
+    assert.ok(html.includes(`>APR、额度沿用 ${formatSyncDateTime(fieldTime)} 的缓存数据</p>`));
     assert.doesNotMatch(html, /产品信息沿用/);
     assert.ok(!html.includes(formatSyncDateTime(recordTime)));
   }
   const legacy = renderRow({}, { rateFallbackAt: recordTime });
-  assert.ok(legacy.includes(`APR 沿用 ${formatSyncDateTime(recordTime)} 的缓存数据`));
-  assert.ok(legacy.includes(`额度沿用 ${formatSyncDateTime(recordTime)} 的缓存数据`));
+  assert.ok(legacy.includes(`APR、额度沿用 ${formatSyncDateTime(recordTime)} 的缓存数据`));
   assert.doesNotMatch(legacy, /产品信息沿用/);
+  const differentTimes = renderRow({
+    aprSource: "cache", aprFetchedAt: fieldTime,
+    capacitySource: "cache", capacityFetchedAt: "2026-10-12T02:04:00.000Z",
+  }, { rateFallbackAt: recordTime });
+  assert.ok(differentTimes.includes(`>APR 沿用 ${formatSyncDateTime(fieldTime)} 的缓存数据；额度 沿用 ${formatSyncDateTime("2026-10-12T02:04:00.000Z")} 的缓存数据</p>`));
   const missingApr = renderRow({ rateCoverage: "unavailable" }, { rateFallbackAt: recordTime });
   assert.doesNotMatch(missingApr, /APR 沿用/);
-  assert.match(missingApr, /额度沿用/);
+  assert.match(missingApr, /额度 沿用/);
   const missingCapacity = renderRow({ capacityStatus: "unavailable" }, { rateFallbackAt: recordTime });
   assert.match(missingCapacity, /APR 沿用/);
-  assert.doesNotMatch(missingCapacity, /额度沿用/);
+  assert.doesNotMatch(missingCapacity, /额度 沿用/);
 });
 
 test("a manually selected limited-flex term appears once and remains editable", () => {

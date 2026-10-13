@@ -127,7 +127,7 @@
 | MEXC（PH/UK） | BTC | 定期 | 产品/APR | 不支持 | 项目没有可用接口 | 2026-10-04：PH/UK 官方目录核对；没有可用 API，未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [PH 官方目录](https://www.mexc.com/api-docs/spot-v3/introduction)；[UK 官方目录](https://www.mexc.com/api-docs/spot-v3/introduction) | 不适用／人工维护 | — |
 | MEXC（PH/UK） | BTC | 定期 | 持仓 | 不支持 | 未查询：项目无可用接口 | 2026-10-04：PH/UK 官方目录核对；没有可用 API，未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [PH 官方目录](https://www.mexc.com/api-docs/spot-v3/introduction)；[UK 官方目录](https://www.mexc.com/api-docs/spot-v3/introduction) | 不适用／人工维护 | 不可以；项目没有可用的产品级持仓接口，不能用空结果推断具体产品为零。 |
 
-＊ Bybit 定期 USDGO：未筛选产品目录请求成功但没有产品行；显式传入 USDGO 参数时接口拒绝。MEXC PH 与 UK 分别检查了官方 API 目录，没有本项目可用的 Earn/Savings API，因此未发送 API 请求。OKX 普通 Savings APR 没有本项目可用接口。On-chain Earn 是另一类产品，不属于这 112 项，也不在默认 API 检测中；将来若接入，应单独建能力范围，不并入 Savings 结果。
+＊ Bybit 定期 USDGO：未筛选产品目录请求成功但没有产品行；显式传入 USDGO 参数时接口拒绝。MEXC PH 与 UK 分别检查了官方 API 目录，没有本项目可用的 Earn/Savings API，因此未发送 API 请求。OKX 普通 Savings APR 没有本项目可用接口。On-chain Earn 是另一类产品，不属于这 112 项，也不在默认 API 检测中；Bitget Wallet 的 Morph USDC Morpho 金库调研和未来接入待办单独记录在[专门文档](BITGET-WALLET-MORPH-USDC.md)，不并入交易所 Savings 结果。
 
 “持仓空结果能否判零”的依据按接口分别限定：Binance Simple Earn position 返回产品 ID 和持仓量；Bitget Savings assets 返回币种、期限类型、产品 ID 和持仓量；Bybit Global 活期官方说明已全部赎回的 Flexible Saving position 仍会返回，定期接口则只返回活动中的 position、排除已结算记录。只有请求范围正确、所有分页读完、必要字段/产品身份校验通过时，这些完整快照才允许把缺行解释为当前零持仓。OKX 虽只返回币种汇总，但本项目每个币种只跟踪一条 OKX 活期产品，因此在回包为数组、币种身份可读、受监控币种没有重复行且金额有效时，缺少该币种行可映射为该产品持仓为零；回包失败或不完整时不成立。Bybit EU 与 MEXC 没有本项目可用的产品级持仓接口。
 ## 空、部分、失败及目录处理规则
