@@ -13,9 +13,10 @@ export function localPreviewTime(requestUrl: string) {
   return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value ? parsed : new Date();
 }
 
-export function localPrivateProductsPreview(now = new Date(), apiDatesPreview = false) {
+export function localPrivateProductsPreview(now = new Date(), apiDatesPreview = false, cachePairPreview = false) {
   const freshAt = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
   const cachedAt = new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString();
+  const cachePairAt = new Date(Math.floor(now.getTime() / 60_000) * 60_000 - 12 * 60 * 60 * 1000);
   const rates = [
     // API product states: complete, cached, base-only, max-only and fresh
     // fixed-term data. The product catalogue also includes an unavailable API
@@ -93,7 +94,18 @@ export function localPrivateProductsPreview(now = new Date(), apiDatesPreview = 
     name: "Simple Earn Locked · 5 天 · 已到期（持仓为 0）",
   }, now);
   const products = [
-    ...rates.map((rate) => rate.productId === "bg-usdt-promo" ? previewBitgetPromoProduct(rate) : previewProduct(rate.productId, rate)),
+    ...rates.map((rate) => {
+      if (rate.productId === "bg-usdt-promo") return previewBitgetPromoProduct(rate);
+      const product = previewProduct(rate.productId, rate);
+      if (!cachePairPreview || rate.productId !== "bn-g-usdt") return product;
+      return {
+        ...product,
+        aprSource: "cache" as const,
+        aprFetchedAt: new Date(cachePairAt.getTime() + 5_000).toISOString(),
+        capacitySource: "cache" as const,
+        capacityFetchedAt: new Date(cachePairAt.getTime() + 45_000).toISOString(),
+      };
+    }),
     bybitEligibilityApi,
     bybitEligibilityManual,
     boundaryOpportunity,

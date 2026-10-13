@@ -1,5 +1,17 @@
 import { expect, test } from "@playwright/test";
 
+test("cache notes merge APR and quota with the same displayed minute", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-10-06T10:00:00.000Z"));
+  await page.goto("/private?syncScenario=cache-pair&previewAt=2026-10-06T10%3A00%3A00.000Z");
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+
+  const row = page.locator("tr.product-row").filter({ hasText: "Binance Global" }).filter({ hasText: "5.80%" });
+  const cacheNote = row.locator(".product-meta-danger");
+  await expect(cacheNote).toHaveCount(1);
+  await expect(cacheNote).toHaveText(/^APR、额度沿用 .+ 的缓存数据$/);
+  await expect(cacheNote).not.toContainText("；");
+});
+
 async function withProductFields(page, patch) {
   await page.route("**/private/api/products**", async (route) => {
     const url = new URL(route.request().url());

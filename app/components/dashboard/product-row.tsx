@@ -74,14 +74,21 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
   const rateHeadline = rateHeadlineFor(product, apiManaged);
   const aprCacheAt = product.aprSource === "cache" ? product.aprFetchedAt ?? rateFallbackAt : rateFallbackAt;
   const capacityCacheAt = product.capacitySource === "cache" ? product.capacityFetchedAt ?? rateFallbackAt : rateFallbackAt;
-  const cacheNotes = [
-    aprCacheAt && product.rateCoverage !== "unavailable" && Number.isFinite(product.tiers[0]?.apr)
-      ? `APR 沿用 ${formatSyncDateTime(aprCacheAt)} 的缓存数据`
-      : null,
-    capacityCacheAt && product.capacityStatus !== "unavailable" && !productCapacityIsIncomplete(product, productInfoIssues)
-      ? `额度沿用 ${formatSyncDateTime(capacityCacheAt)} 的缓存数据`
-      : null,
-  ].filter((note): note is string => Boolean(note));
+  const cacheFieldsByTime = new Map<string, string[]>();
+  const addCacheField = (field: string, fetchedAt: string | undefined) => {
+    if (!fetchedAt) return;
+    const displayedTime = formatSyncDateTime(fetchedAt);
+    cacheFieldsByTime.set(displayedTime, [...(cacheFieldsByTime.get(displayedTime) ?? []), field]);
+  };
+  if (product.rateCoverage !== "unavailable" && Number.isFinite(product.tiers[0]?.apr)) {
+    addCacheField("APR", aprCacheAt);
+  }
+  if (product.capacityStatus !== "unavailable" && !productCapacityIsIncomplete(product, productInfoIssues)) {
+    addCacheField("额度", capacityCacheAt);
+  }
+  const cacheNotes = [...cacheFieldsByTime].map(([displayedTime, fields]) => fields.length === 1
+    ? `${fields[0]} 沿用 ${displayedTime} 的缓存数据`
+    : `${fields.join("、")}沿用 ${displayedTime} 的缓存数据`);
   const sourceText = cacheNotes.length > 0
     ? cacheNotes.join("；")
     : productInfoIssues.length === 0 && apiManaged && editing ? "API 同步" : "";
