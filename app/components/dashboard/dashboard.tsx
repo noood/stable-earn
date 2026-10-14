@@ -742,7 +742,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     }
   }
 
-  const catalogRuleText = `仅展示${asset === "BTC" ? "已有持仓" : "持仓 > 0.01"}，或 APR ≥ ${minimumOpportunityApr}% 的活期、限时活期、类型未知及 ${maximumShortTermDays} 天内定期产品`;
+  const catalogRuleText = `仅展示${asset === "BTC" ? "已有持仓" : "持仓 > 0.01"}，或 APR ≥ ${minimumOpportunityApr}% 的活期或 ${maximumShortTermDays} 天内定期产品`;
 
   return (
     <DashboardPageFrame
