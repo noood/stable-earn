@@ -1361,7 +1361,7 @@ for (const viewport of [
     await expect(page.getByRole("heading", { name: "BTC 持仓" })).toBeVisible();
     await page.getByRole("button", { name: "编辑持仓" }).click();
     const btcSubtitle = page.locator(".table-toolbar-subtitle");
-    await expect(btcSubtitle).toContainText("仅展示已有持仓，或 APR ≥ 6% 的活期、限时活期、类型未知及 7 天内定期产品，去");
+    await expect(btcSubtitle).toContainText("仅展示已有持仓，或 APR ≥ 6% 的活期或 7 天内定期产品，去");
     await expect(btcSubtitle.getByRole("button", { name: "配置 API" })).toBeVisible();
   });
 
