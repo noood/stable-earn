@@ -30,6 +30,8 @@
 3. 已把问题缩小到某平台/币种/产品时：选择上表对应的专项探针，避免重复运行通用检查器。
 4. 要判断线上上游响应内容：以应用明确记录且脱敏的诊断字段为证据；Worker 请求日志中的 URL、HTTP 状态或 `outcome=ok` 本身不能说明产品数据字段是否正确。
 
+私人产品路由的每日/手动刷新会记录脱敏的 `refresh_requested`、`refresh_skipped`、`refresh_dispatched` 事件，并与 `sync_started` / `sync_finished` 使用同一 `runId`；每日刷新另外记录 `daily_refresh_committed`。跳过事件说明是运行锁、后台计划重试窗口、当天已提交或手动冷却；完成事件只记录上海日期和成功、部分成功或已保存失败，不记录持仓金额、产品行、凭证或 API 响应。若看到请求/派发记录但没有完成记录，只能说明这次流程没有留下最终提交证据；日志本身不能确定 Worker 被取消的具体原因。
+
 ## 代码与测试索引
 
 - 页面诊断：`app/components/startup-diagnostics.tsx`；`e2e/private-shell.spec.mjs`

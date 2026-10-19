@@ -57,13 +57,18 @@ export async function refreshIsLocked(db: D1Database, userId: string) {
   return Boolean(row && row.lease_until > Date.now());
 }
 
-// Mark before the exchange request: failures also consume this day's opening.
-// Caller holds the lease. This is separate from the manual-button cooldown.
-export async function claimDailyRefresh(db: D1Database, userId: string, token: string) {
-  const day = refreshDay();
-  return Boolean(await db.prepare(`UPDATE refresh_control SET daily_day = ?
-    WHERE user_id = ? AND lease_token = ? AND (daily_day IS NULL OR daily_day <> ?)
-    RETURNING daily_day`).bind(day, userId, token, day).first());
+// A day is complete only after its final result is committed. The caller holds
+// the account lease, so this read cannot race another refresh for this user.
+export async function dailyRefreshCompleted(db: D1Database, userId: string, day = refreshDay()) {
+  const row = await db.prepare("SELECT daily_day FROM refresh_control WHERE user_id = ?")
+    .bind(userId).first<{ daily_day: string | null }>();
+  return row?.daily_day === day;
+}
+
+/** Include the daily completion marker in the same transaction as the result. */
+export function prepareDailyRefreshCommit(db: D1Database, userId: string, token: string, day: string): D1PreparedStatement {
+  return db.prepare("UPDATE refresh_control SET daily_day = ? WHERE user_id = ? AND lease_token = ?")
+    .bind(day, userId, token);
 }
 
 export async function scheduledRefreshDone(db: D1Database, userId: string, slot: number) {

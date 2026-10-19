@@ -6,8 +6,8 @@ import { loadCatalogProducts } from "@/lib/product-catalog";
 import { loadUserProducts } from "@/lib/user-products";
 import { buildManualMaturityEvents, buildSyncChangeEvents, prepareProductChangeEventStatements, type ProductSnapshotForChanges } from "@/lib/product-change-events";
 import { diagnosticErrorKind, syncDiagnostic, withSyncDiagnostics } from "@/lib/sync-diagnostics";
-import { prepareRefreshCommitGuard, renewRefresh } from "@/lib/refresh-control";
-import { loadSyncCache, prepareSyncCacheSave, recordSyncAttempt, recordSyncFailure } from "@/lib/sync-cache";
+import { prepareDailyRefreshCommit, prepareRefreshCommitGuard, renewRefresh } from "@/lib/refresh-control";
+import { loadSyncCache, prepareSyncCacheSave, prepareSyncFailureRecord, recordSyncAttempt, recordSyncFailure } from "@/lib/sync-cache";
 import type { PrivateProductsPayload, RefreshOptions } from "./types";
 import { refreshSource, safeCacheError } from "./status";
 import { buildPrivatePayload } from "./payload";
@@ -79,7 +79,8 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
       payload.fetchedAt,
     );
     const apiHoldingStatements = Object.entries(payload.holdingUpdates)
-      .filter(([productId, amount]) => catalog.products.some((product) => product.id === productId && product.holdingDataMode === "api")
+      .filter(([productId, amount]) => (catalog.authoritativeZeroProductIds.includes(productId)
+        || catalog.products.some((product) => product.id === productId && product.holdingDataMode === "api"))
         && payload.holdingSyncStates[productId] === "synced"
         && !Object.hasOwn(payload.holdingFallbacks, productId)
         && Number.isFinite(amount) && amount >= 0)
@@ -95,14 +96,27 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
       ...prepareHoldingPositionStatements(db, userId, payload.holdingPositions),
       ...prepareProductChangeEventStatements(db, userId, changeEvents),
       prepareSyncCacheSave(db, userId, privateCacheKey, payload, payload.fetchedAt),
+      ...(options.dailyDay && options.leaseToken
+        ? [prepareDailyRefreshCommit(db, userId, options.leaseToken, options.dailyDay)]
+        : []),
     ]);
     progress.committed = true;
+    if (options.dailyDay) syncDiagnostic("daily_refresh_committed", { day: options.dailyDay, result: payload.partial ? "partial" : "success" });
     return (await loadSyncCache<PrivateProductsPayload>(db, userId, privateCacheKey))!;
   } catch (error) {
     const leaseStillOwned = !options.leaseToken || await renewRefresh(db, userId, options.leaseToken);
     if (!leaseStillOwned) throw new Error("refresh lease expired");
-    if (persistFailure) {
-      await recordSyncFailure(db, userId, privateCacheKey, safeCacheError(error));
+    if (persistFailure && (!progress.committed || !options.dailyDay)) {
+      if (options.dailyDay && options.leaseToken) {
+        await db.batch([
+          prepareRefreshCommitGuard(db, userId, options.leaseToken),
+          prepareSyncFailureRecord(db, userId, privateCacheKey, safeCacheError(error)),
+          prepareDailyRefreshCommit(db, userId, options.leaseToken, options.dailyDay),
+        ]);
+        syncDiagnostic("daily_refresh_committed", { day: options.dailyDay, result: "failure" }, true);
+      } else {
+        await recordSyncFailure(db, userId, privateCacheKey, safeCacheError(error));
+      }
     }
     throw error;
   }

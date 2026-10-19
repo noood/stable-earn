@@ -37,6 +37,10 @@ export type ProductCatalogSync = {
   rates: LiveRate[];
   /** Maps adapter ids and upstream ids to the account-scoped product id. */
   productIds: Record<string, string>;
+  /** API products this complete sync has authoritatively observed at zero. */
+  authoritativeZeroProductIds: string[];
+  /** Catalog rows omitted from the active dashboard after this sync. */
+  archivedProductIds: string[];
   /** Prepared writes are committed with the cache only after an attempt wins. */
   statements: D1PreparedStatement[];
 };
@@ -85,6 +89,7 @@ export async function prepareProductCatalogSync(
   const productIds: Record<string, string> = {};
   const transformedRates: LiveRate[] = [];
   const statements: D1PreparedStatement[] = [];
+  const authoritativeZeroProductIds = new Set<string>();
   // Pre-0012 databases may still expose the old column. Current databases use
   // identity_key; this branch only keeps the deployment compatible while old
   // schemas are being retired.
@@ -125,6 +130,9 @@ export async function prepareProductCatalogSync(
 
     const product = productFromRate(base, rate, id, identityKey);
     const evidence = holdingEvidence(product, rate, id, freshHoldings, persistedHoldings, completeScopes);
+    if (product.holdingDataMode === "api" && evidence.known && evidence.amount === 0) {
+      authoritativeZeroProductIds.add(id);
+    }
     const alreadyActive = selectedCurrent?.status === "active";
     const active = productShouldBeActive(product, evidence, alreadyActive)
       || (alreadyActive && product.productDataMode === "api" && product.rateCoverage === "unavailable");
@@ -167,6 +175,7 @@ export async function prepareProductCatalogSync(
       }
       const evidence = existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeScopes);
       if (!evidence.known || evidence.amount > 0) continue;
+      if (product.holdingDataMode === "api" && evidence.amount === 0) authoritativeZeroProductIds.add(row.product_id);
       planned.set(row.product_id, { product, status: "archived" });
       statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
     }
@@ -182,6 +191,7 @@ export async function prepareProductCatalogSync(
     if (incomingIdentityKeys.has(row.identity_key) || incomingCanonicalIds.has(row.identity_key)) continue;
     const evidence = existingHoldingEvidence(product, row, freshHoldings, persistedHoldings, completeScopes);
     if (!evidence.known || evidence.amount > 0) continue;
+    if (product.holdingDataMode === "api" && evidence.amount === 0) authoritativeZeroProductIds.add(row.product_id);
     planned.set(row.product_id, { product, status: "archived" });
     statements.push(archiveCatalogStatement(db, ownerId, row.product_id, now));
   }
@@ -229,7 +239,17 @@ export async function prepareProductCatalogSync(
     completeAccounts: [...completeScopes].filter((scope) => scope === "binance-global" || scope === "binance-bahrain"),
     completeScopes: [...completeScopes].filter((scope) => scope.startsWith("binance-")),
   });
-  return { products, rates: transformedRates, productIds, statements };
+  const archivedProductIds = [...planned.entries()]
+    .filter(([, entry]) => entry.status === "archived")
+    .map(([productId]) => productId);
+  return {
+    products,
+    rates: transformedRates,
+    productIds,
+    authoritativeZeroProductIds: [...authoritativeZeroProductIds],
+    archivedProductIds,
+    statements,
+  };
 }
 
 export async function resolveCatalogProductIds(db: D1Database, ownerId: string) {

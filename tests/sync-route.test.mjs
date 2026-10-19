@@ -116,7 +116,7 @@ function fixture({ scheduledEnabled = true, includeOkxProduct = false } = {}) {
       prepareProductCatalogSync: async (...args) => {
         catalogCalls.push(args);
         const rates = args[2];
-        return { products, rates, productIds: {}, statements: [] };
+        return { products, rates, productIds: {}, authoritativeZeroProductIds: [], archivedProductIds: [], statements: [] };
       },
       resolveCatalogProductIds: async () => ({}),
       resolveCatalogProductAccounts: async () => ({}),
@@ -185,11 +185,17 @@ test("first opening is one refresh per Shanghai day across devices, separate fro
   const f = fixture();
   const first = await f.read("?visit=1");
   assert.equal(first.cache.state, "updated");
+  assert.equal(f.db.sqlite.prepare("SELECT daily_day FROM refresh_control WHERE user_id = 'test-user'").get().daily_day, "2026-09-05");
   assert.equal(first.dailyRefreshPending, false);
   assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 1);
   assert.equal(f.logs.at(-1).trigger, "daily");
+  const refreshRunId = f.logs.find((entry) => entry.event === "refresh_requested").runId;
+  assert.equal(f.logs.some((entry) => entry.event === "daily_refresh_committed" && entry.runId === refreshRunId && entry.result === "success"), true);
+  assert.equal(f.logs.some((entry) => entry.event === "sync_finished" && entry.runId === refreshRunId), true);
   assert.equal((await f.read("?visit=1")).cache.state, "fresh");
   assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 1);
+  assert.equal(f.logs.some((entry) => entry.event === "refresh_skipped" && entry.reason === "daily_refresh_already_committed"), true);
+  assert.equal(f.logs.some((entry) => Object.hasOwn(entry, "ownerId")), false);
   await f.read("?refresh=1");
   assert.equal(f.logs.at(-1).trigger, "manual");
   assert.equal((await f.read("?refresh=1")).cache.state, "cooldown");
@@ -219,7 +225,7 @@ test("the product sync route restores a missing APR from the same identity befor
   assert.equal(mergedRate.capacitySource, "cache");
 });
 
-test("failed daily opening consumes the day; ordinary polling never starts initial exchange requests", async () => {
+test("a saved final daily failure consumes the day; ordinary polling never starts initial exchange requests", async () => {
   const f = fixture();
   assert.equal((await f.read()).cache.state, "fresh");
   assert.equal(f.logs.length, 0);
@@ -227,9 +233,29 @@ test("failed daily opening consumes the day; ordinary polling never starts initi
   const first = await f.read("?visit=1");
   assert.equal(first.cache.state, "error");
   assert.equal(first.dailyRefreshPending, false);
+  assert.equal(f.db.sqlite.prepare("SELECT daily_day FROM refresh_control WHERE user_id = 'test-user'").get().daily_day, "2026-09-05");
+  assert.equal(f.logs.some((entry) => entry.event === "daily_refresh_committed" && entry.result === "failure"), true);
   await f.read("?visit=1");
   await f.read();
   assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 1);
+});
+
+test("an uncommitted daily result does not consume the day and can be retried after the lease expires", async () => {
+  const f = fixture();
+  const originalBatch = f.db.batch;
+  f.db.batch = async () => { throw new Error("temporary database write interruption"); };
+  const interrupted = await f.read("?visit=1");
+  assert.equal(interrupted.cache.state, "syncing");
+  assert.equal(f.db.sqlite.prepare("SELECT daily_day FROM refresh_control WHERE user_id = 'test-user'").get().daily_day, null);
+  assert.equal(f.logs.some((entry) => entry.event === "refresh_requested"), true);
+  assert.equal(f.logs.some((entry) => entry.event === "refresh_dispatched"), true);
+
+  f.db.batch = originalBatch;
+  f.setTime(new Date(Date.parse(f.now()) + 16 * 60_000).toISOString());
+  const retried = await f.read("?visit=1");
+  assert.equal(retried.cache.state, "updated");
+  assert.equal(f.db.sqlite.prepare("SELECT daily_day FROM refresh_control WHERE user_id = 'test-user'").get().daily_day, "2026-09-05");
+  assert.equal(f.logs.filter((entry) => entry.event === "sync_started" && entry.trigger === "daily").length, 2);
 });
 
 test("daily opening waits for the scheduled retry window, then refreshes once after final partial or failure", async () => {
@@ -323,6 +349,7 @@ test("a partial daily refresh also consumes the day without running a second exc
   const f = fixture();
   f.step("partial");
   assert.equal((await f.read("?visit=1")).partial, true);
+  assert.equal(f.logs.some((entry) => entry.event === "daily_refresh_committed" && entry.result === "partial"), true);
   f.step("success");
   const again = await f.read("?visit=1");
   assert.equal(again.partial, true);

@@ -58,7 +58,7 @@ test("reading and candidate-building layers cannot commit; the refresh service r
     && node.name.text === "refreshPrivateProductsAttempt");
   const batchCalls = nodesMatching(attempt, (node) => ts.isCallExpression(node)
     && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "batch");
-  assert.equal(batchCalls.length, 1);
+  assert.equal(batchCalls.length, 2); // result commit plus persisted-final-failure commit
   const body = attempt.body.getText(service);
   assert.ok(body.indexOf("renewRefresh(") < body.indexOf("retryable && !acceptPartial"));
   assert.ok(body.indexOf("retryable && !acceptPartial") < body.indexOf("await db.batch("));
@@ -143,6 +143,112 @@ test("candidate builder prepares real catalogue statements without changing the 
     assert.equal(db.sqlite.prepare("SELECT total_changes() AS count").get().count, before);
     assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM product_catalog").get().count, 0);
     assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM sync_snapshots").get().count, 0);
+  } finally {
+    db.sqlite.close();
+  }
+});
+
+test("a complete sparse Bitget sync archives a product with an atomic zero event and preserves zero on reappearance", async () => {
+  const db = sqliteDb();
+  const productId = "api-bg-usdt-simple-1gd23qx";
+  const identityKey = "bitget-global:USDT:flexible:1488775596992425984";
+  const externalProductId = "1488775596992425984";
+  const observedAt = "2026-10-16T15:36:00.000Z";
+  const { createProductTemplate } = moduleLoader()("@/lib/product-template");
+  const product = {
+    ...createProductTemplate(productId, "bitget-global", "bitget", "global", "USDT", "Simple Earn", [[0, 300000, 6]],
+      { kind: "live", label: "Bitget API", fetchedAt: observedAt },
+      { productDataMode: "api", apiAccess: "authenticated", holdingDataMode: "api" }),
+    identityKey,
+    externalProductId,
+  };
+  const rate = {
+    productId, canonicalProductId: identityKey, identityKey, externalProductId,
+    productType: "flexible", productDataMode: "api", apr: 6,
+    tiers: [{ min: 0, max: 300000, apr: 6 }], rateCoverage: "complete",
+    fetchedAt: observedAt, sourceLabel: "Bitget API",
+    catalog: { accountId: "bitget-global", exchange: "bitget", region: "global", asset: "USDT",
+      holdingDataMode: "api", apiAccess: "authenticated" },
+  };
+  db.sqlite.prepare(`INSERT INTO product_catalog
+    (owner_id, product_id, canonical_product_id, identity_key, payload, status, first_seen_at, last_seen_at)
+    VALUES ('test-user', ?, ?, ?, ?, 'active', ?, ?)`)
+    .run(productId, identityKey, identityKey, JSON.stringify(product), observedAt, observedAt);
+  db.sqlite.prepare("INSERT INTO holdings (user_id, product_id, amount, updated_at) VALUES ('test-user', ?, 921.46, ?)")
+    .run(productId, observedAt);
+  const previousPayload = {
+    products: [product], rates: [rate], rateFallbacks: {},
+    holdingUpdates: { [productId]: 921.46 }, holdingSourceIds: [productId], holdingFallbacks: {},
+    holdingSyncStates: { [productId]: "synced" }, holdingPositions: [], fetchedAt: observedAt,
+    partial: false, note: "", failures: [], fallbackUpdatedAt: null,
+  };
+  db.sqlite.prepare(`INSERT INTO sync_snapshots (owner_id, cache_key, payload, updated_at, last_attempt_at, last_error)
+    VALUES ('test-user', 'private-products', ?, ?, ?, NULL)`)
+    .run(JSON.stringify(previousPayload), observedAt, observedAt);
+
+  let scenario = "incomplete";
+  const inactive = { status: "not_configured", snapshot: null };
+  const load = moduleLoader({
+    "@/lib/credentials": { loadCredentials: async () => ({}) },
+    "./snapshots": { fetchPrivateSnapshots: async () => ({
+      publicSnapshot: { rates: [], failures: [], partials: [], empty: [] },
+      binanceGlobalResult: inactive,
+      binanceBahrainResult: inactive,
+      bybitGlobalResult: inactive,
+      bitgetResult: {
+        status: "synced",
+        snapshot: {
+          rates: scenario === "reappeared" ? [rate] : [],
+          holdings: scenario === "reappeared" ? { [productId]: 0.12 } : {},
+          sync: {
+            products: true,
+            holdings: true,
+            productStatus: "complete",
+            holdingStatus: scenario === "incomplete" ? "partial" : "complete",
+          },
+        },
+      },
+      okxResult: inactive,
+    }) },
+    "@/lib/sync-diagnostics": {
+      syncDiagnostic() {},
+      diagnosticErrorKind: () => "error",
+      withSyncDiagnostics: async (_userId, _options, task) => task(),
+    },
+  });
+  try {
+    const service = load("@/lib/private-sync/service");
+    const { loadProductChangeEvents } = load("@/lib/product-change-events");
+
+    const incomplete = await service.refreshPrivateProductsCache(db, "test-user");
+    assert.equal(db.sqlite.prepare("SELECT status FROM product_catalog WHERE product_id = ?").get(productId).status, "active");
+    assert.equal(incomplete.payload.holdingUpdates[productId], 921.46);
+    assert.ok(incomplete.payload.holdingFallbacks[productId]);
+    assert.equal((await loadProductChangeEvents(db, "test-user")).length, 0);
+
+    scenario = "complete-empty";
+    const zeroed = await service.refreshPrivateProductsCache(db, "test-user");
+    assert.equal(db.sqlite.prepare("SELECT status FROM product_catalog WHERE product_id = ?").get(productId).status, "archived");
+    assert.equal(zeroed.payload.holdingUpdates[productId], 0);
+    assert.equal(zeroed.payload.holdingSyncStates[productId], "synced");
+    assert.equal(db.sqlite.prepare("SELECT amount FROM holdings WHERE user_id = 'test-user' AND product_id = ?").get(productId).amount, 0);
+    assert.equal(zeroed.payload.holdingFallbacks[productId], undefined);
+    let holdingEvents = (await loadProductChangeEvents(db, "test-user")).filter((event) => event.type === "holding");
+    assert.equal(holdingEvents.length, 1);
+    assert.equal(holdingEvents[0].before, "921.46");
+    assert.equal(holdingEvents[0].after, "0.00");
+
+    scenario = "reappeared";
+    const restored = await service.refreshPrivateProductsCache(db, "test-user");
+    assert.equal(db.sqlite.prepare("SELECT status FROM product_catalog WHERE product_id = ?").get(productId).status, "active");
+    assert.equal(db.sqlite.prepare("SELECT amount FROM holdings WHERE user_id = 'test-user' AND product_id = ?").get(productId).amount, 0.12);
+    assert.equal(restored.payload.holdingUpdates[productId], 0.12);
+    holdingEvents = (await loadProductChangeEvents(db, "test-user")).filter((event) => event.type === "holding");
+    assert.equal(holdingEvents.length, 2);
+    assert.equal(holdingEvents[0].before, "0.00");
+    assert.equal(holdingEvents[0].after, "0.12");
+    assert.equal(holdingEvents[1].before, "921.46");
+    assert.equal(holdingEvents[1].after, "0.00");
   } finally {
     db.sqlite.close();
   }

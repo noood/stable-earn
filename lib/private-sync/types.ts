@@ -64,4 +64,6 @@ export type RefreshOptions = {
   acceptPartial?: boolean;
   persistFailure?: boolean;
   recordAttempt?: boolean;
+  /** Shanghai calendar day captured when this daily-opening request began. */
+  dailyDay?: string;
 };

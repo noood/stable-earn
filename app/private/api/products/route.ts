@@ -5,7 +5,8 @@ import { loadManualRefreshCooldown, manualRefreshCooldownMs } from "@/lib/user-s
 import { delayLocalPreviewScenario, isLocalPreviewRequest, localPreviewTime, localPrivateProductsPreview, localSyncScenarioPreview } from "@/lib/local-preview";
 import { cachedHoldingTimes } from "@/lib/holding-cache";
 import { loadProductChangeEvents } from "@/lib/product-change-events";
-import { acquireRefresh, claimDailyRefresh, refreshIsLocked, releaseRefresh } from "@/lib/refresh-control";
+import { acquireRefresh, dailyRefreshCompleted, refreshDay, refreshIsLocked, releaseRefresh } from "@/lib/refresh-control";
+import { syncDiagnostic, withSyncDiagnostics } from "@/lib/sync-diagnostics";
 import { sanitizeSyncFailure, scheduledRefreshPending } from "@/lib/sync-notice";
 import {
   formatCacheTime,
@@ -100,34 +101,53 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
     const busy = await refreshIsLocked(db, identity.userId);
     return reply(snapshot(await loadSyncCache(db, identity.userId, privateCacheKey), busy));
   }
-  const token = await acquireRefresh(db, identity.userId);
-  if (!token) {
-    pending = true;
-    return reply(snapshot(await loadSyncCache(db, identity.userId, privateCacheKey), true));
-  }
-  try {
-    const cached = await loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey);
-    const now = Date.now();
-    // Reserve the whole scheduled retry window, not just an individual request.
-    if (scheduledSyncEnabled && scheduledRefreshPending(now, syncCacheMetadata(cached, syncAttemptInProgress(cached, now) ? "syncing" : "fresh", now))) {
+  const dailyDay = daily ? refreshDay() : undefined;
+  return withSyncDiagnostics(identity.userId, {
+    trigger: daily ? "daily" : "manual",
+    attempt: 1,
+  }, async () => {
+    syncDiagnostic("refresh_requested", { mode: daily ? "daily" : "manual" });
+    const token = await acquireRefresh(db, identity.userId);
+    if (!token) {
+      syncDiagnostic("refresh_skipped", { reason: "refresh_in_progress" });
       pending = true;
-      return reply(snapshot(cached, true));
-    }
-    if (daily && !await claimDailyRefresh(db, identity.userId, token)) return reply(snapshot(cached));
-    const cooldownUntil = manualCooldownUntil(cached, now, manualCooldownDuration);
-    if (manual && cooldownUntil) {
-      if (cached?.payload) return reply(cachedResponse(cached, "cooldown", `手动刷新冷却中，可在 ${formatCacheTime(cooldownUntil)} 后重试。`, now, manualCooldownDuration));
-      return reply(NextResponse.json({ error: `手动刷新冷却中，可在 ${formatCacheTime(cooldownUntil)} 后重试。` }, { status: 429 }));
+      return reply(snapshot(await loadSyncCache(db, identity.userId, privateCacheKey), true));
     }
     try {
-      const saved = await refreshPrivateProductsCache(db, identity.userId, { manual, trigger: daily ? "daily" : "manual", leaseToken: token });
-      return reply(cachedResponse(saved, "updated", "已完成刷新。", Date.now(), manualCooldownDuration));
-    } catch {
-      return reply(snapshot(await loadSyncCache(db, identity.userId, privateCacheKey)));
+      const cached = await loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey);
+      const now = Date.now();
+      // Reserve the whole scheduled retry window, not just an individual request.
+      if (scheduledSyncEnabled && scheduledRefreshPending(now, syncCacheMetadata(cached, syncAttemptInProgress(cached, now) ? "syncing" : "fresh", now))) {
+        syncDiagnostic("refresh_skipped", { reason: "scheduled_retry_window" });
+        pending = true;
+        return reply(snapshot(cached, true));
+      }
+      if (daily && await dailyRefreshCompleted(db, identity.userId, dailyDay)) {
+        syncDiagnostic("refresh_skipped", { reason: "daily_refresh_already_committed" });
+        return reply(snapshot(cached));
+      }
+      const cooldownUntil = manualCooldownUntil(cached, now, manualCooldownDuration);
+      if (manual && cooldownUntil) {
+        syncDiagnostic("refresh_skipped", { reason: "manual_cooldown" });
+        if (cached?.payload) return reply(cachedResponse(cached, "cooldown", `手动刷新冷却中，可在 ${formatCacheTime(cooldownUntil)} 后重试。`, now, manualCooldownDuration));
+        return reply(NextResponse.json({ error: `手动刷新冷却中，可在 ${formatCacheTime(cooldownUntil)} 后重试。` }, { status: 429 }));
+      }
+      syncDiagnostic("refresh_dispatched");
+      try {
+        const saved = await refreshPrivateProductsCache(db, identity.userId, {
+          manual,
+          trigger: daily ? "daily" : "manual",
+          leaseToken: token,
+          dailyDay,
+        });
+        return reply(cachedResponse(saved, "updated", "已完成刷新。", Date.now(), manualCooldownDuration));
+      } catch {
+        return reply(snapshot(await loadSyncCache(db, identity.userId, privateCacheKey)));
+      }
+    } finally {
+      await releaseRefresh(db, identity.userId, token);
     }
-  } finally {
-    await releaseRefresh(db, identity.userId, token);
-  }
+  });
 }
 
 function cachedResponse(

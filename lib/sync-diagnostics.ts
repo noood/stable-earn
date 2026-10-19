@@ -4,6 +4,8 @@ type DiagnosticRecord = { event: string; [key: string]: unknown };
 type Context = {
   runId: string;
   userRef: string;
+  /** Internal only; never copied to emitted diagnostic records. */
+  ownerId?: string;
   trigger: "scheduled" | "manual" | "daily";
   attempt: number;
   platform?: string;
@@ -29,12 +31,17 @@ export async function withSyncDiagnostics<T>(
   options: Pick<Context, "trigger" | "attempt"> & { runId?: string },
   task: () => Promise<T>,
 ) {
+  const parent = context.getStore();
+  if (parent?.ownerId === userId) {
+    return context.run({ ...parent, ...options, runId: options.runId ?? parent.runId }, task);
+  }
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`stable-earn-log:${userId}`));
   const userRef = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);
   return context.run({
     ...options,
     runId: options.runId ?? crypto.randomUUID(),
     userRef,
+    ownerId: userId,
     ...(context.getStore()?.captured ? { captured: context.getStore()?.captured } : {}),
     ...(context.getStore()?.suppressOutput ? { suppressOutput: true } : {}),
   }, task);
@@ -69,7 +76,9 @@ function safeRuntimeRecord(record: DiagnosticRecord) {
 export function syncDiagnostic(event: string, fields: Record<string, unknown> = {}, warning = false) {
   const current = context.getStore();
   if (!current) return;
-  const record = { event, ...current, ...fields };
+  const visibleContext = { ...current };
+  delete visibleContext.ownerId;
+  const record = { event, ...visibleContext, ...fields };
   current.captured?.push(record);
   if (current.suppressOutput) return;
   const safeRecord = safeRuntimeRecord(record);
