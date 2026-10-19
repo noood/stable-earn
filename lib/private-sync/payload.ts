@@ -6,7 +6,7 @@ import { mergeRateFields, mergeRates } from "@/lib/rate-cache";
 import { cachedHoldingTimes, mergeHoldingPositions } from "@/lib/holding-cache";
 import { compareProductIdentity } from "@/lib/product-identity";
 import { prepareProductCatalogSync, resolveCatalogProductAccounts, resolveCatalogProductIds } from "@/lib/product-catalog";
-import type { HoldingPosition } from "@/lib/domain";
+import type { HoldingPosition, HoldingSyncState } from "@/lib/domain";
 import { authoritativeEmptyHoldingScopeKeys, platformCapabilityScopeKey } from "@/lib/platform-capabilities";
 import { syncDiagnostic } from "@/lib/sync-diagnostics";
 import { formatCacheTime, type SyncCacheRecord } from "@/lib/sync-cache";
@@ -188,6 +188,7 @@ export async function buildPrivatePayload(
       normalizedFreshHoldings[product.id] = 0;
     }
   }
+  for (const productId of catalog.authoritativeZeroProductIds) normalizedFreshHoldings[productId] = 0;
   // A hidden API product must reappear as soon as a fresh, trusted sync finds
   // a positive balance. This prevents the hide action from masking a later
   // deposit while preserving the product row and its history.
@@ -199,11 +200,13 @@ export async function buildPrivatePayload(
         .bind(userId, row.product_id));
     }
   }
+  const archivedProductIds = new Set(catalog.archivedProductIds);
   const holdingUpdates = Object.fromEntries(Object.entries({
     ...(cached?.payload?.holdingUpdates ?? {}),
     ...normalizedFreshHoldings,
   }).map(([productId, amount]) => [normalizeCatalogHoldingId(productId, activeProductIds, catalogProductIds), amount] as const)
-    .filter(([productId]) => activeProductIds.has(productId)));
+    .filter(([productId, amount]) => activeProductIds.has(productId)
+      || (archivedProductIds.has(productId) && Number(amount) === 0)));
 
   const positionUpdatedAt = new Date().toISOString();
   const normalizedHoldingPositions: HoldingPosition[] = freshHoldingPositions.flatMap((position) => {
@@ -234,10 +237,11 @@ export async function buildPrivatePayload(
     bitget: bitgetStatus,
     okx: okxStatus,
   };
-  const holdingSyncStates = Object.fromEntries(catalog.products.flatMap((product) => {
+  const holdingSyncStates: Record<string, HoldingSyncState> = Object.fromEntries(catalog.products.flatMap((product) => {
     const state = productHoldingSyncState(product, privateStatus);
     return state ? [[product.id, state] as const] : [];
-  }));
+  })) as Record<string, HoldingSyncState>;
+  for (const productId of catalog.authoritativeZeroProductIds) holdingSyncStates[productId] = "synced";
   const privateDiagnostics: PrivateDiagnostics = {
     binanceGlobal: binanceGlobalDiagnostic,
     binanceBahrain: binanceBahrainDiagnostic,

@@ -437,7 +437,7 @@ test("cache notes stay field-specific and retain field times through a full prod
   for (const editing of [false, true]) {
     if (editing) await page.getByRole("button", { name: "编辑持仓" }).click();
     const productCell = row.locator("td").nth(1);
-    await expect(productCell).toContainText("APR 沿用 10/12 02:03 的缓存数据；额度沿用 10/12 02:03 的缓存数据");
+    await expect(productCell).toContainText("APR、额度沿用 10/12 02:03 的缓存数据");
     await expect(productCell).not.toContainText("产品信息沿用");
     await expect(productCell).not.toContainText("03:41");
     await expect(row.locator("td").nth(2)).toContainText("持仓沿用 10/12 03:41 的缓存数据");

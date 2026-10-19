@@ -3,7 +3,7 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
-test("atomic account lease and daily claim survive separate callers and recover abandoned leases", async () => {
+test("daily refresh is completed only by an atomic result commit and abandoned leases recover", async () => {
   const db = sqliteDb();
   let now = Date.parse("2026-09-08T15:59:59Z");
   class Clock extends Date { static now() { return now; } }
@@ -12,8 +12,8 @@ test("atomic account lease and daily claim survive separate callers and recover 
   assert.ok(one);
   assert.equal(two, null);
   assert.ok(await control.acquireRefresh(db, "b"));
-  assert.equal(await control.claimDailyRefresh(db, "a", one), true);
-  assert.equal(await control.claimDailyRefresh(db, "a", one), false);
+  const day = control.refreshDay(now);
+  assert.equal(await control.dailyRefreshCompleted(db, "a", day), false);
   await control.releaseRefresh(db, "a", "wrong-token");
   assert.equal(await control.refreshIsLocked(db, "a"), true);
   now += 16 * 60000;
@@ -24,7 +24,13 @@ test("atomic account lease and daily claim survive separate callers and recover 
   assert.equal(await control.renewRefresh(db, "a", next), true);
   await control.releaseRefresh(db, "a", one);
   assert.equal(await control.refreshIsLocked(db, "a"), true);
-  assert.equal(await control.claimDailyRefresh(db, "a", next), true);
+  assert.equal(await control.dailyRefreshCompleted(db, "a", day), false);
+  await db.batch([
+    control.prepareRefreshCommitGuard(db, "a", next),
+    control.prepareDailyRefreshCommit(db, "a", next, day),
+  ]);
+  assert.equal(await control.dailyRefreshCompleted(db, "a", day), true);
+  assert.equal(await control.dailyRefreshCompleted(db, "a", "2026-09-09"), false);
   assert.equal(control.refreshDay(now), "2026-09-09");
   await control.releaseRefresh(db, "a", next);
   assert.equal(await control.refreshIsLocked(db, "a"), false);

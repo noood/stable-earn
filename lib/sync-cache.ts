@@ -178,9 +178,17 @@ export async function recordSyncFailure(
   cacheKey: string,
   error: string,
 ) {
-  await db.prepare("UPDATE sync_snapshots SET last_error = ? WHERE owner_id = ? AND cache_key = ?")
-    .bind(error.slice(0, 240), ownerId, cacheKey)
-    .run();
+  await prepareSyncFailureRecord(db, ownerId, cacheKey, error).run();
+}
+
+export function prepareSyncFailureRecord(
+  db: D1Database,
+  ownerId: string,
+  cacheKey: string,
+  error: string,
+): D1PreparedStatement {
+  return db.prepare("UPDATE sync_snapshots SET last_error = ? WHERE owner_id = ? AND cache_key = ?")
+    .bind(error.slice(0, 240), ownerId, cacheKey);
 }
 
 export async function deleteSyncCache(db: D1Database, ownerId: string, cacheKey: string) {
