@@ -7,7 +7,7 @@ import { parseProductOverride } from "@/lib/product-override-input";
 import { loadUserProducts, prepareUserProductStatements, productToUserProduct, sanitizeUserProducts, userProductInputToProduct } from "@/lib/user-products";
 import { delayLocalPreviewScenario, isLocalPreviewRequest, localPreviewTime, localPrivateHoldingsPreview } from "@/lib/local-preview";
 import { loadCatalogProducts } from "@/lib/product-catalog";
-import { withStartupServerTiming } from "@/lib/startup-timing";
+import { withStartupServerTiming, type StartupServerTiming } from "@/lib/startup-timing";
 import {
   buildManualChangeEvents,
   loadProductChangeEvents,
@@ -25,11 +25,11 @@ type OverrideSnapshotRow = { product_id: string; confirmed_apr: number | null; p
 type HiddenProductRow = { product_id: string };
 
 export async function GET(request: Request) {
-  return withStartupServerTiming(request, () => getHoldings(request));
+  return withStartupServerTiming(request, (timing) => getHoldings(request, timing));
 }
 
-async function getHoldings(request: Request) {
-  const userId = await getUserId(request);
+async function getHoldings(request: Request, timing: StartupServerTiming) {
+  const userId = await timing.measure("auth", () => getUserId(request));
   if (!userId) return NextResponse.json({ error: "请先登录后再读取持仓。" }, { status: 401, headers: privateResponseHeaders });
   if (isLocalPreviewRequest(request)) {
     const scenario = new URL(request.url).searchParams.get("syncScenario");
@@ -42,7 +42,7 @@ async function getHoldings(request: Request) {
       : localPrivateHoldingsPreview(localPreviewTime(request.url), scenario === "api-dates"), { headers: privateResponseHeaders });
   }
 
-  const db = await getDatabase();
+  const db = await timing.measure("database", () => getDatabase());
   const [catalogProducts, manualProducts, holdingResult, positionResult, overrideResult, limitResult, termResult, hiddenResult, hiddenCatalogResult, syncSnapshotResult] = await Promise.all([
     loadCatalogProducts(db, userId),
     loadUserProducts(db, userId),

@@ -1,5 +1,7 @@
 export const startupTimingPhases = {
   auth: "登录校验",
+  auth_keys: "解析登录签名公钥",
+  auth_keys_fetch: "公钥网络请求至响应头",
   database: "数据库准备",
   settings: "读取刷新设置",
   lock_read: "检查运行锁",
@@ -9,9 +11,29 @@ export const startupTimingPhases = {
   daily_check: "检查当日记录",
   maturities: "检查手动产品到期",
   history: "读取变更记录",
+  history_recent: "最近历史调用总耗时",
+  history_unread: "未读提醒调用总耗时",
+  history_merge: "历史合并去重排序",
   lock_release: "释放运行锁",
   sync: "执行同步流程",
 } as const;
+
+export const startupTimingMetrics = {
+  auth_keys_cached: { label: "解析前公钥缓存有效", unit: "（1是/0否）" },
+  auth_keys_loading: { label: "解析前公钥请求进行中", unit: "（1是/0否）" },
+  history_recent_sql: { label: "最近历史 SQL 执行（末次尝试）", unit: "ms" },
+  history_unread_sql: { label: "未读提醒 SQL 执行（末次尝试）", unit: "ms" },
+  history_recent_d1: { label: "最近历史 D1 duration", unit: "ms" },
+  history_unread_d1: { label: "未读提醒 D1 duration", unit: "ms" },
+  history_recent_rows: { label: "最近历史返回", unit: "条" },
+  history_unread_rows: { label: "未读提醒返回", unit: "条" },
+  history_recent_read: { label: "最近历史扫描", unit: "行" },
+  history_unread_read: { label: "未读提醒扫描", unit: "行" },
+  history_recent_attempts: { label: "最近历史执行尝试", unit: "次" },
+  history_unread_attempts: { label: "未读提醒执行尝试", unit: "次" },
+} as const;
+
+export type StartupTimingMetric = keyof typeof startupTimingMetrics;
 
 export type StartupTimingPhase = keyof typeof startupTimingPhases;
 
@@ -30,5 +52,21 @@ export function formatStartupRequestTiming(header: string | null | undefined, st
   });
   const other = metrics.find((metric) => metric.name === "other");
   if (other) phases.push(`其余处理 ${other.duration}ms`);
-  return `${browser}${total ? ` · 服务端 ${total.duration}ms` : ""}${phases.length ? ` · 服务端分段：${phases.join("；")}` : ""}`;
+  const recordedMetrics = new Set<string>();
+  const details = (header ?? "").split(",").flatMap((part) => {
+    const match = part.trim().match(/^(\w+);desc="value=(\d+(?:\.\d+)?)"$/);
+    if (!match || !Object.hasOwn(startupTimingMetrics, match[1])) return [];
+    const metric = startupTimingMetrics[match[1] as StartupTimingMetric];
+    recordedMetrics.add(match[1]);
+    return [`${metric.label} ${Number(match[2])}${metric.unit}`];
+  });
+  for (const [phase, label] of [["history_recent", "最近历史"], ["history_unread", "未读提醒"]]) {
+    if (metrics.some((metric) => metric.name === phase) && !recordedMetrics.has(`${phase}_sql`)) {
+      details.push(`${label}：D1 未提供独立 SQL 耗时`);
+    }
+    if (metrics.some((metric) => metric.name === phase) && !recordedMetrics.has(`${phase}_attempts`)) {
+      details.push(`${label}：D1 未提供执行尝试次数`);
+    }
+  }
+  return `${browser}${total ? ` · 服务端 ${total.duration}ms` : ""}${phases.length ? ` · 服务端分段：${phases.join("；")}` : ""}${details.length ? ` · 同次请求明细：${details.join("；")}` : ""}`;
 }

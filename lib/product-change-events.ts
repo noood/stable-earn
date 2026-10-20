@@ -1,4 +1,5 @@
-import type { D1Database } from "@cloudflare/workers-types";
+import type { D1Database, D1Result } from "@cloudflare/workers-types";
+import type { StartupServerTiming } from "./startup-timing";
 import type { HoldingMap, HoldingPosition, Product, ProductChangeEvent } from "./domain";
 import { formatAmount } from "./domain";
 import type { LiveRate } from "./live-rates";
@@ -329,26 +330,41 @@ export function prepareProductChangeEventStatements(db: D1Database, ownerId: str
       event.observedAt, event.source, event.attention ? 1 : 0));
 }
 
-export async function loadProductChangeEvents(db: D1Database, ownerId: string, limit = 2000) {
+export async function loadProductChangeEvents(db: D1Database, ownerId: string, limit = 2000, timing?: StartupServerTiming) {
+  async function query(kind: "recent" | "unread", operation: () => Promise<D1Result<ProductChangeEventRow>>) {
+    const read = async () => {
+      const result = await operation();
+      timing?.record(`history_${kind}_rows`, result.results.length);
+      timing?.record(`history_${kind}_sql`, result.meta?.timings?.sql_duration_ms);
+      timing?.record(`history_${kind}_d1`, result.meta?.duration);
+      timing?.record(`history_${kind}_read`, result.meta?.rows_read);
+      timing?.record(`history_${kind}_attempts`, result.meta?.total_attempts);
+      return result;
+    };
+    return timing ? timing.measure(`history_${kind}`, read) : read();
+  }
   const [recent, unread] = await Promise.all([
-    db.prepare(`SELECT event_id, product_id, change_type, title, before_value, after_value,
+    query("recent", () => db.prepare(`SELECT event_id, product_id, change_type, title, before_value, after_value,
       observed_at, source, attention, read_at
       FROM product_change_events
       WHERE owner_id = ?
       ORDER BY observed_at DESC, event_id DESC
-      LIMIT ?`).bind(ownerId, limit).all<ProductChangeEventRow>(),
-    db.prepare(`SELECT event_id, product_id, change_type, title, before_value, after_value,
+      LIMIT ?`).bind(ownerId, limit).all<ProductChangeEventRow>()),
+    query("unread", () => db.prepare(`SELECT event_id, product_id, change_type, title, before_value, after_value,
       observed_at, source, attention, read_at
       FROM product_change_events
       WHERE owner_id = ? AND attention = 1 AND read_at IS NULL
-      ORDER BY observed_at DESC, event_id DESC`).bind(ownerId).all<ProductChangeEventRow>(),
+      ORDER BY observed_at DESC, event_id DESC`).bind(ownerId).all<ProductChangeEventRow>()),
   ]);
-  const rows = new Map<string, ProductChangeEventRow>();
-  for (const row of recent.results) rows.set(row.event_id, row);
-  for (const row of unread.results) rows.set(row.event_id, row);
-  return [...rows.values()]
-    .sort((left, right) => right.observed_at.localeCompare(left.observed_at) || right.event_id.localeCompare(left.event_id))
-    .map(mapProductChangeEvent);
+  const merge = async () => {
+    const rows = new Map<string, ProductChangeEventRow>();
+    for (const row of recent.results) rows.set(row.event_id, row);
+    for (const row of unread.results) rows.set(row.event_id, row);
+    return [...rows.values()]
+      .sort((left, right) => right.observed_at.localeCompare(left.observed_at) || right.event_id.localeCompare(left.event_id))
+      .map(mapProductChangeEvent);
+  };
+  return timing ? timing.measure("history_merge", merge) : merge();
 }
 
 export async function markProductChangeEventsRead(db: D1Database, ownerId: string, productId: string, eventIds: string[], readAt = new Date().toISOString()) {
