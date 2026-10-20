@@ -5,12 +5,21 @@ import { useEffect, useState } from "react";
 type DiagnosticEntry = { key: string; label: string; value: string; at: number };
 const eventName = "stable-earn:startup-diagnostic";
 const entries = new Map<string, DiagnosticEntry>();
+const initialVisibility = typeof document === "undefined" ? "unknown" : document.visibilityState;
 
-export function reportStartupDiagnostic(key: string, label: string, value: string) {
-  if (typeof window === "undefined") return;
-  const entry = { key, label, value, at: performance.now() };
+export function startupDiagnosticsEnabled() {
+  return typeof window !== "undefined" && new URLSearchParams(window.location.search).get("diagnostics") === "1";
+}
+
+export function publishStartupDiagnostics() {
+  if (startupDiagnosticsEnabled()) window.dispatchEvent(new CustomEvent(eventName));
+}
+
+export function reportStartupDiagnostic(key: string, label: string, value: string, at = performance.now(), notify = true) {
+  if (!startupDiagnosticsEnabled()) return;
+  const entry = { key, label, value, at };
   entries.set(key, entry);
-  window.dispatchEvent(new CustomEvent<DiagnosticEntry>(eventName, { detail: entry }));
+  if (notify) publishStartupDiagnostics();
 }
 
 export function startupDiagnosticTime(key: string) {
@@ -23,9 +32,17 @@ export function StartupDiagnostics() {
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("diagnostics") !== "1") return;
-    reportStartupDiagnostic("client-shell", "客户端启动", `导航后 ${Math.round(performance.now())}ms`);
+    reportStartupDiagnostic("client-shell", "客户端挂载", `导航后 ${Math.round(performance.now())}ms`);
     const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    let hiddenDuringStartup = initialVisibility === "hidden" || document.hidden;
+    const reportVisibility = () => {
+      if (entries.has("opening-complete")) return;
+      hiddenDuringStartup ||= document.hidden;
+      reportStartupDiagnostic("measurement-context", "采样条件", `导航 ${navigation?.type ?? "未知"} · 初始 ${initialVisibility} · 启动期间曾在后台：${hiddenDuringStartup ? "是" : "否"}`);
+    };
+    reportVisibility();
     if (navigation) {
+      reportStartupDiagnostic("document-response", "HTML 请求与下载", `请求 ${Math.round(navigation.requestStart)}ms · 首字节 ${Math.round(navigation.responseStart)}ms · 下载结束 ${Math.round(navigation.responseEnd)}ms（均从导航开始）`);
       reportStartupDiagnostic("document-ready", "HTML 文档", `DOMContentLoaded ${Math.round(navigation.domContentLoadedEventEnd)}ms`);
     }
 
@@ -42,6 +59,7 @@ export function StartupDiagnostics() {
     };
 
     window.addEventListener(eventName, handleDiagnostic);
+    document.addEventListener("visibilitychange", reportVisibility);
     window.addEventListener("error", handleError);
     window.addEventListener("unhandledrejection", handleRejection);
     const enableTimer = window.setTimeout(() => {
@@ -51,6 +69,7 @@ export function StartupDiagnostics() {
     return () => {
       window.clearTimeout(enableTimer);
       window.removeEventListener(eventName, handleDiagnostic);
+      document.removeEventListener("visibilitychange", reportVisibility);
       window.removeEventListener("error", handleError);
       window.removeEventListener("unhandledrejection", handleRejection);
     };
@@ -70,7 +89,7 @@ export function StartupDiagnostics() {
             </li>
           ))}
         </ul>
-        <p className="mt-2 text-secondary">接口耗时分为浏览器总耗时和服务端处理耗时；不会显示账户数据、请求内容、Cookie 或密钥。</p>
+        <p className="mt-2 text-secondary">骨架屏移除记录 DOM 提交，首次打开流程结束还包含每日刷新检查。请求区间从导航开始；服务端分段从接口开始，可能重叠。仅显示计时和状态，不显示账户数据或密钥。</p>
       </section>
     </aside>
   );

@@ -216,6 +216,22 @@ test("daily refresh diagnostics report request handling only in diagnostic mode"
   assert.equal(Object.hasOwn(ordinary, "dailyRefreshDiagnostic"), false);
 });
 
+test("an already-completed daily visit exposes its storage stages without dispatching another sync", async () => {
+  const f = fixture({ scheduledEnabled: false });
+  await f.read("?visit=1");
+  const response = await f.route.POST(new Request("http://test/private/api/products?visit=1&diagnostics=1", {
+    method: "POST", headers: { origin: "http://test" },
+  }));
+  const header = response.headers.get("server-timing");
+  for (const stage of ["auth", "database", "settings", "lock_acquire", "cache_read", "daily_check", "maturities", "history", "lock_release"]) {
+    assert.ok(header.includes(`${stage};dur=`), stage);
+  }
+  assert.doesNotMatch(header, /(?:^|,)sync;dur=/);
+  assert.doesNotMatch(header, /test-user|passphrase|secret/);
+  assert.deepEqual((await response.json()).dailyRefreshDiagnostic, { state: "skipped", reason: "already_attempted_today" });
+  assert.equal(f.logs.filter((entry) => entry.event === "sync_started").length, 1);
+});
+
 test("the product sync route restores a missing APR from the same identity before catalog processing", async () => {
   const f = fixture();
   const first = await f.read("?visit=1");

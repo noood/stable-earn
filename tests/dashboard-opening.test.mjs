@@ -5,6 +5,7 @@ import ts from "typescript";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
 const { dashboardReadState } = moduleLoader()("@/lib/sync-notice");
+const { formatStartupRequestTiming } = moduleLoader()("@/lib/startup-timing-format");
 const source = ts.createSourceFile("dashboard.tsx", readFileSync(new URL("../app/components/dashboard/dashboard.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const functions = [];
 function visit(node) {
@@ -24,11 +25,13 @@ function payload(state = "fresh", failures = [], updatedAt = oldTime) {
 
 async function open({ personalFailure = false, cacheFailure = false, dailyFailure = false, daily = true, result = payload("updated") } = {}) {
   const requests = [], methods = [], writes = [], phases = [];
+  let duringDaily;
   const state = { setOpeningLoading: true, setHoldingsReady: false, setSyncFailures: [] };
   const deps = {
     isDemo: false, holdingsEndpoint: "/holdings", productsEndpoint: "/products", emptyHoldings: {},
     localPreview: false, readLocalPreviewOverrides: () => ({}), saveLocalPreviewOverrides: () => {},
     reportStartupDiagnostic: () => {},
+    formatStartupRequestTiming,
     holdingsRef: { current: {} }, productOverridesRef: { current: {} }, manualProductsRef: { current: [] }, hiddenProductIdsRef: { current: [] },
     personalDataReadyRef: { current: false }, personalDataLoadingRef: { current: false },
     dailyRefreshPendingRef: { current: daily }, refreshInFlightRef: { current: false },
@@ -36,6 +39,7 @@ async function open({ personalFailure = false, cacheFailure = false, dailyFailur
     fetch: async (url, options) => {
       requests.push(url);
       methods.push(options?.method ?? "GET");
+      if (url.endsWith("visit=1")) duringDaily = view();
       if (options?.method === "PUT") {
         writes.push(JSON.parse(options.body));
         return { ok: true, json: async () => ({}) };
@@ -56,8 +60,17 @@ async function open({ personalFailure = false, cacheFailure = false, dailyFailur
   for (const [, name] of code.matchAll(/\b(set[A-Z]\w*)\(/g)) deps[name] = value => { state[name] = value; phases.push(view()); };
   const initialize = new Function(...Object.keys(deps), code + "; return initialize;")(...Object.values(deps));
   await initialize();
-  return { requests, methods, writes, phases, state, view: view() };
+  return { requests, methods, writes, phases, state, duringDaily, view: view() };
 }
+
+test("saved data replaces the skeleton while the daily request still keeps the notice updating", async () => {
+  const run = await open();
+  assert.equal(run.duringDaily.historyAvailable, true);
+  assert.equal(run.duringDaily.initialLoading, false);
+  assert.equal(run.duringDaily.updating, true);
+  assert.equal(run.duringDaily.canEdit, false);
+  assert.equal(run.view.updating, false);
+});
 
 for (const personalFailure of [false, true]) for (const cacheFailure of [false, true]) {
   test("real opening flow: personal failure " + personalFailure + ", cache failure " + cacheFailure + ", daily success", async () => {

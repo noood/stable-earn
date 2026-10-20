@@ -20,7 +20,7 @@ import {
 import type { PrivateProductsPayload } from "@/lib/private-sync/types";
 import { legacyFailures, normalizeLegacyNote } from "@/lib/private-sync/status";
 import { privateCacheKey, recordDueManualMaturities, refreshPrivateProductsCache } from "@/lib/private-sync/service";
-import { withStartupServerTiming } from "@/lib/startup-timing";
+import { withStartupServerTiming, type StartupServerTiming } from "@/lib/startup-timing";
 
 type DailyRefreshDiagnostic = {
   state: "completed" | "waiting" | "skipped" | "failed" | "interrupted";
@@ -29,10 +29,10 @@ type DailyRefreshDiagnostic = {
 };
 
 export async function GET(request: Request) {
-  return withStartupServerTiming(request, () => getProducts(request));
+  return withStartupServerTiming(request, (timing) => getProducts(request, timing));
 }
 
-async function getProducts(request: Request) {
+async function getProducts(request: Request, timing: StartupServerTiming) {
   const params = new URL(request.url).searchParams;
   if (params.has("refresh") || params.has("visit")) {
     return NextResponse.json({ error: "刷新请求必须使用 POST。" }, {
@@ -40,15 +40,15 @@ async function getProducts(request: Request) {
       headers: { ...privateResponseHeaders, Allow: "POST" },
     });
   }
-  return handleProductsRequest(request, false);
+  return handleProductsRequest(request, false, timing);
 }
 
 export async function POST(request: Request) {
-  return withStartupServerTiming(request, () => postProducts(request));
+  return withStartupServerTiming(request, (timing) => postProducts(request, timing));
 }
 
-async function postProducts(request: Request) {
-  const identity = await getUserIdentity(request);
+async function postProducts(request: Request, timing: StartupServerTiming) {
+  const identity = await timing.measure("auth", () => getUserIdentity(request));
   if (!identity) return NextResponse.json({ error: "请先登录。" }, { status: 401, headers: privateResponseHeaders });
   if (!isSameOriginMutation(request)) return NextResponse.json({ error: "请求来源无效。" }, { status: 403, headers: privateResponseHeaders });
 
@@ -62,11 +62,11 @@ async function postProducts(request: Request) {
       headers: { ...privateResponseHeaders, Allow: "GET, POST" },
     });
   }
-  return handleProductsRequest(request, true, identity);
+  return handleProductsRequest(request, true, timing, identity);
 }
 
-async function handleProductsRequest(request: Request, refreshAllowed: boolean, knownIdentity?: Awaited<ReturnType<typeof getUserIdentity>>) {
-  const identity = knownIdentity ?? await getUserIdentity(request);
+async function handleProductsRequest(request: Request, refreshAllowed: boolean, timing: StartupServerTiming, knownIdentity?: Awaited<ReturnType<typeof getUserIdentity>>) {
+  const identity = knownIdentity ?? await timing.measure("auth", () => getUserIdentity(request));
   if (!identity) return NextResponse.json({ error: "请先登录。" }, { status: 401, headers: privateResponseHeaders });
   const ownerId = identity.userId;
   const scheduledSyncEnabled = isScheduledSyncEnabled();
@@ -84,12 +84,12 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
     return NextResponse.json(responsePreview, { status: scenario === "initial-error" ? 502 : 200, headers: privateResponseHeaders });
   }
 
-  const db = await getDatabase();
+  const db = await timing.measure("database", () => getDatabase());
   const params = new URL(request.url).searchParams;
   const manual = refreshAllowed && params.get("refresh") === "1";
   const daily = refreshAllowed && !manual && params.get("visit") === "1";
   const diagnosticsEnabled = params.get("diagnostics") === "1";
-  const manualCooldownDuration = manualRefreshCooldownMs(await loadManualRefreshCooldown(db, identity.userId));
+  const manualCooldownDuration = manualRefreshCooldownMs(await timing.measure("settings", () => loadManualRefreshCooldown(db, identity.userId)));
   let pending = false;
   let dailyRefreshDiagnostic: DailyRefreshDiagnostic | undefined;
   async function reply(response: Response) {
@@ -98,8 +98,8 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
     if (!scheduledSyncEnabled && cache && typeof cache === "object" && !Array.isArray(cache)) {
       body.cache = { ...(cache as Record<string, unknown>), scheduledAt: null, scheduledState: "disabled" };
     }
-    await recordDueManualMaturities(db, ownerId);
-    const changeEvents = await loadProductChangeEvents(db, ownerId);
+    await timing.measure("maturities", () => recordDueManualMaturities(db, ownerId));
+    const changeEvents = await timing.measure("history", () => loadProductChangeEvents(db, ownerId));
     return NextResponse.json({
       ...body,
       changeEvents,
@@ -120,8 +120,8 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
 
   // Ordinary polls never contact exchanges, including accounts without a cache.
   if (!manual && !daily) {
-    const busy = await refreshIsLocked(db, identity.userId);
-    return reply(snapshot(await loadSyncCache(db, identity.userId, privateCacheKey), busy));
+    const busy = await timing.measure("lock_read", () => refreshIsLocked(db, identity.userId));
+    return reply(snapshot(await timing.measure("cache_read", () => loadSyncCache(db, identity.userId, privateCacheKey)), busy));
   }
   const dailyDay = daily ? refreshDay() : undefined;
   return withSyncDiagnostics(identity.userId, {
@@ -129,15 +129,15 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
     attempt: 1,
   }, async () => {
     syncDiagnostic("refresh_requested", { mode: daily ? "daily" : "manual" });
-    const token = await acquireRefresh(db, identity.userId);
+    const token = await timing.measure("lock_acquire", () => acquireRefresh(db, identity.userId));
     if (!token) {
       syncDiagnostic("refresh_skipped", { reason: "refresh_in_progress" });
       pending = true;
       if (daily) dailyRefreshDiagnostic = { state: "waiting", reason: "refresh_in_progress" };
-      return reply(snapshot(await loadSyncCache(db, identity.userId, privateCacheKey), true));
+      return reply(snapshot(await timing.measure("cache_read", () => loadSyncCache(db, identity.userId, privateCacheKey)), true));
     }
     try {
-      const cached = await loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey);
+      const cached = await timing.measure("cache_read", () => loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey));
       const now = Date.now();
       // Reserve the whole scheduled retry window, not just an individual request.
       if (scheduledSyncEnabled && scheduledRefreshPending(now, syncCacheMetadata(cached, syncAttemptInProgress(cached, now) ? "syncing" : "fresh", now))) {
@@ -146,7 +146,7 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
         if (daily) dailyRefreshDiagnostic = { state: "waiting", reason: "scheduled_retry_window" };
         return reply(snapshot(cached, true));
       }
-      if (daily && await dailyRefreshCompleted(db, identity.userId, dailyDay)) {
+      if (daily && await timing.measure("daily_check", () => dailyRefreshCompleted(db, identity.userId, dailyDay))) {
         syncDiagnostic("refresh_skipped", { reason: "daily_refresh_already_committed" });
         dailyRefreshDiagnostic = { state: "skipped", reason: "already_attempted_today" };
         return reply(snapshot(cached));
@@ -159,18 +159,18 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
       }
       syncDiagnostic("refresh_dispatched");
       try {
-        const saved = await refreshPrivateProductsCache(db, identity.userId, {
+        const saved = await timing.measure("sync", () => refreshPrivateProductsCache(db, identity.userId, {
           manual,
           trigger: daily ? "daily" : "manual",
           leaseToken: token,
           dailyDay,
-        });
+        }));
         if (daily) dailyRefreshDiagnostic = { state: "completed", result: saved.payload?.partial ? "partial" : "success" };
         return reply(cachedResponse(saved, "updated", "已完成刷新。", Date.now(), manualCooldownDuration));
       } catch {
-        const latest = await loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey);
+        const latest = await timing.measure("cache_read", () => loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey));
         if (daily) {
-          const committed = await dailyRefreshCompleted(db, identity.userId, dailyDay);
+          const committed = await timing.measure("daily_check", () => dailyRefreshCompleted(db, identity.userId, dailyDay));
           dailyRefreshDiagnostic = committed
             ? latest?.lastError
               ? { state: "failed" }
@@ -180,7 +180,7 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
         return reply(snapshot(latest));
       }
     } finally {
-      await releaseRefresh(db, identity.userId, token);
+      await timing.measure("lock_release", () => releaseRefresh(db, identity.userId, token));
     }
   });
 }

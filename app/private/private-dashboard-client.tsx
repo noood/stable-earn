@@ -7,6 +7,7 @@ import type { Asset } from "@/lib/domain";
 import { reportStartupDiagnostic, StartupDiagnostics } from "@/app/components/startup-diagnostics";
 
 const clientShellLoadedAt = typeof performance === "undefined" ? 0 : performance.now();
+reportStartupDiagnostic("client-module", "客户端模块执行", `导航后 ${Math.round(clientShellLoadedAt)}ms`, clientShellLoadedAt);
 
 function assetFromLocation(): Asset | null {
   if (typeof window === "undefined") return null;
@@ -15,11 +16,15 @@ function assetFromLocation(): Asset | null {
 }
 
 const PrivateDashboard = dynamic(
-  () => import("@/app/components/dashboard/dashboard").then((module) => {
-    const now = performance.now();
-    reportStartupDiagnostic("dashboard-module", "私人页面模块", `模块等待 ${Math.round(now - clientShellLoadedAt)}ms · 页面启动 ${Math.round(now)}ms`);
-    return module.Dashboard;
-  }),
+  () => {
+    const startedAt = performance.now();
+    reportStartupDiagnostic("dashboard-import", "页面模块开始加载", `导航后 ${Math.round(startedAt)}ms`, startedAt);
+    return import("@/app/components/dashboard/dashboard").then((module) => {
+      const now = performance.now();
+      reportStartupDiagnostic("dashboard-module", "私人页面模块", `加载 ${Math.round(now - startedAt)}ms · 导航后 ${Math.round(now)}ms`, now);
+      return module.Dashboard;
+    });
+  },
   {
     ssr: false,
     loading: ({ error }) => error

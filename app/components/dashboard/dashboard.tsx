@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiSettings } from "@/app/components/api-settings";
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
@@ -9,7 +9,8 @@ import type { ProductHistoryPage } from "@/app/components/product-history";
 import { ActionButton, Metric, ModalFrame } from "@/app/components/ui";
 import { DashboardMetricsSkeleton, ProductTableSkeletonRows } from "@/app/components/dashboard/dashboard-skeleton";
 import { DashboardFooter, DashboardPageFrame, DashboardProductTableSection, ProductTableEmptyState } from "@/app/components/dashboard/dashboard-frame";
-import { reportStartupDiagnostic, startupDiagnosticTime } from "@/app/components/startup-diagnostics";
+import { publishStartupDiagnostics, reportStartupDiagnostic, startupDiagnosticsEnabled, startupDiagnosticTime } from "@/app/components/startup-diagnostics";
+import { formatStartupRequestTiming } from "@/lib/startup-timing-format";
 import { effectiveApr, formatAmount, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent } from "@/lib/domain";
 import { applyProductOverride, productOverrideForSave, productTermDays, productTypeSelectionAvailable, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { productInformationIssues, productParticipatesInInterest, type ProductInformationIssue } from "@/lib/product-status";
@@ -93,8 +94,17 @@ type PortfolioChanges = {
 const emptyHoldings: HoldingMap = {};
 
 export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: "demo" | "private"; localPreview?: boolean; initialAsset?: Asset }) {
+  const [firstRenderAt] = useState(() => performance.now());
   const router = useRouter();
   const isDemo = mode === "demo";
+  useLayoutEffect(() => {
+    if (isDemo || !startupDiagnosticsEnabled()) return;
+    const committedAt = performance.now();
+    const renderedAt = firstRenderAt;
+    const loadedAt = startupDiagnosticTime("dashboard-module");
+    reportStartupDiagnostic("dashboard-render", "界面首次渲染开始", `${loadedAt === undefined ? "" : `模块完成后 ${Math.round(renderedAt - loadedAt)}ms · `}导航后 ${Math.round(renderedAt)}ms`, renderedAt, false);
+    reportStartupDiagnostic("dashboard-commit", "界面首次 DOM 提交", `渲染到提交 ${Math.round(committedAt - renderedAt)}ms · 导航后 ${Math.round(committedAt)}ms`, committedAt, false);
+  }, [firstRenderAt, isDemo]);
   const [asset, setAsset] = useState<Asset>(() => {
     if (initialAsset) return initialAsset;
     if (typeof window === "undefined") return "USDT";
@@ -222,8 +232,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     let responseStatus: number | null = null;
     let response: Response | null = null;
     function timing(outcome: string) {
-      const serverDuration = response?.headers?.get("server-timing")?.match(/(?:^|,\s*)app;dur=([\d.]+)/)?.[1];
-      return `${outcome} · 浏览器 ${Math.round(performance.now() - startedAt)}ms${serverDuration ? ` · 服务端 ${serverDuration}ms` : ""}`;
+      return `${outcome} · ${formatStartupRequestTiming(response?.headers?.get("server-timing"), startedAt, performance.now())}`;
     }
     try {
       response = await fetch(holdingsEndpoint, { cache: "no-store" });
@@ -310,16 +319,17 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       } finally {
         personalDataLoadingRef.current = false;
         setOpeningLoading(false);
-        reportStartupDiagnostic("initialization", "首轮数据就绪", `耗时 ${Math.round(performance.now() - initializationStartedAt)}ms · 页面导航后 ${Math.round(performance.now())}ms`);
+        reportStartupDiagnostic("opening-complete", "首次打开流程结束", `耗时 ${Math.round(performance.now() - initializationStartedAt)}ms · 页面导航后 ${Math.round(performance.now())}ms`);
       }
     }
 
     const effectStartedAt = performance.now();
     const moduleLoadedAt = startupDiagnosticTime("dashboard-module");
+    const committedAt = startupDiagnosticTime("dashboard-commit");
     reportStartupDiagnostic(
       "dashboard-effect",
-      "界面组件开始运行",
-      `${moduleLoadedAt === undefined ? "模块完成时间未记录" : `模块加载后 ${Math.round(effectStartedAt - moduleLoadedAt)}ms`} · 页面导航后 ${Math.round(effectStartedAt)}ms`,
+      "初始化任务准备",
+      `${committedAt === undefined ? "" : `DOM 提交后 ${Math.round(effectStartedAt - committedAt)}ms · `}${moduleLoadedAt === undefined ? "模块完成时间未记录" : `模块加载后 ${Math.round(effectStartedAt - moduleLoadedAt)}ms`} · 页面导航后 ${Math.round(effectStartedAt)}ms`,
     );
     const frameRequestedAt = performance.now();
     const frame = window.requestAnimationFrame(() => {
@@ -362,8 +372,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       return "本次已执行并保存完整结果";
     }
     function timing(outcome: string) {
-      const serverDuration = response?.headers?.get("server-timing")?.match(/(?:^|,\s*)app;dur=([\d.]+)/)?.[1];
-      return `${outcome} · 浏览器 ${Math.round(performance.now() - startedAt)}ms${serverDuration ? ` · 服务端 ${serverDuration}ms` : ""}`;
+      return `${outcome} · ${formatStartupRequestTiming(response?.headers?.get("server-timing"), startedAt, performance.now())}`;
     }
     reportStartupDiagnostic(diagnosticKey, diagnosticLabel, "请求中");
     if (!options?.silent) setLoading(true);
@@ -748,12 +757,32 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const hasTopNotice = hasSyncFailure || uniqueMissingApiFieldNotices.length > 0;
   const manualRefreshCooling = Boolean(manualRefreshAvailableAt && Date.parse(manualRefreshAvailableAt) > clock);
   const pageReadFailed = syncFailures.includes("页面数据读取失败");
-  const { updating, dataBlocked, initialLoading, canEdit } = dashboardReadState({
+  const { updating, dataBlocked, initialLoading, historyAvailable, canEdit } = dashboardReadState({
     isDemo, opening: openingLoading, requesting: loading || refreshingExchange,
     backgroundUpdating: localPreview ? syncing : scheduledRefreshPending(clock, syncCache),
     personalReady: holdingsReady, personalError: personalDataError,
     productReady: productSnapshotReady, productReadFailed: pageReadFailed, lastUpdated,
   });
+  const contentCommitted = useRef(false);
+  const openingNoticeEnded = useRef(false);
+  useLayoutEffect(() => {
+    if (isDemo || !startupDiagnosticsEnabled()) return;
+    if (!initialLoading && !contentCommitted.current) {
+      contentCommitted.current = true;
+      const now = performance.now();
+      reportStartupDiagnostic("content-commit", "骨架屏移除（DOM提交）", `${dataBlocked ? "读取失败界面" : historyAvailable ? "已有保存数据可展示" : "无成功数据的终态"} · 导航后 ${Math.round(now)}ms`, now, false);
+    }
+    if (!updating && !openingNoticeEnded.current) {
+      openingNoticeEnded.current = true;
+      const now = performance.now();
+      reportStartupDiagnostic("notice-ended", "顶部更新提示结束（DOM提交）", `导航后 ${Math.round(now)}ms`, now, false);
+    }
+  }, [dataBlocked, historyAvailable, initialLoading, isDemo, updating]);
+  // Publish after commit. Updating the diagnostics panel in a layout effect
+  // would force React to flush passive effects early and distort this timing.
+  useEffect(() => {
+    if (!isDemo) publishStartupDiagnostics();
+  }, [dataBlocked, historyAvailable, initialLoading, isDemo, updating]);
   const scheduledState = syncCache?.scheduledState ?? (updating ? "syncing" : "scheduled");
   const scheduledSyncDisabled = scheduledState === "disabled";
   const automaticRefreshSummary = updating || scheduledState !== "scheduled" || !syncCache?.scheduledAt

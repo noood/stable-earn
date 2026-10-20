@@ -125,7 +125,7 @@ test("local second-stage failure shows the same fixed shell from skeleton to acc
   }
 });
 
-test("startup diagnostics are visible only when explicitly requested", async ({ page }) => {
+test("startup diagnostics are visible only when explicitly requested", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto("/private?diagnostics=1");
 
@@ -135,18 +135,54 @@ test("startup diagnostics are visible only when explicitly requested", async ({ 
   expect(bounds?.x).toBeGreaterThanOrEqual(0);
   expect((bounds?.x ?? 0) + (bounds?.width ?? 0)).toBeLessThanOrEqual(375);
   await expect(diagnostics).toContainText("页面诊断（启动阶段与耗时）");
-  await expect(diagnostics).toContainText("客户端启动");
+  await expect(diagnostics).toContainText("启动期间曾在后台：否");
+  await expect(diagnostics).toContainText("HTML 请求与下载");
+  await expect(diagnostics).toContainText("客户端模块执行");
+  await expect(diagnostics).toContainText("客户端挂载");
   await expect(diagnostics).toContainText("私人页面模块");
-  await expect(diagnostics).toContainText("界面组件开始运行");
+  await expect(diagnostics).toContainText("界面首次渲染开始");
+  await expect(diagnostics).toContainText("界面首次 DOM 提交");
+  await expect(diagnostics).toContainText("初始化任务准备");
   await expect(diagnostics).toContainText("下一帧开始初始化");
   await expect(diagnostics).toContainText("持仓数据接口");
   await expect(diagnostics).toContainText("产品缓存读取");
   await expect(diagnostics).not.toContainText("每日刷新请求");
-  await expect(diagnostics).toContainText("首轮数据就绪");
+  await expect(diagnostics).toContainText("骨架屏移除（DOM提交）");
+  await expect(diagnostics).toContainText("顶部更新提示结束（DOM提交）");
+  await expect(diagnostics).toContainText("首次打开流程结束");
   await expect(diagnostics).toContainText("浏览器");
   await expect(diagnostics).toContainText("服务端");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("startup-diagnostics-darwin.png"), fullPage: true });
 
   await page.goto("/private");
   await expect(page.getByLabel("页面启动诊断")).toHaveCount(0);
+});
+
+test("the content checkpoint follows skeleton removal while the update notice can remain active", async ({ page }) => {
+  let releaseCache;
+  let cacheRequested = false;
+  const cacheGate = new Promise((resolve) => { releaseCache = resolve; });
+  await page.route((url) => url.pathname === "/private/api/products", async (route) => {
+    cacheRequested = true;
+    await cacheGate;
+    const response = await route.fetch();
+    const data = await response.json();
+    await route.fulfill({ response, json: { ...data, cache: { ...data.cache, state: "syncing" } } });
+  });
+  try {
+    await page.goto("/private?diagnostics=1", { waitUntil: "domcontentloaded" });
+    await expect.poll(() => cacheRequested).toBe(true);
+    const diagnostics = page.getByLabel("页面启动诊断");
+    await expect(page.locator('.metrics-panel[aria-busy="true"] .skeleton-block').first()).toBeVisible();
+    await expect(diagnostics).not.toContainText("骨架屏移除（DOM提交）");
+    releaseCache();
+    await expect(diagnostics).toContainText("骨架屏移除（DOM提交）");
+    await expect(page.locator(".metrics-panel .skeleton-block")).toHaveCount(0);
+    await expect(page.locator(".product-table tbody .skeleton-block")).toHaveCount(0);
+    await expect(page.locator(".sync-notice-message")).toContainText("数据正在更新中，请稍候。");
+    await expect(diagnostics).not.toContainText("顶部更新提示结束（DOM提交）");
+  } finally {
+    releaseCache();
+  }
 });

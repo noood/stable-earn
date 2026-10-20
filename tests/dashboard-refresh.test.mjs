@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { moduleLoader } from "./helpers/load-ts.mjs";
+
+const { formatStartupRequestTiming } = moduleLoader()("@/lib/startup-timing-format");
 
 // Exercise the actual refresh and PUT-body construction inside Dashboard,
 // with React state setters and network boundaries replaced by test doubles.
@@ -20,6 +23,7 @@ test("daily opening and manual refresh use POST; ordinary cache polling stays GE
   const deps = {
     productsEndpoint: "/products", isDemo: false,
     reportStartupDiagnostic: () => {},
+    formatStartupRequestTiming,
     dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false },
     hiddenProductIdsRef: { current: [] },
     fetch: async (url, options) => {
@@ -49,6 +53,7 @@ test("startup diagnostics distinguish a daily refresh request from a later cache
   const deps = {
     productsEndpoint: "/products?diagnostics=1", isDemo: false,
     reportStartupDiagnostic: (...entry) => diagnostics.push(entry),
+    formatStartupRequestTiming,
     dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false },
     hiddenProductIdsRef: { current: [] },
     fetch: async () => {
@@ -92,6 +97,7 @@ for (const scenario of [
     const deps = {
       isDemo: false, productsEndpoint: "/products", holdingsEndpoint: "/holdings",
       reportStartupDiagnostic: () => {},
+      formatStartupRequestTiming,
       hiddenProductIdsRef: { current: [] }, productOverridesRef: { current: {} }, manualProductsRef: { current: [] },
       personalDataReadyRef: { current: scenario.personalReady !== false },
       holdingsRef: { current: {} },
