@@ -261,6 +261,37 @@ test("cache reads retain busy state while still reporting the committed daily ma
   await control.releaseRefresh(f.db, "test-user", token);
 });
 
+test("cache and maturity reads overlap, but history waits until maturity processing finishes", async () => {
+  const f = fixture({ scheduledEnabled: false });
+  const prepare = f.db.prepare.bind(f.db);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let snapshotStarted = false, maturityStarted = false;
+  f.db.prepare = (sql) => ({ bind(...args) {
+    const statement = prepare(sql).bind(...args);
+    if (sql.includes("FROM (SELECT ? AS owner_id)")) return { ...statement, first: async () => {
+      snapshotStarted = true;
+      await gate;
+      return statement.first();
+    } };
+    if (sql.includes("SELECT product_id, amount FROM holdings")) return { ...statement, all: async () => {
+      maturityStarted = true;
+      await gate;
+      return statement.all();
+    } };
+    return statement;
+  } });
+  const read = f.read();
+  try {
+    for (let i = 0; i < 30 && !(snapshotStarted && maturityStarted); i++) await new Promise(setImmediate);
+    assert.equal(snapshotStarted, true);
+    assert.equal(maturityStarted, true);
+    assert.equal(f.queries.some((sql) => sql.includes("FROM product_change_events")), false);
+  } finally { release(); }
+  await read;
+  assert.equal(f.queries.some((sql) => sql.includes("FROM product_change_events")), true);
+});
+
 test("an already-completed daily visit exposes its storage stages without dispatching another sync", async () => {
   const f = fixture({ scheduledEnabled: false });
   await f.read("?visit=1");
