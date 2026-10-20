@@ -182,6 +182,8 @@ test("startup diagnostics are visible only when explicitly requested", async ({ 
   await expect(diagnostics).toContainText("骨架屏移除（DOM提交）");
   await expect(diagnostics).toContainText("顶部更新提示结束（DOM提交）");
   await expect(diagnostics).toContainText("首次打开流程结束");
+  await expect(diagnostics).toContainText("资源计时范围");
+  await expect(diagnostics).toContainText("启动主线程长任务");
   await expect(diagnostics).toContainText("浏览器");
   await expect(diagnostics).toContainText("服务端");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
@@ -189,6 +191,32 @@ test("startup diagnostics are visible only when explicitly requested", async ({ 
 
   await page.goto("/private");
   await expect(page.getByLabel("页面启动诊断")).toHaveCount(0);
+});
+
+test("diagnostics show same-request D1 timings and safe resource labels without changing product loading", async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = performance.getEntriesByType.bind(performance);
+    performance.getEntriesByType = (type) => type !== "resource" ? original(type) : [{
+      name: `${location.origin}/_next/static/chunks/framework-synthetic.js?private=must-not-appear`,
+      startTime: 1, requestStart: 2, responseStart: 3, responseEnd: 4, transferSize: 1024, encodedBodySize: 800,
+    }];
+  });
+  await page.route((url) => url.pathname === "/private/api/products", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, headers: {
+      ...response.headers(),
+      "server-timing": 'app;dur=350,history_recent;dur=340;desc="start=1",history_unread;dur=100;desc="start=1",history_merge;dur=1;desc="start=341",history_recent_sql;desc="value=3.9",history_recent_rows;desc="value=760",history_recent_attempts;desc="value=1"',
+    } });
+  });
+  await page.goto("/private?diagnostics=1");
+  const diagnostics = page.getByLabel("页面启动诊断");
+  await expect(diagnostics).toContainText("最近历史调用总耗时 340ms");
+  await expect(diagnostics).toContainText("最近历史 SQL 执行（末次尝试） 3.9ms");
+  await expect(diagnostics).toContainText("最近历史返回 760条");
+  await expect(diagnostics).toContainText("框架脚本");
+  await expect(diagnostics).toContainText("导航后 1→4ms");
+  await expect(diagnostics).not.toContainText("must-not-appear");
+  await expect(page.locator(".metrics-panel .skeleton-block")).toHaveCount(0);
 });
 
 test("the content checkpoint follows skeleton removal while the update notice can remain active", async ({ page }) => {

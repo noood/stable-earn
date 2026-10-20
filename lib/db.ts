@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
 import type { D1Database } from "@cloudflare/workers-types";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, customFetch, jwtVerify } from "jose";
 import { schemaStatements } from "@/db/schema";
 import { isLocalDevelopmentRequest } from "./request-security";
+import { currentStartupTiming } from "./startup-timing";
 
 type RuntimeEnv = Cloudflare.Env & {
   DB?: D1Database;
@@ -51,7 +52,13 @@ export async function getUserIdentity(request: Request): Promise<UserIdentity | 
   if (!issuer || !audience) return null;
 
   try {
-    const { payload } = await jwtVerify(accessJwt, accessSigningKeys(issuer), {
+    const keys = accessSigningKeys(issuer);
+    const timing = currentStartupTiming();
+    timing?.record("auth_keys_cached", keys.fresh ? 1 : 0);
+    timing?.record("auth_keys_loading", keys.reloading ? 1 : 0);
+    const { payload } = await jwtVerify(accessJwt, timing
+      ? (header, token) => timing.measure("auth_keys", () => keys(header, token))
+      : keys, {
       algorithms: ["RS256"],
       issuer,
       audience,
@@ -65,7 +72,12 @@ export async function getUserIdentity(request: Request): Promise<UserIdentity | 
 
 function accessSigningKeys(issuer: string) {
   if (!jwks || jwksIssuer !== issuer) {
-    jwks = createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`));
+    jwks = createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`), {
+      [customFetch]: (url, options) => {
+        const timing = currentStartupTiming();
+        return timing ? timing.measure("auth_keys_fetch", () => fetch(url, options)) : fetch(url, options);
+      },
+    });
     jwksIssuer = issuer;
   }
   return jwks;

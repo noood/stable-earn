@@ -100,7 +100,7 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
       body.cache = { ...(cache as Record<string, unknown>), scheduledAt: null, scheduledState: "disabled" };
     }
     if (!maturitiesRecorded) await timing.measure("maturities", () => recordDueManualMaturities(db, ownerId));
-    const changeEvents = await timing.measure("history", () => loadProductChangeEvents(db, ownerId));
+    const changeEvents = await timing.measure("history", () => loadProductChangeEvents(db, ownerId, 2000, timing.enabled ? timing : undefined));
     return NextResponse.json({
       ...body,
       changeEvents,

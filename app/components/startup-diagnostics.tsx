@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { summarizeStartupLongTasks, summarizeStartupResources } from "@/lib/startup-resource-timing";
 
 type DiagnosticEntry = { key: string; label: string; value: string; at: number };
 const eventName = "stable-earn:startup-diagnostic";
@@ -47,7 +48,42 @@ export function StartupDiagnostics() {
     }
 
     const syncEntries = () => setItems([...entries.values()]);
-    const handleDiagnostic = () => syncEntries();
+    const longTasks: Array<{ startTime: number; duration: number }> = [];
+    let observer: PerformanceObserver | undefined;
+    let longTasksSupported = false;
+    let finishTimer: number | undefined;
+    let captured = false;
+    try {
+      if (typeof PerformanceObserver !== "undefined" && PerformanceObserver.supportedEntryTypes?.includes("longtask")) {
+        observer = new PerformanceObserver((list) => { longTasks.push(...list.getEntries().map(({ startTime, duration }) => ({ startTime, duration }))); });
+        observer.observe({ type: "longtask", buffered: true });
+        longTasksSupported = true;
+      }
+    } catch { observer?.disconnect(); }
+    const captureResources = (until: number) => {
+      try {
+        const lines = summarizeStartupResources(performance.getEntriesByType("resource") as PerformanceResourceTiming[], window.location.origin, until);
+        for (const line of lines) reportStartupDiagnostic(line.key, line.label, line.value, until, false);
+        reportStartupDiagnostic("resource-coverage", "资源计时范围", lines.length ? "仅同源关键脚本/样式；请求区间不等于 JS 执行时间" : "尚无已完成的生产关键脚本记录（开发模式文件名不同）", until, false);
+      } catch {
+        reportStartupDiagnostic("resource-coverage", "资源计时范围", "浏览器未提供可用资源计时", until, false);
+      }
+    };
+    const handleDiagnostic = () => {
+      syncEntries();
+      const openingEnd = entries.get("opening-complete")?.at;
+      if (openingEnd === undefined || captured || finishTimer !== undefined) return;
+      // Observe after the opening task has finished. This never delays the
+      // data/notice checkpoints or forces passive effects from a layout effect.
+      finishTimer = window.setTimeout(() => {
+        captured = true;
+        longTasks.push(...(observer?.takeRecords() ?? []).map(({ startTime, duration }) => ({ startTime, duration })));
+        observer?.disconnect();
+        captureResources(openingEnd);
+        reportStartupDiagnostic("startup-longtasks", "启动主线程长任务", longTasksSupported ? summarizeStartupLongTasks(longTasks, openingEnd) : "当前浏览器不支持 Long Tasks API，不能据此判断没有阻塞", openingEnd, false);
+        syncEntries();
+      }, 0);
+    };
     const handleError = (event: ErrorEvent) => {
       const errorName = event.error instanceof Error ? event.error.name.slice(0, 32) : "未知错误";
       reportStartupDiagnostic("script-error", "页面脚本错误", errorName);
@@ -64,10 +100,13 @@ export function StartupDiagnostics() {
     window.addEventListener("unhandledrejection", handleRejection);
     const enableTimer = window.setTimeout(() => {
       setEnabled(true);
-      syncEntries();
+      captureResources(performance.now());
+      handleDiagnostic();
     }, 0);
     return () => {
       window.clearTimeout(enableTimer);
+      window.clearTimeout(finishTimer);
+      observer?.disconnect();
       window.removeEventListener(eventName, handleDiagnostic);
       document.removeEventListener("visibilitychange", reportVisibility);
       window.removeEventListener("error", handleError);
