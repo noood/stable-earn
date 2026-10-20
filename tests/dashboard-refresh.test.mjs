@@ -43,6 +43,34 @@ test("daily opening and manual refresh use POST; ordinary cache polling stays GE
   assert.equal(deps.dailyRefreshPendingRef.current, false);
 });
 
+test("startup diagnostics distinguish a daily refresh request from a later cache poll", async () => {
+  const diagnostics = [];
+  let requests = 0;
+  const deps = {
+    productsEndpoint: "/products?diagnostics=1", isDemo: false,
+    reportStartupDiagnostic: (...entry) => diagnostics.push(entry),
+    dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false },
+    hiddenProductIdsRef: { current: [] },
+    fetch: async () => {
+      requests += 1;
+      return { ok: true, status: 200, headers: { get: () => "app;dur=10" }, json: async () => ({
+        dailyRefreshPending: false,
+        dailyRefreshDiagnostic: { state: "skipped", reason: "already_attempted_today" },
+        products: [], rates: [], holdingUpdates: {}, cache: { state: "fresh" },
+      }) };
+    },
+  };
+  for (const [, name] of code.matchAll(/\b(set[A-Z]\w*)\(/g)) deps[name] = () => {};
+  const refresh = new Function(...Object.keys(deps), `${code}; return refreshRates;`)(...Object.values(deps));
+  await refresh({});
+  await refresh({}, { silent: true });
+
+  assert.equal(requests, 2);
+  assert.equal(diagnostics.findLast(([key]) => key === "daily-refresh")[1], "每日刷新请求");
+  assert.match(diagnostics.findLast(([key]) => key === "daily-refresh")[2], /今天的刷新尝试已处理，本次只读取缓存/);
+  assert.equal(diagnostics.findLast(([key]) => key === "product-poll")[1], "产品缓存轮询");
+});
+
 for (const scenario of [
   { name: "partial result", state: "updated", fallbacks: { bitget: "2026-09-05T00:56:15.064Z" } },
   { name: "ordinary cache read", state: "fresh", fallbacks: {} },

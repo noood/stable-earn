@@ -204,6 +204,18 @@ test("first opening is one refresh per Shanghai day across devices, separate fro
   assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 3);
 });
 
+test("daily refresh diagnostics report request handling only in diagnostic mode", async () => {
+  const f = fixture();
+  const executed = await f.read("?visit=1&diagnostics=1");
+  assert.deepEqual(executed.dailyRefreshDiagnostic, { state: "completed", result: "success" });
+
+  const skipped = await f.read("?visit=1&diagnostics=1");
+  assert.deepEqual(skipped.dailyRefreshDiagnostic, { state: "skipped", reason: "already_attempted_today" });
+
+  const ordinary = await f.read("?visit=1");
+  assert.equal(Object.hasOwn(ordinary, "dailyRefreshDiagnostic"), false);
+});
+
 test("the product sync route restores a missing APR from the same identity before catalog processing", async () => {
   const f = fixture();
   const first = await f.read("?visit=1");
@@ -230,9 +242,10 @@ test("a saved final daily failure consumes the day; ordinary polling never start
   assert.equal((await f.read()).cache.state, "fresh");
   assert.equal(f.logs.length, 0);
   f.step("error");
-  const first = await f.read("?visit=1");
+  const first = await f.read("?visit=1&diagnostics=1");
   assert.equal(first.cache.state, "error");
   assert.equal(first.dailyRefreshPending, false);
+  assert.deepEqual(first.dailyRefreshDiagnostic, { state: "failed" });
   assert.equal(f.db.sqlite.prepare("SELECT daily_day FROM refresh_control WHERE user_id = 'test-user'").get().daily_day, "2026-09-05");
   assert.equal(f.logs.some((entry) => entry.event === "daily_refresh_committed" && entry.result === "failure"), true);
   await f.read("?visit=1");
@@ -244,8 +257,9 @@ test("an uncommitted daily result does not consume the day and can be retried af
   const f = fixture();
   const originalBatch = f.db.batch;
   f.db.batch = async () => { throw new Error("temporary database write interruption"); };
-  const interrupted = await f.read("?visit=1");
+  const interrupted = await f.read("?visit=1&diagnostics=1");
   assert.equal(interrupted.cache.state, "syncing");
+  assert.deepEqual(interrupted.dailyRefreshDiagnostic, { state: "interrupted" });
   assert.equal(f.db.sqlite.prepare("SELECT daily_day FROM refresh_control WHERE user_id = 'test-user'").get().daily_day, null);
   assert.equal(f.logs.some((entry) => entry.event === "refresh_requested"), true);
   assert.equal(f.logs.some((entry) => entry.event === "refresh_dispatched"), true);
@@ -264,9 +278,10 @@ test("daily opening waits for the scheduled retry window, then refreshes once af
     f.setTime("2026-09-04T22:59:00Z");
     await f.refresh();
     f.setTime("2026-09-04T23:00:00Z");
-    const waiting = await f.read("?visit=1");
+    const waiting = await f.read("?visit=1&diagnostics=1");
     assert.equal(waiting.dailyRefreshPending, true);
     assert.equal(waiting.cache.state, "syncing");
+    assert.deepEqual(waiting.dailyRefreshDiagnostic, { state: "waiting", reason: "scheduled_retry_window" });
     f.step(mode);
     await assert.rejects(f.refresh({ trigger: "scheduled", acceptPartial: false, persistFailure: false }));
     assert.equal((await f.read("?visit=1")).dailyRefreshPending, true);
@@ -296,9 +311,10 @@ test("simultaneous opening and manual requests cannot overlap exchange work", as
   const resume = f.pause();
   const first = f.read("?visit=1");
   while (!f.logs.some((r) => r.event === "sync_started")) await new Promise(setImmediate);
-  const otherDevice = await f.read("?visit=1");
+  const otherDevice = await f.read("?visit=1&diagnostics=1");
   assert.equal(otherDevice.dailyRefreshPending, true);
   assert.equal(otherDevice.cache.state, "syncing");
+  assert.deepEqual(otherDevice.dailyRefreshDiagnostic, { state: "waiting", reason: "refresh_in_progress" });
   assert.equal((await f.read("?refresh=1")).cache.state, "syncing");
   assert.equal((await f.read()).cache.state, "syncing");
   assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 1);
@@ -348,7 +364,9 @@ test("an expired request cannot replace a newer owner's saved result or failure 
 test("a partial daily refresh also consumes the day without running a second exchange attempt", async () => {
   const f = fixture();
   f.step("partial");
-  assert.equal((await f.read("?visit=1")).partial, true);
+  const first = await f.read("?visit=1&diagnostics=1");
+  assert.equal(first.partial, true);
+  assert.deepEqual(first.dailyRefreshDiagnostic, { state: "completed", result: "partial" });
   assert.equal(f.logs.some((entry) => entry.event === "daily_refresh_committed" && entry.result === "partial"), true);
   f.step("success");
   const again = await f.read("?visit=1");

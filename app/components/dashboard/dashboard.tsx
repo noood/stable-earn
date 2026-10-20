@@ -25,6 +25,11 @@ import { readLocalPreviewOverrides, saveLocalPreviewOverrides } from "@/lib/loca
 
 type ApiResult = {
   dailyRefreshPending?: boolean;
+  dailyRefreshDiagnostic?: {
+    state: "completed" | "waiting" | "skipped" | "failed" | "interrupted";
+    reason?: "refresh_in_progress" | "scheduled_retry_window" | "already_attempted_today";
+    result?: "success" | "partial" | "unknown";
+  };
   products?: Product[];
   rates: Array<{
     productId: string;
@@ -321,23 +326,39 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     if (refreshInFlightRef.current) return false;
     refreshInFlightRef.current = true;
     const startedAt = options?.startedAt ?? performance.now();
-    const diagnosticKey = options?.cacheOnly ? "product-cache" : options?.manual ? "manual-refresh" : "daily-refresh";
-    const diagnosticLabel = options?.cacheOnly ? "产品缓存读取" : options?.manual ? "手动刷新" : "每日自动刷新";
+    const refreshingDaily = !options?.manual && !options?.cacheOnly && dailyRefreshPendingRef.current;
+    const diagnosticKey = options?.cacheOnly ? "product-cache" : options?.manual ? "manual-refresh" : refreshingDaily ? "daily-refresh" : "product-poll";
+    const diagnosticLabel = options?.cacheOnly ? "产品缓存读取" : options?.manual ? "手动刷新" : refreshingDaily ? "每日刷新请求" : "产品缓存轮询";
     let response: Response | null = null;
+    function dailyRefreshOutcome(data?: ApiResult | null) {
+      const diagnostic = data?.dailyRefreshDiagnostic;
+      if (!diagnostic) return "服务端未提供执行结果";
+      if (diagnostic.state === "waiting") {
+        return diagnostic.reason === "scheduled_retry_window"
+          ? "等待后台计划刷新窗口结束，尚未执行"
+          : "已有同步正在进行，尚未执行";
+      }
+      if (diagnostic.state === "skipped") return "今天的刷新尝试已处理，本次只读取缓存";
+      if (diagnostic.state === "failed") return "本次已执行，但同步失败并保留缓存";
+      if (diagnostic.state === "interrupted") return "请求已开始，但没有最终保存结果";
+      if (diagnostic.result === "partial") return "本次已执行并保存部分结果";
+      if (diagnostic.result === "unknown") return "本次已处理，但无法确认保存结果";
+      return "本次已执行并保存完整结果";
+    }
     function timing(outcome: string) {
       const serverDuration = response?.headers?.get("server-timing")?.match(/(?:^|,\s*)app;dur=([\d.]+)/)?.[1];
       return `${outcome} · 浏览器 ${Math.round(performance.now() - startedAt)}ms${serverDuration ? ` · 服务端 ${serverDuration}ms` : ""}`;
     }
     reportStartupDiagnostic(diagnosticKey, diagnosticLabel, "请求中");
-    const refreshingDaily = !options?.manual && !options?.cacheOnly && dailyRefreshPendingRef.current;
     if (!options?.silent) setLoading(true);
     if (options?.manual || refreshingDaily) setRefreshingExchange(true);
     try {
       const endpoint = options?.cacheOnly ? { url: productsEndpoint, method: "GET" as const } : refreshEndpoint(options?.manual);
       response = await (options?.response ?? fetch(endpoint.url, { method: endpoint.method, cache: "no-store" }));
       if (!response.ok) {
-        const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending"> | null;
-        reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing(`HTTP ${response.status}`));
+        const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending" | "dailyRefreshDiagnostic"> | null;
+        const result = refreshingDaily ? dailyRefreshOutcome(errorData as ApiResult | null) : `HTTP ${response.status}`;
+        reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing(`${result} · HTTP ${response.status}`));
         if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = errorData?.dailyRefreshPending === true;
         if (errorData?.cache?.state === "error") {
           setProductSnapshotReady(true);
@@ -353,7 +374,8 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         throw new Error("rate refresh failed");
       }
       const data = await response.json() as ApiResult;
-      reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing(`HTTP ${response.status}`));
+      const result = refreshingDaily ? `${dailyRefreshOutcome(data)} · HTTP ${response.status}` : `HTTP ${response.status}`;
+      reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing(result));
       if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = data.dailyRefreshPending === true;
       setProductSnapshotReady(true);
       setSyncCache(data.cache);
