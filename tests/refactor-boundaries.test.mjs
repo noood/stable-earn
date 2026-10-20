@@ -73,7 +73,9 @@ test("both page entries reuse Dashboard without importing the public page from t
   assert.match(publicPage, /window\.location\.replace/);
   assert.match(privateClient, /import\(["']@\/app\/components\/dashboard\/dashboard["']\)/);
   assert.doesNotMatch(privateClient, /@\/app\/page/);
-  assert.match(privateClient, /ssr: false/);
+  assert.doesNotMatch(privateClient, /from ["']next\/dynamic["']/);
+  assert.match(privateClient, /useEffect\(\(\) => \{[\s\S]*void import\(/);
+  assert.match(privateClient, /setLoadedDashboard\(\(\) => module\.Dashboard\)/);
   assert.match(privateClient, /reportStartupDiagnostic\("dashboard-module"/);
 });
 

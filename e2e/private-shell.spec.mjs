@@ -20,6 +20,10 @@ test("private route serves a lightweight shell before loading the dashboard", as
 test("module-loading skeleton has no visible copy and gives way to the dashboard", async ({ page }) => {
   let releaseDashboard;
   let dashboardRequestIntercepted = false;
+  const accountReads = [];
+  page.on("request", (request) => {
+    if (["/private/api/holdings", "/private/api/products"].includes(new URL(request.url()).pathname)) accountReads.push(request);
+  });
   const dashboardGate = new Promise((resolve) => { releaseDashboard = resolve; });
   await page.route((url) => url.pathname.endsWith("/app/components/dashboard/dashboard.tsx"), async (route) => {
     dashboardRequestIntercepted = true;
@@ -42,8 +46,11 @@ test("module-loading skeleton has no visible copy and gives way to the dashboard
     await expect(page.getByText("正在加载个人数据")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
     await expect(page).toHaveScreenshot("private-module-loading.png", { animations: "disabled", caret: "hide" });
+    expect(accountReads).toHaveLength(0);
     releaseDashboard();
-    await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+    await expect(page.locator(".metrics-panel .skeleton-block")).toHaveCount(0);
+    expect(accountReads.filter((request) => new URL(request.url()).pathname.endsWith("/holdings"))).toHaveLength(1);
+    expect(accountReads.filter((request) => new URL(request.url()).pathname.endsWith("/products"))).toHaveLength(1);
   } finally {
     releaseDashboard();
   }
@@ -51,6 +58,10 @@ test("module-loading skeleton has no visible copy and gives way to the dashboard
 
 test("module-download failure keeps the fixed shell without a retry button", async ({ page }) => {
   let dashboardRequestBlocked = false;
+  const accountReads = [];
+  page.on("request", (request) => {
+    if (["/private/api/holdings", "/private/api/products"].includes(new URL(request.url()).pathname)) accountReads.push(request);
+  });
   await page.route((url) => url.pathname.endsWith("/app/components/dashboard/dashboard.tsx"), async (route) => {
     dashboardRequestBlocked = true;
     await route.abort();
@@ -71,6 +82,27 @@ test("module-download failure keeps the fixed shell without a retry button", asy
   await expect(page.getByRole("navigation", { name: "主导航" })).toContainText("Stable Earn");
   await expect(page.getByRole("columnheader", { name: "平台 / 产品" })).toBeVisible();
   await expect(page.getByText("实际到账以平台账户为准。", { exact: false })).toBeVisible();
+  expect(accountReads).toHaveLength(0);
+});
+
+test("a completed server daily marker removes the extra request without hiding the saved failure", async ({ page }) => {
+  const methods = [];
+  await page.route((url) => url.pathname === "/private/api/products", async (route) => {
+    methods.push(route.request().method());
+    const response = await route.fetch();
+    const data = await response.json();
+    await route.fulfill({ response, json: {
+      ...data,
+      dailyRefresh: { day: "2026-10-20", completed: true },
+      cache: { ...data.cache, state: "error", lastError: "同步失败" },
+      failures: ["产品和持仓数据更新失败"],
+    } });
+  });
+  await page.goto("/private?diagnostics=1");
+  await expect(page.getByLabel("页面启动诊断")).toContainText("无需请求：服务端确认今日尝试已完成");
+  await expect(page.getByLabel("页面启动诊断")).toContainText("顶部更新提示结束（DOM提交）");
+  expect(methods).toEqual(["GET"]);
+  await expect(page.locator(".sync-notice-message")).toContainText("产品和持仓数据更新失败");
 });
 
 test("local-only module failure preview shows the failure style without a retry button", async ({ page }) => {

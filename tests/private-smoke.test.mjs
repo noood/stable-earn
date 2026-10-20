@@ -104,8 +104,10 @@ test("private route serves a static shell and keeps account data client-loaded",
   assert.match(privatePage, /dynamic = "force-static"/);
   assert.match(privatePage, /<PrivateDashboardClient \/>/);
   assert.doesNotMatch(privatePage, /searchParams|<Dashboard/);
-  assert.match(privateClient, /ssr: false/);
-  assert.match(privateClient, /loading: \(\{ error \}\) => error/);
+  assert.doesNotMatch(privateClient, /from ["']next\/dynamic["']/);
+  assert.match(privateClient, /useEffect\(\(\) => \{[\s\S]*void import\(/);
+  assert.match(privateClient, /if \(!active\) return/);
+  assert.match(privateClient, /if \(active\) setModuleError\(true\)/);
   assert.doesNotMatch(privateClient, /onRetry|retryLocalModulePreview/);
   assert.doesNotMatch(privateClient, /正在加载个人数据/);
   assert.match(privateClient, /DashboardModuleFailure/);

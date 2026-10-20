@@ -5,7 +5,8 @@ import { loadManualRefreshCooldown, manualRefreshCooldownMs } from "@/lib/user-s
 import { delayLocalPreviewScenario, isLocalPreviewRequest, localPreviewTime, localPrivateProductsPreview, localSyncScenarioPreview } from "@/lib/local-preview";
 import { cachedHoldingTimes } from "@/lib/holding-cache";
 import { loadProductChangeEvents } from "@/lib/product-change-events";
-import { acquireRefresh, dailyRefreshCompleted, refreshDay, refreshIsLocked, releaseRefresh } from "@/lib/refresh-control";
+import { acquireRefresh, dailyRefreshCompleted, refreshDay, releaseRefresh } from "@/lib/refresh-control";
+import { loadPrivateProductsSnapshot } from "@/lib/private-products-snapshot";
 import { syncDiagnostic, withSyncDiagnostics } from "@/lib/sync-diagnostics";
 import { sanitizeSyncFailure, scheduledRefreshPending } from "@/lib/sync-notice";
 import {
@@ -89,20 +90,21 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
   const manual = refreshAllowed && params.get("refresh") === "1";
   const daily = refreshAllowed && !manual && params.get("visit") === "1";
   const diagnosticsEnabled = params.get("diagnostics") === "1";
-  const manualCooldownDuration = manualRefreshCooldownMs(await timing.measure("settings", () => loadManualRefreshCooldown(db, identity.userId)));
+  let manualCooldownDuration: number;
   let pending = false;
   let dailyRefreshDiagnostic: DailyRefreshDiagnostic | undefined;
-  async function reply(response: Response) {
+  async function reply(response: Response, maturitiesRecorded = false, dailyRefresh?: { day: string; completed: boolean }) {
     const body = await response.json() as Record<string, unknown>;
     const cache = body.cache;
     if (!scheduledSyncEnabled && cache && typeof cache === "object" && !Array.isArray(cache)) {
       body.cache = { ...(cache as Record<string, unknown>), scheduledAt: null, scheduledState: "disabled" };
     }
-    await timing.measure("maturities", () => recordDueManualMaturities(db, ownerId));
+    if (!maturitiesRecorded) await timing.measure("maturities", () => recordDueManualMaturities(db, ownerId));
     const changeEvents = await timing.measure("history", () => loadProductChangeEvents(db, ownerId));
     return NextResponse.json({
       ...body,
       changeEvents,
+      ...(dailyRefresh ? { dailyRefresh } : {}),
       dailyRefreshPending: daily && pending,
       ...(daily && diagnosticsEnabled && dailyRefreshDiagnostic ? { dailyRefreshDiagnostic } : {}),
     }, {
@@ -120,9 +122,18 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
 
   // Ordinary polls never contact exchanges, including accounts without a cache.
   if (!manual && !daily) {
-    const busy = await timing.measure("lock_read", () => refreshIsLocked(db, identity.userId));
-    return reply(snapshot(await timing.measure("cache_read", () => loadSyncCache(db, identity.userId, privateCacheKey)), busy));
+    const [saved] = await Promise.all([
+      timing.measure("snapshot_read", () => loadPrivateProductsSnapshot<PrivateProductsPayload>(db, ownerId, privateCacheKey)),
+      timing.measure("maturities", () => recordDueManualMaturities(db, ownerId)),
+    ]);
+    manualCooldownDuration = saved.cooldownMs;
+    const day = refreshDay();
+    return reply(snapshot(saved.record, saved.leaseUntil > Date.now()), true, {
+      day,
+      completed: saved.dailyDay === day && Boolean(saved.record?.payload || saved.record?.lastError),
+    });
   }
+  manualCooldownDuration = manualRefreshCooldownMs(await timing.measure("settings", () => loadManualRefreshCooldown(db, identity.userId)));
   const dailyDay = daily ? refreshDay() : undefined;
   return withSyncDiagnostics(identity.userId, {
     trigger: daily ? "daily" : "manual",

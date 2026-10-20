@@ -26,7 +26,7 @@ export type SyncCacheRecord<T> = {
   lastError: string | null;
 };
 
-type SyncCacheRow = {
+export type SyncCacheRow = {
   payload: string | null;
   updated_at: string | null;
   last_attempt_at: string | null;
@@ -41,6 +41,10 @@ export async function loadSyncCache<T>(db: D1Database, ownerId: string, cacheKey
     .first<SyncCacheRow>();
   if (!row) return null;
 
+  return parseSyncCacheRow<T>(row);
+}
+
+export function parseSyncCacheRow<T>(row: SyncCacheRow): SyncCacheRecord<T> {
   let payload: T | null = null;
   if (row.payload) {
     try { payload = JSON.parse(row.payload) as T; } catch { /* invalid cache is treated as empty */ }
