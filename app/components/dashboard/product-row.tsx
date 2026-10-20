@@ -5,7 +5,7 @@ import { ProductHistory, type ProductHistoryPage } from "@/app/components/produc
 import { AccountBadge, HoldingSummary, TableCell } from "@/app/components/ui";
 import { HoldingInput, InlineSelect, ManualAprInput, ManualLimitInput, ManualTermInput } from "@/app/components/dashboard/product-inputs";
 import { PurchaseDateInput, parseCalendarDate } from "@/app/components/dashboard/purchase-date-input";
-import { effectiveApr, formatAmount, type Account, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent, type ProductKind } from "@/lib/domain";
+import { effectiveApr, formatAmount, type Account, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent, type ProductHistorySummary, type ProductKind } from "@/lib/domain";
 import { dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsManualType, productNeedsManualPurchaseDate, productTermDays, productTermStatus, productTypeIsResolved, type ProductOverride } from "@/lib/product-overrides";
 import { holdingSyncNote, productCapacityIsIncomplete, productInformationIssues, productInformationNote, type ProductInformationIssue } from "@/lib/product-status";
 import { apiFieldCapability } from "@/lib/api-capabilities";
@@ -18,7 +18,7 @@ export type ManualProductPatch = { accountId?: string; manualKind?: Product["man
 const productKindOptions = (["flexible", "fixed", "limited"] as const)
   .map((value) => ({ value, label: productKindLabel(value) }));
 
-export function ProductRow({ product, baseProduct, manualSettings, holdingTiming, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, typeSelectionAvailable = false, apiDeleteDisabled, apiDeleteDisabledReason, rateFallbackAt, holdingFallbackAt, changeEvents, loadHistoryPage, readOnlyHistoryPreview = false, onEventsRead, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingTiming?: HoldingTiming; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; typeSelectionAvailable?: boolean; apiDeleteDisabled: boolean; apiDeleteDisabledReason?: string; rateFallbackAt?: string; holdingFallbackAt?: string; changeEvents: ProductChangeEvent[]; loadHistoryPage?: (cursor: string | null) => Promise<ProductHistoryPage>; readOnlyHistoryPreview?: boolean; onEventsRead: (readAt: string, eventIds: string[]) => void; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
+export function ProductRow({ product, baseProduct, manualSettings, holdingTiming, holding, holdingAvailable, holdingSyncState, editing, editable, saving, manualProduct, typeSelectionAvailable = false, apiDeleteDisabled, apiDeleteDisabledReason, rateFallbackAt, holdingFallbackAt, changeEvents, historySummary, loadHistoryPage, readOnlyHistoryPreview = false, onEventsRead, onHoldingChange, onOverrideChange, onManualProductChange, onDelete }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingTiming?: HoldingTiming; holding: number; holdingAvailable: boolean; holdingSyncState?: HoldingSyncState; editing: boolean; editable: boolean; saving: boolean; manualProduct: boolean; typeSelectionAvailable?: boolean; apiDeleteDisabled: boolean; apiDeleteDisabledReason?: string; rateFallbackAt?: string; holdingFallbackAt?: string; changeEvents: ProductChangeEvent[]; historySummary?: ProductHistorySummary; loadHistoryPage?: (cursor: string | null) => Promise<ProductHistoryPage>; readOnlyHistoryPreview?: boolean; onEventsRead: (readAt: string, eventIds: string[], summary?: ProductHistorySummary) => void; onHoldingChange: (value: number) => void; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
   const account = accounts.find((item) => item.id === product.accountId)!;
   const hasApiTiming = hasCompletePurchaseTiming(holdingTiming, holding);
   const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming, holdingAvailable && holding > 0);
@@ -36,7 +36,7 @@ export function ProductRow({ product, baseProduct, manualSettings, holdingTiming
       <TableCell className="type-body font-semibold tabular-nums">{holdingAvailable && productInfoIssues.length === 0 && holding > 0
         ? `${effectiveApr(product, holding).toFixed(2)}%`
         : <span className="text-subtle font-normal">—</span>}</TableCell>
-      <TableCell className="product-history-cell"><ProductHistory productId={product.id} events={changeEvents} loadPage={loadHistoryPage} onEventsRead={onEventsRead} readOnlyPreview={readOnlyHistoryPreview} /></TableCell>
+      <TableCell className="product-history-cell"><ProductHistory productId={product.id} events={changeEvents} summary={historySummary} loadPage={loadHistoryPage} onEventsRead={onEventsRead} readOnlyPreview={readOnlyHistoryPreview} /></TableCell>
     </tr>
   );
 }

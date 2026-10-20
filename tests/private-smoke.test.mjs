@@ -105,9 +105,10 @@ test("private route serves a static shell and keeps account data client-loaded",
   assert.match(privatePage, /<PrivateDashboardClient \/>/);
   assert.doesNotMatch(privatePage, /searchParams|<Dashboard/);
   assert.doesNotMatch(privateClient, /from ["']next\/dynamic["']/);
-  assert.match(privateClient, /useEffect\(\(\) => \{[\s\S]*void import\(/);
+  assert.ok(privateClient.indexOf('const loading = import("@/app/components/dashboard/dashboard")') < privateClient.indexOf("export default function PrivateDashboardClient"));
+  assert.match(privateClient, /typeof window === "undefined" \|\| simulateModuleFailure/);
   assert.match(privateClient, /if \(!active\) return/);
-  assert.match(privateClient, /if \(active\) setModuleError\(true\)/);
+  assert.match(privateClient, /if \("failed" in result\) setModuleError\(true\)/);
   assert.doesNotMatch(privateClient, /onRetry|retryLocalModulePreview/);
   assert.doesNotMatch(privateClient, /正在加载个人数据/);
   assert.match(privateClient, /DashboardModuleFailure/);

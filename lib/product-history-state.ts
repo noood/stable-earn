@@ -1,4 +1,17 @@
-import type { ProductChangeEvent } from "./domain";
+import type { ProductChangeEvent, ProductHistorySummary } from "./domain";
+
+/** Ignore stale responses: inserts increase count, reads only decrease unread count. */
+export function mergeProductHistorySummaries(current: ProductHistorySummary[] = [], incoming: ProductHistorySummary[]) {
+  const merged = new Map(current.map((summary) => [summary.productId, summary]));
+  for (const summary of incoming) {
+    const previous = merged.get(summary.productId);
+    if (!previous || summary.eventCount > previous.eventCount) merged.set(summary.productId, summary);
+    else if (summary.eventCount === previous.eventCount) {
+      merged.set(summary.productId, { ...summary, unreadCount: Math.min(previous.unreadCount, summary.unreadCount) });
+    }
+  }
+  return [...merged.values()];
+}
 
 /** Keep loaded older pages when a refreshed snapshot or first page arrives. */
 export function mergeProductHistoryEvents(...groups: ProductChangeEvent[][]) {

@@ -2,19 +2,20 @@
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import type { ProductChangeEvent } from "@/lib/domain";
+import type { ProductChangeEvent, ProductHistorySummary } from "@/lib/domain";
 import { useDismissiblePopover } from "@/app/components/use-dismissible-popover";
 import { ActionButton } from "@/app/components/ui";
-import { mergeNewProductHistoryEvents, mergeProductHistoryEvents, productHistoryRevision } from "@/lib/product-history-state";
+import { mergeNewProductHistoryEvents, mergeProductHistoryEvents, mergeProductHistorySummaries, productHistoryRevision } from "@/lib/product-history-state";
 
 export type ProductHistoryPage = { events: ProductChangeEvent[]; nextCursor: string | null };
 const PRODUCT_HISTORY_OPEN_EVENT = "stable-earn:product-history-open";
 
-export function ProductHistory({ productId, events, loadPage, onEventsRead, readOnlyPreview = false }: {
+export function ProductHistory({ productId, events, summary, loadPage, onEventsRead, readOnlyPreview = false }: {
   productId: string;
   events: ProductChangeEvent[];
+  summary?: ProductHistorySummary;
   loadPage?: (cursor: string | null) => Promise<ProductHistoryPage>;
-  onEventsRead?: (readAt: string, eventIds: string[]) => void;
+  onEventsRead?: (readAt: string, eventIds: string[], summary?: ProductHistorySummary) => void;
   readOnlyPreview?: boolean;
 }) {
   const instanceId = useId();
@@ -39,15 +40,18 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead, read
   const [historyError, setHistoryError] = useState(false);
   const [loadedRevision, setLoadedRevision] = useState<string | null>(null);
   const [initialSnapshotIds, setInitialSnapshotIds] = useState<string[] | null>(null);
-  const eventsRevision = useMemo(() => productHistoryRevision(events), [events]);
-  // API snapshot props can contain thousands of older events. They drive the
-  // dot/revision, not the paged timeline before those pages have been read.
+  const [confirmedSummary, setConfirmedSummary] = useState<ProductHistorySummary>();
+  const effectiveSummary = summary
+    ? mergeProductHistorySummaries(confirmedSummary ? [confirmedSummary] : [], [summary])[0] : undefined;
+  const eventsRevision = useMemo(() => summary ? `count:${summary.eventCount}` : productHistoryRevision(events), [summary, events]);
+  // Summary revisions/dots are independent from the on-demand paged contents.
   const historyEvents = useMemo(() => {
     if (loadedHistoryEvents === null) return loadPage ? [] : mergeProductHistoryEvents(events);
     return mergeNewProductHistoryEvents(loadedHistoryEvents, events, initialSnapshotIds ?? []);
   }, [events, loadedHistoryEvents, loadPage, initialSnapshotIds]);
-  const attention = events.some((event) => event.attention && !event.readAt && !acknowledgedEventIds.includes(event.id))
-    || historyEvents.some((event) => event.attention && !event.readAt && !acknowledgedEventIds.includes(event.id));
+  const attention = effectiveSummary ? effectiveSummary.unreadCount > 0
+    : events.some((event) => event.attention && !event.readAt && !acknowledgedEventIds.includes(event.id))
+      || historyEvents.some((event) => event.attention && !event.readAt && !acknowledgedEventIds.includes(event.id));
   const sortedEvents = historyEvents;
 
   useDismissiblePopover(open, setOpen, buttonRef, popoverRef, { closeOnScroll: false });
@@ -207,6 +211,11 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead, read
     if (unreadIds.length === 0) return;
     if (!loadPage || readOnlyPreview) {
       setAcknowledgedEventIds((current) => [...new Set([...current, ...unreadIds])]);
+      if (effectiveSummary) {
+        const nextSummary = { ...effectiveSummary, unreadCount: Math.max(0, effectiveSummary.unreadCount - unreadIds.length) };
+        setConfirmedSummary(nextSummary);
+        onEventsRead?.(new Date().toISOString(), unreadIds, nextSummary);
+      }
       return;
     }
     unreadIds.forEach((id) => pendingReadIdsRef.current.add(id));
@@ -217,20 +226,21 @@ export function ProductHistory({ productId, events, loadPage, onEventsRead, read
         body: JSON.stringify({ productId, eventIds: unreadIds }),
       });
       if (!response.ok) return;
-      const result = await response.json() as { readAt?: unknown };
+      const result = await response.json() as { readAt?: unknown; historySummary?: ProductHistorySummary };
       if (typeof result.readAt !== "string") return;
       setAcknowledgedEventIds((current) => [...new Set([...current, ...unreadIds])]);
       const confirmed = new Set(unreadIds);
       setLoadedHistoryEvents((current) => (current ?? historyEvents).map((event) => confirmed.has(event.id)
         ? { ...event, readAt: result.readAt as string }
         : event));
-      onEventsRead?.(result.readAt, unreadIds);
+      if (result.historySummary) setConfirmedSummary((current) => mergeProductHistorySummaries(current ? [current] : [], [result.historySummary!])[0]);
+      onEventsRead?.(result.readAt, unreadIds, result.historySummary);
     } catch {
       // Leave the dot visible when persistence fails; a later open can retry.
     } finally {
       unreadIds.forEach((id) => pendingReadIdsRef.current.delete(id));
     }
-  }, [historyEvents, acknowledgedEventIds, loadPage, readOnlyPreview, productId, onEventsRead]);
+  }, [historyEvents, acknowledgedEventIds, loadPage, readOnlyPreview, productId, onEventsRead, effectiveSummary]);
 
   useEffect(() => {
     if (open) ensureInitialHistoryRequest();

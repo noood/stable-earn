@@ -101,6 +101,13 @@ export type ProductChangeEvent = {
   readAt?: string;
 };
 
+/** Lightweight, account-scoped history state; event contents are paged on demand. */
+export type ProductHistorySummary = {
+  productId: string;
+  eventCount: number;
+  unreadCount: number;
+};
+
 /** A user position normalized from an authenticated exchange response. */
 export type HoldingPosition = {
   productId: string;

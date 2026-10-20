@@ -50,6 +50,8 @@ npx playwright install chromium
 
 端到端测试默认复用已经运行的 <http://localhost:3000>；该服务未运行时，Playwright 会自行启动。需要只跑部分浏览器测试时，可传入文件名或筛选条件，例如 `npm run test:e2e -- --grep "known quota|known first tier"`。发布前核对范围见 [发布检查清单](docs/RELEASE-CHECKLIST.md)。浏览器测试只访问本地预览与模拟数据，不连接生产账号或 D1。
 
+生产构建的历史摘要与按需加载另用 `npm run build && npx playwright test --config=playwright.production.config.mjs` 验证。它在本机 3001 端口临时启动生产构建，账户接口全部由合成响应拦截，不使用凭证或生产 D1；不要同时占用该端口。常规开发预览的完整 E2E 仍用上面的命令。
+
 仓库目前只维护 macOS（`darwin`）截图基线；其他系统首次运行截图比较前，需要生成并审阅对应平台的基线。基线按系统分别保存，不跨系统比较；只有确认视觉变化符合预期后才更新。
 
 ## 代码组织

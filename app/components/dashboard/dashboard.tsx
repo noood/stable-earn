@@ -11,7 +11,8 @@ import { DashboardMetricsSkeleton, ProductTableSkeletonRows } from "@/app/compon
 import { DashboardFooter, DashboardPageFrame, DashboardProductTableSection, ProductTableEmptyState } from "@/app/components/dashboard/dashboard-frame";
 import { publishStartupDiagnostics, reportStartupDiagnostic, startupDiagnosticsEnabled, startupDiagnosticTime } from "@/app/components/startup-diagnostics";
 import { formatStartupRequestTiming } from "@/lib/startup-timing-format";
-import { effectiveApr, formatAmount, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent } from "@/lib/domain";
+import { effectiveApr, formatAmount, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent, type ProductHistorySummary } from "@/lib/domain";
+import { mergeProductHistorySummaries } from "@/lib/product-history-state";
 import { applyProductOverride, productOverrideForSave, productTermDays, productTypeSelectionAvailable, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { productInformationIssues, productParticipatesInInterest, type ProductInformationIssue } from "@/lib/product-status";
 import { completedDataSummary, dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
@@ -66,6 +67,7 @@ type ApiResult = {
   holdingPositions?: HoldingPosition[];
   apiFieldNotices?: Array<{ accountId: string; asset: Asset; productName: string; externalProductId?: string; fields: string[] }>;
   changeEvents?: ProductChangeEvent[];
+  historySummaries?: ProductHistorySummary[];
   partial: boolean;
   note: string;
   fetchedAt?: string;
@@ -142,6 +144,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const [holdingSyncStates, setHoldingSyncStates] = useState<ApiResult["holdingSyncStates"]>({});
   const [holdingPositions, setHoldingPositions] = useState<HoldingPosition[]>([]);
   const [changeEvents, setChangeEvents] = useState<ProductChangeEvent[]>(() => isDemo ? publicDemoChangeEvents : []);
+  const [historySummaries, setHistorySummaries] = useState<ProductHistorySummary[]>();
   const [showApiSettings, setShowApiSettings] = useState(false);
   const [apiSettingsMounted, setApiSettingsMounted] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -174,8 +177,9 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const previewQuery = localPreview ? `?preview=1${previewScenario ? `&syncScenario=${encodeURIComponent(previewScenario)}` : ""}${previewAt ? `&previewAt=${encodeURIComponent(previewAt)}` : ""}` : "";
   const startupDiagnosticsQuery = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("diagnostics") === "1"
     ? `${previewQuery ? "&" : "?"}diagnostics=1` : "";
-  const holdingsEndpoint = `/private/api/holdings${previewQuery}${startupDiagnosticsQuery}`;
-  const productsEndpoint = `/private/api/products${previewQuery}${startupDiagnosticsQuery}`;
+  const historyQuery = `${previewQuery || startupDiagnosticsQuery ? "&" : "?"}history=summary`;
+  const holdingsEndpoint = `/private/api/holdings${previewQuery}${startupDiagnosticsQuery}${historyQuery}`;
+  const productsEndpoint = `/private/api/products${previewQuery}${startupDiagnosticsQuery}${historyQuery}`;
   function refreshEndpoint(manual = false) {
     const daily = !manual && dailyRefreshPendingRef.current;
     const flag = manual ? "refresh=1" : daily ? "visit=1" : "";
@@ -394,11 +398,12 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       const endpoint = options?.cacheOnly ? { url: productsEndpoint, method: "GET" as const } : refreshEndpoint(options?.manual);
       response = await (options?.response ?? fetch(endpoint.url, { method: endpoint.method, cache: "no-store" }));
       if (!response.ok) {
-        const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending" | "dailyRefreshDiagnostic" | "dailyRefresh"> | null;
+        const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending" | "dailyRefreshDiagnostic" | "dailyRefresh" | "historySummaries"> | null;
         const result = refreshingDaily ? dailyRefreshOutcome(errorData as ApiResult | null) : `HTTP ${response.status}`;
         reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing(`${result} · HTTP ${response.status}`));
         applyDailyRefreshStatus(errorData);
         if (errorData?.cache?.state === "error") {
+          if (errorData.historySummaries) setHistorySummaries((current) => mergeProductHistorySummaries(current, errorData.historySummaries!));
           setProductSnapshotReady(true);
           setSyncCache(errorData.cache);
           setSyncing(false);
@@ -429,6 +434,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       setHoldingSyncStates(data.holdingSyncStates ?? {});
       setHoldingPositions(data.holdingPositions ?? []);
       setChangeEvents(data.changeEvents ?? []);
+      setHistorySummaries((current) => data.historySummaries ? mergeProductHistorySummaries(current, data.historySummaries) : undefined);
       // The API response is authoritative. An empty list means this account
       // has no discovered products yet; do not repopulate the old global seed
       // directory on the client.
@@ -507,7 +513,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       }),
     });
     if (!response.ok) throw new Error("cloud save failed");
-    return response.json() as Promise<{ updatedAt: string; changeEvents?: ProductChangeEvent[] }>;
+    return response.json() as Promise<{ updatedAt: string; changeEvents?: ProductChangeEvent[]; historySummaries?: ProductHistorySummary[] }>;
   }
 
   async function savePortfolio(nextHoldings: HoldingMap, nextOverrides: ProductOverrideMap, nextManualProducts: Product[], nextHiddenProductIds: string[], changes: PortfolioChanges) {
@@ -534,7 +540,10 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
           updatedAt: result.updatedAt,
         }])),
       }));
-      if (!isDemo) setChangeEvents(result.changeEvents ?? []);
+      if (!isDemo) {
+        setChangeEvents(result.changeEvents ?? []);
+        if (result.historySummaries) setHistorySummaries((current) => mergeProductHistorySummaries(current, result.historySummaries!));
+      }
       return true;
     } catch {
       setHoldings(previousHoldings);
@@ -919,7 +928,10 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             const loadHistoryPage = isHistoryPreviewProduct
               ? (cursor: string | null) => historyPreviewLoader(listedProduct.id, cursor)
               : isDemo || localPreview ? undefined : (cursor: string | null) => loadProductHistoryPage(listedProduct.id, cursor);
-            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingTiming={holdingTimingByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} typeSelectionAvailable={typeSelectionAvailable} apiDeleteDisabled={apiDeleteBlocked} apiDeleteDisabledReason={apiDeleteDisabledReason} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} changeEvents={changeEvents.filter((event) => event.productId === listedProduct.id)} loadHistoryPage={loadHistoryPage} readOnlyHistoryPreview={isHistoryPreviewProduct} onEventsRead={(readAt, eventIds) => {
+            const historySummary = historySummaries === undefined ? undefined : historySummaries.find((summary) => summary.productId === listedProduct.id)
+              ?? { productId: listedProduct.id, eventCount: 0, unreadCount: 0 };
+            return <ProductRow key={listedProduct.id} product={displayProduct} baseProduct={baseProduct} manualSettings={manualSettings} holdingTiming={holdingTimingByProduct.get(listedProduct.id)} holding={activeHoldings[listedProduct.id] ?? 0} holdingAvailable={holdingIsKnown(baseProduct)} holdingSyncState={holdingSyncStates?.[listedProduct.id]} editing={editing} editable={isDemo || (baseProduct.holdingDataMode === "manual" && !apiHoldingSource)} saving={savingHoldings} manualProduct={isManualProduct} typeSelectionAvailable={typeSelectionAvailable} apiDeleteDisabled={apiDeleteBlocked} apiDeleteDisabledReason={apiDeleteDisabledReason} rateFallbackAt={baseProduct.productDataMode === "api" ? rateFallbacks[listedProduct.id] : undefined} holdingFallbackAt={!isDemo && holdingFromApi ? holdingFallbacks[listedProduct.id] : undefined} changeEvents={changeEvents.filter((event) => event.productId === listedProduct.id)} historySummary={historySummary} loadHistoryPage={loadHistoryPage} readOnlyHistoryPreview={isHistoryPreviewProduct} onEventsRead={(readAt, eventIds, summary) => {
+              if (summary) setHistorySummaries((current) => mergeProductHistorySummaries(current, [summary]));
               const readIds = new Set(eventIds);
               setChangeEvents((current) => current.map((event) => event.productId === listedProduct.id
                 && event.attention && !event.readAt && readIds.has(event.id) ? { ...event, readAt } : event));
