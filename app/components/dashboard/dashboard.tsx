@@ -9,7 +9,7 @@ import type { ProductHistoryPage } from "@/app/components/product-history";
 import { ActionButton, Metric, ModalFrame } from "@/app/components/ui";
 import { DashboardMetricsSkeleton, ProductTableSkeletonRows } from "@/app/components/dashboard/dashboard-skeleton";
 import { DashboardFooter, DashboardPageFrame, DashboardProductTableSection, ProductTableEmptyState } from "@/app/components/dashboard/dashboard-frame";
-import { reportStartupDiagnostic } from "@/app/components/startup-diagnostics";
+import { reportStartupDiagnostic, startupDiagnosticTime } from "@/app/components/startup-diagnostics";
 import { effectiveApr, formatAmount, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent } from "@/lib/domain";
 import { applyProductOverride, productOverrideForSave, productTermDays, productTypeSelectionAvailable, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { productInformationIssues, productParticipatesInInterest, type ProductInformationIssue } from "@/lib/product-status";
@@ -314,7 +314,23 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       }
     }
 
-    const frame = window.requestAnimationFrame(() => void initialize());
+    const effectStartedAt = performance.now();
+    const moduleLoadedAt = startupDiagnosticTime("dashboard-module");
+    reportStartupDiagnostic(
+      "dashboard-effect",
+      "界面组件开始运行",
+      `${moduleLoadedAt === undefined ? "模块完成时间未记录" : `模块加载后 ${Math.round(effectStartedAt - moduleLoadedAt)}ms`} · 页面导航后 ${Math.round(effectStartedAt)}ms`,
+    );
+    const frameRequestedAt = performance.now();
+    const frame = window.requestAnimationFrame(() => {
+      const frameStartedAt = performance.now();
+      reportStartupDiagnostic(
+        "dashboard-frame",
+        "下一帧开始初始化",
+        `等待 ${Math.round(frameStartedAt - frameRequestedAt)}ms · 页面导航后 ${Math.round(frameStartedAt)}ms`,
+      );
+      void initialize();
+    });
     return () => {
       window.cancelAnimationFrame(frame);
     };

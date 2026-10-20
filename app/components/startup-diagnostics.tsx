@@ -2,15 +2,19 @@
 
 import { useEffect, useState } from "react";
 
-type DiagnosticEntry = { key: string; label: string; value: string };
+type DiagnosticEntry = { key: string; label: string; value: string; at: number };
 const eventName = "stable-earn:startup-diagnostic";
 const entries = new Map<string, DiagnosticEntry>();
 
 export function reportStartupDiagnostic(key: string, label: string, value: string) {
   if (typeof window === "undefined") return;
-  const entry = { key, label, value };
+  const entry = { key, label, value, at: performance.now() };
   entries.set(key, entry);
   window.dispatchEvent(new CustomEvent<DiagnosticEntry>(eventName, { detail: entry }));
+}
+
+export function startupDiagnosticTime(key: string) {
+  return entries.get(key)?.at;
 }
 
 export function StartupDiagnostics() {
