@@ -12,7 +12,12 @@ export function sqliteDb({ legacyIdentityFingerprint = false } = {}) {
         return {
           first: async () => sqlite.prepare(sql).get(...args) ?? null,
           all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-          run: async () => ({ meta: sqlite.prepare(sql).run(...args) }),
+          run: async () => {
+            const statement = sqlite.prepare(sql);
+            return statement.columns().length
+              ? { success: true, results: statement.all(...args), meta: { changes: 0 } }
+              : { success: true, results: [], meta: statement.run(...args) };
+          },
         };
       } };
     },

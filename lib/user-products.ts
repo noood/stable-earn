@@ -11,7 +11,7 @@ export type UserProductInput = {
   termDays: number | null;
 };
 
-type UserProductRow = {
+export type UserProductRow = {
   product_id: string;
   account_id: string;
   asset: Asset;
@@ -24,11 +24,18 @@ const validAssets = new Set<Asset>(["USDT", "USDC", "USDGO", "BTC"]);
 const validKinds = new Set<UserProductInput["manualKind"]>(["flexible", "fixed", "limited"]);
 
 export async function loadUserProducts(db: D1Database, userId: string) {
-  const result = await db.prepare(`SELECT product_id, account_id, asset, product_kind, term_days
+  const result = await prepareUserProductsRead(db, userId).all<UserProductRow>();
+  return userProductsFromRows(result.results);
+}
+
+export function prepareUserProductsRead(db: D1Database, userId: string) {
+  return db.prepare(`SELECT product_id, account_id, asset, product_kind, term_days
       FROM user_products WHERE user_id = ? ORDER BY created_at, product_id`)
-    .bind(userId)
-    .all<UserProductRow>();
-  return result.results.map((row) => userProductInputToProduct({
+    .bind(userId);
+}
+
+export function userProductsFromRows(rows: readonly UserProductRow[]) {
+  return rows.map((row) => userProductInputToProduct({
     id: row.product_id,
     accountId: row.account_id,
     asset: row.asset,

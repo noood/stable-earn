@@ -53,8 +53,17 @@ export async function loadCatalogRows(db: D1Database, ownerId: string) {
 }
 
 export async function loadCatalogProducts(db: D1Database, ownerId: string) {
-  const rows = await loadCatalogRows(db, ownerId);
-  return rows.flatMap((row) => row.status === "active" ? parseProduct(row.payload).map(resolveProductWithoutApiData) : []);
+  const result = await prepareCatalogProductsRead(db, ownerId).all<{ payload: string }>();
+  return catalogProductsFromRows(result.results);
+}
+
+export function prepareCatalogProductsRead(db: D1Database, ownerId: string) {
+  return db.prepare(`SELECT payload FROM product_catalog
+    WHERE owner_id = ? AND status = 'active' ORDER BY first_seen_at, product_id`).bind(ownerId);
+}
+
+export function catalogProductsFromRows(rows: readonly { payload: string }[]) {
+  return rows.flatMap((row) => parseProduct(row.payload).map(resolveProductWithoutApiData));
 }
 
 export async function prepareProductCatalogSync(

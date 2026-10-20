@@ -7,6 +7,7 @@ import { parseProductOverride } from "@/lib/product-override-input";
 import { loadUserProducts, prepareUserProductStatements, productToUserProduct, sanitizeUserProducts, userProductInputToProduct } from "@/lib/user-products";
 import { delayLocalPreviewScenario, isLocalPreviewRequest, localPreviewTime, localPrivateHoldingsPreview } from "@/lib/local-preview";
 import { loadCatalogProducts } from "@/lib/product-catalog";
+import { loadPrivateHoldingsSnapshot } from "@/lib/private-holdings-snapshot";
 import { withStartupServerTiming, type StartupServerTiming } from "@/lib/startup-timing";
 import {
   buildManualChangeEvents,
@@ -19,7 +20,6 @@ import {
 export const dynamic = "force-dynamic";
 
 type HoldingRow = { product_id: string; amount: number };
-type OverrideRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null; product_kind_override: "flexible" | "fixed" | "limited" | null; updated_at: string };
 type LimitRow = { product_id: string; first_tier_limit: number | null };
 type TermRow = { product_id: string; term_days: number | null };
 type OverrideSnapshotRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null; product_kind_override: "flexible" | "fixed" | "limited" | null };
@@ -44,30 +44,17 @@ async function getHoldings(request: Request, timing: StartupServerTiming) {
   }
 
   const db = await timing.measure("database", () => getDatabase());
-  const [catalogProducts, manualProducts, holdingResult, positionResult, overrideResult, limitResult, termResult, hiddenResult, hiddenCatalogResult, syncSnapshotResult] = await Promise.all([
-    loadCatalogProducts(db, userId),
-    loadUserProducts(db, userId),
-    db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
-    db.prepare("SELECT product_id, amount FROM holding_positions WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
-    db.prepare(`SELECT product_id, confirmed_apr, purchase_date, product_kind_override, updated_at
-      FROM product_overrides WHERE user_id = ? ORDER BY product_id`).bind(userId).all<OverrideRow>(),
-    db.prepare(`SELECT product_id, first_tier_limit
-      FROM product_override_limits WHERE user_id = ? ORDER BY product_id`).bind(userId).all<LimitRow>(),
-    db.prepare(`SELECT product_id, term_days
-      FROM product_override_terms WHERE user_id = ? ORDER BY product_id`).bind(userId).all<TermRow>(),
-    db.prepare("SELECT product_id FROM hidden_seed_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
-    db.prepare("SELECT product_id FROM hidden_products WHERE user_id = ? ORDER BY product_id").bind(userId).all<HiddenProductRow>(),
-    db.prepare("SELECT payload FROM sync_snapshots WHERE owner_id = ? AND cache_key = 'private-products'").bind(userId).all<{ payload: string | null }>(),
-  ]);
+  const { catalogProducts, manualProducts, holdingRows, positionRows, overrideRows, hiddenSeedRows,
+    hiddenCatalogRows, syncSnapshotPayload } = await timing.measure("holdings_snapshot", () => loadPrivateHoldingsSnapshot(db, userId));
   const removableProducts = new Set([...catalogProducts, ...manualProducts].map((product) => product.id));
   const storedHiddenProductIds = [...new Set([
-    ...hiddenResult.results.map((row) => row.product_id),
-    ...hiddenCatalogResult.results.map((row) => row.product_id),
+    ...hiddenSeedRows.map((row) => row.product_id),
+    ...hiddenCatalogRows.map((row) => row.product_id),
   ])].filter((productId) => removableProducts.has(productId));
-  const holdingAmounts = new Map(holdingResult.results.map((row) => [row.product_id, Number(row.amount)]));
+  const holdingAmounts = new Map(holdingRows.map((row) => [row.product_id, Number(row.amount)]));
   const positionAmounts = new Map<string, number>();
-  for (const row of positionResult.results) positionAmounts.set(row.product_id, (positionAmounts.get(row.product_id) ?? 0) + Number(row.amount));
-  const snapshot = parseSyncSnapshot(syncSnapshotResult.results[0]?.payload);
+  for (const row of positionRows) positionAmounts.set(row.product_id, Number(row.amount));
+  const snapshot = parseSyncSnapshot(syncSnapshotPayload);
   // Hiding an opportunity must never hide a positive position. The position
   // remains visible until it is genuinely zero, even if the user hid the row.
   const hiddenProductIds = storedHiddenProductIds.filter((productId) => {
@@ -76,22 +63,20 @@ async function getHoldings(request: Request, timing: StartupServerTiming) {
   });
   const hiddenProductIdSet = new Set(hiddenProductIds);
   const productIds = new Set([...catalogProducts.filter((product) => !hiddenProductIdSet.has(product.id)), ...manualProducts].map((product) => product.id));
-  const limits = new Map(limitResult.results.map((row) => [row.product_id, row.first_tier_limit]));
-  const terms = new Map(termResult.results.map((row) => [row.product_id, row.term_days]));
-  const holdings = Object.fromEntries(holdingResult.results
+  const holdings = Object.fromEntries(holdingRows
     .filter((row) => productIds.has(row.product_id))
     .map((row) => [row.product_id, Number(row.amount)])) as HoldingMap;
-  const overrides = Object.fromEntries(overrideResult.results
+  const overrides = Object.fromEntries(overrideRows
     .filter((row) => productIds.has(row.product_id))
     .map((row) => [row.product_id, {
       apr: row.confirmed_apr === null ? null : Number(row.confirmed_apr),
-      firstTierLimit: limits.get(row.product_id) === null || limits.get(row.product_id) === undefined ? null : Number(limits.get(row.product_id)),
-      termDays: terms.get(row.product_id) === null || terms.get(row.product_id) === undefined ? null : Number(terms.get(row.product_id)),
+      firstTierLimit: row.first_tier_limit === null ? null : Number(row.first_tier_limit),
+      termDays: row.term_days === null ? null : Number(row.term_days),
       purchaseDate: row.purchase_date,
       updatedAt: row.updated_at,
       manualKind: row.product_kind_override,
     }])) as ProductOverrideMap;
-  return NextResponse.json({ products: catalogProducts, holdings, overrides, manualProducts, hiddenProductIds, found: holdingResult.results.length > 0 || overrideResult.results.length > 0 || manualProducts.length > 0 || hiddenProductIds.length > 0 }, { headers: privateResponseHeaders });
+  return NextResponse.json({ products: catalogProducts, holdings, overrides, manualProducts, hiddenProductIds, found: holdingRows.length > 0 || overrideRows.length > 0 || manualProducts.length > 0 || hiddenProductIds.length > 0 }, { headers: privateResponseHeaders });
 }
 
 export async function PUT(request: Request) {

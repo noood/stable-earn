@@ -8,6 +8,7 @@ export const startupTimingPhases = {
   lock_acquire: "申请运行锁",
   cache_read: "读取同步缓存",
   snapshot_read: "读取缓存、设置与刷新状态",
+  holdings_snapshot: "批量读取个人数据快照",
   daily_check: "检查当日记录",
   maturities: "检查手动产品到期",
   history: "读取变更记录",

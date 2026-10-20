@@ -152,7 +152,9 @@ export function remainingHighYield(product: Product, holding: number, minimumApr
   }, 0);
 }
 
+const amountFormatter = new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 export function formatAmount(value: number) {
   if (value !== 0 && Math.abs(value) < 0.01) return value > 0 ? "<0.01" : ">-0.01";
-  return new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+  return amountFormatter.format(value);
 }

@@ -240,15 +240,17 @@ function formatCompactNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.0+$|(?<=\.[0-9])0+$/, "");
 }
 
+const syncDateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Shanghai",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
 export function formatSyncDateTime(value: string) {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) return value;
-  return new Date(timestamp).toLocaleString("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return syncDateTimeFormatter.format(new Date(timestamp));
 }
