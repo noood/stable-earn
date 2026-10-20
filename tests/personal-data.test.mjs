@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { moduleLoader } from "./helpers/load-ts.mjs";
+
+const { formatStartupRequestTiming } = moduleLoader()("@/lib/startup-timing-format");
 
 const source = ts.createSourceFile("dashboard.tsx", readFileSync(new URL("../app/components/dashboard/dashboard.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const functions = [];
@@ -20,6 +23,7 @@ function harness(fetch) {
     fetch, holdingsEndpoint: "/holdings", productsEndpoint: "/products", emptyHoldings: {}, isDemo: false,
     localPreview: false, readLocalPreviewOverrides: () => ({}), saveLocalPreviewOverrides: () => {},
     reportStartupDiagnostic: () => {},
+    formatStartupRequestTiming,
     holdingsRef: { current: state.setHoldings },
     productOverridesRef: { current: { manual: { apr: 8 } } },
     manualProductsRef: { current: [{ id: "manual" }] }, hiddenProductIdsRef: { current: ["hidden"] },
