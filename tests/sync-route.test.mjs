@@ -67,7 +67,6 @@ function fixture({ scheduledEnabled = true, includeOkxProduct = false } = {}) {
     },
     "@/lib/credentials": { loadCredentials: async () => ({ "binance-global": {}, "bitget-global": { passphrase: "test" }, "okx-global": { apiKey: "key", apiSecret: "secret", passphrase: "pass" } }) },
     "@/lib/local-preview": { isLocalPreviewRequest: () => false },
-    "@/lib/user-settings": { loadManualRefreshCooldown: async () => 30, manualRefreshCooldownMs: (minutes) => minutes * 60000 },
     "@/lib/live-rates": { fetchPublicRateSnapshot: async () => ({ rates: [], failures: [] }), summarizePublicFailures: (failures) => failures },
     "@/lib/integrations/binance": { fetchBinanceFlexibleSnapshot: async () => {
       if (pause) await pause;
