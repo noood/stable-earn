@@ -138,6 +138,8 @@ test("startup diagnostics are visible only when explicitly requested", async ({ 
   await expect(diagnostics).toContainText("客户端启动");
   await expect(diagnostics).toContainText("私人页面模块");
   await expect(diagnostics).toContainText("持仓数据接口");
+  await expect(diagnostics).toContainText("产品缓存读取");
+  await expect(diagnostics).not.toContainText("每日刷新请求");
   await expect(diagnostics).toContainText("首轮数据就绪");
   await expect(diagnostics).toContainText("浏览器");
   await expect(diagnostics).toContainText("服务端");

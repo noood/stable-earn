@@ -22,6 +22,12 @@ import { legacyFailures, normalizeLegacyNote } from "@/lib/private-sync/status";
 import { privateCacheKey, recordDueManualMaturities, refreshPrivateProductsCache } from "@/lib/private-sync/service";
 import { withStartupServerTiming } from "@/lib/startup-timing";
 
+type DailyRefreshDiagnostic = {
+  state: "completed" | "waiting" | "skipped" | "failed" | "interrupted";
+  reason?: "refresh_in_progress" | "scheduled_retry_window" | "already_attempted_today";
+  result?: "success" | "partial" | "unknown";
+};
+
 export async function GET(request: Request) {
   return withStartupServerTiming(request, () => getProducts(request));
 }
@@ -82,8 +88,10 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
   const params = new URL(request.url).searchParams;
   const manual = refreshAllowed && params.get("refresh") === "1";
   const daily = refreshAllowed && !manual && params.get("visit") === "1";
+  const diagnosticsEnabled = params.get("diagnostics") === "1";
   const manualCooldownDuration = manualRefreshCooldownMs(await loadManualRefreshCooldown(db, identity.userId));
   let pending = false;
+  let dailyRefreshDiagnostic: DailyRefreshDiagnostic | undefined;
   async function reply(response: Response) {
     const body = await response.json() as Record<string, unknown>;
     const cache = body.cache;
@@ -92,7 +100,12 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
     }
     await recordDueManualMaturities(db, ownerId);
     const changeEvents = await loadProductChangeEvents(db, ownerId);
-    return NextResponse.json({ ...body, changeEvents, dailyRefreshPending: daily && pending }, {
+    return NextResponse.json({
+      ...body,
+      changeEvents,
+      dailyRefreshPending: daily && pending,
+      ...(daily && diagnosticsEnabled && dailyRefreshDiagnostic ? { dailyRefreshDiagnostic } : {}),
+    }, {
       status: response.status, headers: privateResponseHeaders,
     });
   }
@@ -120,6 +133,7 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
     if (!token) {
       syncDiagnostic("refresh_skipped", { reason: "refresh_in_progress" });
       pending = true;
+      if (daily) dailyRefreshDiagnostic = { state: "waiting", reason: "refresh_in_progress" };
       return reply(snapshot(await loadSyncCache(db, identity.userId, privateCacheKey), true));
     }
     try {
@@ -129,10 +143,12 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
       if (scheduledSyncEnabled && scheduledRefreshPending(now, syncCacheMetadata(cached, syncAttemptInProgress(cached, now) ? "syncing" : "fresh", now))) {
         syncDiagnostic("refresh_skipped", { reason: "scheduled_retry_window" });
         pending = true;
+        if (daily) dailyRefreshDiagnostic = { state: "waiting", reason: "scheduled_retry_window" };
         return reply(snapshot(cached, true));
       }
       if (daily && await dailyRefreshCompleted(db, identity.userId, dailyDay)) {
         syncDiagnostic("refresh_skipped", { reason: "daily_refresh_already_committed" });
+        dailyRefreshDiagnostic = { state: "skipped", reason: "already_attempted_today" };
         return reply(snapshot(cached));
       }
       const cooldownUntil = manualCooldownUntil(cached, now, manualCooldownDuration);
@@ -149,9 +165,19 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
           leaseToken: token,
           dailyDay,
         });
+        if (daily) dailyRefreshDiagnostic = { state: "completed", result: saved.payload?.partial ? "partial" : "success" };
         return reply(cachedResponse(saved, "updated", "已完成刷新。", Date.now(), manualCooldownDuration));
       } catch {
-        return reply(snapshot(await loadSyncCache(db, identity.userId, privateCacheKey)));
+        const latest = await loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey);
+        if (daily) {
+          const committed = await dailyRefreshCompleted(db, identity.userId, dailyDay);
+          dailyRefreshDiagnostic = committed
+            ? latest?.lastError
+              ? { state: "failed" }
+              : { state: "completed", result: latest?.payload?.partial ? "partial" : latest?.payload ? "success" : "unknown" }
+            : { state: "interrupted" };
+        }
+        return reply(snapshot(latest));
       }
     } finally {
       await releaseRefresh(db, identity.userId, token);
