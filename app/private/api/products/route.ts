@@ -20,8 +20,13 @@ import {
 import type { PrivateProductsPayload } from "@/lib/private-sync/types";
 import { legacyFailures, normalizeLegacyNote } from "@/lib/private-sync/status";
 import { privateCacheKey, recordDueManualMaturities, refreshPrivateProductsCache } from "@/lib/private-sync/service";
+import { withStartupServerTiming } from "@/lib/startup-timing";
 
 export async function GET(request: Request) {
+  return withStartupServerTiming(request, () => getProducts(request));
+}
+
+async function getProducts(request: Request) {
   const params = new URL(request.url).searchParams;
   if (params.has("refresh") || params.has("visit")) {
     return NextResponse.json({ error: "刷新请求必须使用 POST。" }, {
@@ -33,6 +38,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  return withStartupServerTiming(request, () => postProducts(request));
+}
+
+async function postProducts(request: Request) {
   const identity = await getUserIdentity(request);
   if (!identity) return NextResponse.json({ error: "请先登录。" }, { status: 401, headers: privateResponseHeaders });
   if (!isSameOriginMutation(request)) return NextResponse.json({ error: "请求来源无效。" }, { status: 403, headers: privateResponseHeaders });

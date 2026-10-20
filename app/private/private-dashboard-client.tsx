@@ -6,6 +6,8 @@ import { DashboardModuleFailure, DashboardModuleSkeleton } from "@/app/component
 import type { Asset } from "@/lib/domain";
 import { reportStartupDiagnostic, StartupDiagnostics } from "@/app/components/startup-diagnostics";
 
+const clientShellLoadedAt = typeof performance === "undefined" ? 0 : performance.now();
+
 function assetFromLocation(): Asset | null {
   if (typeof window === "undefined") return null;
   const value = new URLSearchParams(window.location.search).get("asset")?.toUpperCase();
@@ -14,7 +16,8 @@ function assetFromLocation(): Asset | null {
 
 const PrivateDashboard = dynamic(
   () => import("@/app/components/dashboard/dashboard").then((module) => {
-    reportStartupDiagnostic("dashboard-module", "私人页面模块", "已加载");
+    const now = performance.now();
+    reportStartupDiagnostic("dashboard-module", "私人页面模块", `模块等待 ${Math.round(now - clientShellLoadedAt)}ms · 页面启动 ${Math.round(now)}ms`);
     return module.Dashboard;
   }),
   {

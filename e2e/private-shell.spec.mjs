@@ -134,10 +134,13 @@ test("startup diagnostics are visible only when explicitly requested", async ({ 
   const bounds = await diagnostics.boundingBox();
   expect(bounds?.x).toBeGreaterThanOrEqual(0);
   expect((bounds?.x ?? 0) + (bounds?.width ?? 0)).toBeLessThanOrEqual(375);
-  await expect(diagnostics).toContainText("页面诊断（仅显示启动状态和 HTTP 状态码）");
-  await expect(diagnostics).toContainText("页面脚本");
+  await expect(diagnostics).toContainText("页面诊断（启动阶段与耗时）");
+  await expect(diagnostics).toContainText("客户端启动");
   await expect(diagnostics).toContainText("私人页面模块");
   await expect(diagnostics).toContainText("持仓数据接口");
+  await expect(diagnostics).toContainText("首轮数据就绪");
+  await expect(diagnostics).toContainText("浏览器");
+  await expect(diagnostics).toContainText("服务端");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
 
   await page.goto("/private");

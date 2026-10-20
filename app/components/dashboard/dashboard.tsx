@@ -156,8 +156,10 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const previewAt = localPreview && typeof window !== "undefined"
     ? new URLSearchParams(window.location.search).get("previewAt") : null;
   const previewQuery = localPreview ? `?preview=1${previewScenario ? `&syncScenario=${encodeURIComponent(previewScenario)}` : ""}${previewAt ? `&previewAt=${encodeURIComponent(previewAt)}` : ""}` : "";
-  const holdingsEndpoint = `/private/api/holdings${previewQuery}`;
-  const productsEndpoint = `/private/api/products${previewQuery}`;
+  const startupDiagnosticsQuery = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("diagnostics") === "1"
+    ? `${previewQuery ? "&" : "?"}diagnostics=1` : "";
+  const holdingsEndpoint = `/private/api/holdings${previewQuery}${startupDiagnosticsQuery}`;
+  const productsEndpoint = `/private/api/products${previewQuery}${startupDiagnosticsQuery}`;
   function refreshEndpoint(manual = false) {
     const daily = !manual && dailyRefreshPendingRef.current;
     const flag = manual ? "refresh=1" : daily ? "visit=1" : "";
@@ -209,16 +211,21 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   }, []);
 
   async function loadPersonalData(): Promise<HoldingMap | null> {
+    const startedAt = performance.now();
     setPersonalDataLoading(true);
     reportStartupDiagnostic("holdings", "持仓数据接口", "请求中");
     let responseStatus: number | null = null;
+    let response: Response | null = null;
+    function timing(outcome: string) {
+      const serverDuration = response?.headers?.get("server-timing")?.match(/(?:^|,\s*)app;dur=([\d.]+)/)?.[1];
+      return `${outcome} · 浏览器 ${Math.round(performance.now() - startedAt)}ms${serverDuration ? ` · 服务端 ${serverDuration}ms` : ""}`;
+    }
     try {
-      const response = await fetch(holdingsEndpoint, { cache: "no-store" });
+      response = await fetch(holdingsEndpoint, { cache: "no-store" });
       responseStatus = response.status;
-      reportStartupDiagnostic("holdings", "持仓数据接口", `HTTP ${response.status}`);
-      if (!response.ok) throw new Error("cloud holdings unavailable");
+      if (!response.ok) throw new Error("account holdings unavailable");
       const data = await response.json() as HoldingsApiResult;
-      reportStartupDiagnostic("holdings", "持仓数据接口", "响应已读取");
+      reportStartupDiagnostic("holdings", "持仓数据接口", timing(`HTTP ${response.status}`));
       if (data.products) setProducts(data.products);
       const loadedOverrides = data.overrides ?? {};
       const nextOverrides = localPreview
@@ -238,7 +245,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       setPersonalDataError(false);
       return next;
     } catch {
-      reportStartupDiagnostic("holdings", "持仓数据接口", responseStatus === null ? "网络请求失败" : `HTTP ${responseStatus}，响应读取失败`);
+      reportStartupDiagnostic("holdings", "持仓数据接口", timing(responseStatus === null ? "网络请求失败" : `HTTP ${responseStatus}，响应读取失败`));
       // A failed read is not an empty portfolio. Keep any existing data.
       personalDataReadyRef.current = false;
       setPersonalDataError(true);
@@ -282,26 +289,23 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
           reportStartupDiagnostic("session-error", "登录状态读取", "网络或响应读取失败");
           setUserEmail(null);
         });
-      reportStartupDiagnostic("initialization", "页面初始化", "已开始");
+      const initializationStartedAt = performance.now();
+      reportStartupDiagnostic("initialization", "页面初始化", `已开始 · 页面导航后 ${Math.round(initializationStartedAt)}ms`);
       setLoading(true);
       // Show the saved snapshot before requesting today's opening refresh.
+      const productsRequestStartedAt = performance.now();
       const productsResponse = fetch(productsEndpoint, { cache: "no-store" });
-      void productsResponse.then((response) => {
-        reportStartupDiagnostic("products-http", "产品数据接口", `HTTP ${response.status}`);
-      }).catch(() => {
-        reportStartupDiagnostic("products-error", "产品数据请求", "网络请求失败");
-      });
       personalDataLoadingRef.current = true;
       try {
         const loaded = await loadPersonalData();
         setHoldingsReady(loaded !== null);
-        await refreshRates(loaded ?? holdingsRef.current, { response: productsResponse, cacheOnly: true });
+        await refreshRates(loaded ?? holdingsRef.current, { response: productsResponse, cacheOnly: true, startedAt: productsRequestStartedAt });
         // An unreadable cache does not consume or cancel today's exchange attempt.
         if (dailyRefreshPendingRef.current) await refreshRates(holdingsRef.current);
       } finally {
         personalDataLoadingRef.current = false;
         setOpeningLoading(false);
-        reportStartupDiagnostic("initialization", "页面初始化", "首轮读取已结束");
+        reportStartupDiagnostic("initialization", "首轮数据就绪", `耗时 ${Math.round(performance.now() - initializationStartedAt)}ms · 页面导航后 ${Math.round(performance.now())}ms`);
       }
     }
 
@@ -313,18 +317,27 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function refreshRates(baseHoldings: HoldingMap = holdings, options?: { manual?: boolean; response?: Promise<Response>; silent?: boolean; cacheOnly?: boolean }) {
+  async function refreshRates(baseHoldings: HoldingMap = holdings, options?: { manual?: boolean; response?: Promise<Response>; silent?: boolean; cacheOnly?: boolean; startedAt?: number }) {
     if (refreshInFlightRef.current) return false;
     refreshInFlightRef.current = true;
+    const startedAt = options?.startedAt ?? performance.now();
+    const diagnosticKey = options?.cacheOnly ? "product-cache" : options?.manual ? "manual-refresh" : "daily-refresh";
+    const diagnosticLabel = options?.cacheOnly ? "产品缓存读取" : options?.manual ? "手动刷新" : "每日自动刷新";
+    let response: Response | null = null;
+    function timing(outcome: string) {
+      const serverDuration = response?.headers?.get("server-timing")?.match(/(?:^|,\s*)app;dur=([\d.]+)/)?.[1];
+      return `${outcome} · 浏览器 ${Math.round(performance.now() - startedAt)}ms${serverDuration ? ` · 服务端 ${serverDuration}ms` : ""}`;
+    }
+    reportStartupDiagnostic(diagnosticKey, diagnosticLabel, "请求中");
     const refreshingDaily = !options?.manual && !options?.cacheOnly && dailyRefreshPendingRef.current;
     if (!options?.silent) setLoading(true);
     if (options?.manual || refreshingDaily) setRefreshingExchange(true);
     try {
       const endpoint = options?.cacheOnly ? { url: productsEndpoint, method: "GET" as const } : refreshEndpoint(options?.manual);
-      const response = await (options?.response ?? fetch(endpoint.url, { method: endpoint.method, cache: "no-store" }));
-      reportStartupDiagnostic("rate-data", "产品与同步接口", `HTTP ${response.status}`);
+      response = await (options?.response ?? fetch(endpoint.url, { method: endpoint.method, cache: "no-store" }));
       if (!response.ok) {
         const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending"> | null;
+        reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing(`HTTP ${response.status}`));
         if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = errorData?.dailyRefreshPending === true;
         if (errorData?.cache?.state === "error") {
           setProductSnapshotReady(true);
@@ -340,7 +353,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         throw new Error("rate refresh failed");
       }
       const data = await response.json() as ApiResult;
-      reportStartupDiagnostic("rate-data", "产品与同步接口", "响应已读取");
+      reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing(`HTTP ${response.status}`));
       if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = data.dailyRefreshPending === true;
       setProductSnapshotReady(true);
       setSyncCache(data.cache);
@@ -388,7 +401,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       setClock(Date.now());
       return true;
     } catch {
-      reportStartupDiagnostic("rate-data", "产品与同步接口", "请求或响应读取失败");
+      reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing("请求或响应读取失败"));
       // A network/read failure does not start a repeating exchange retry loop.
       if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = false;
       setSyncing(false);
