@@ -5,6 +5,7 @@ import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
 function fixture({ scheduledEnabled = true, includeOkxProduct = false } = {}) {
   const logs = [];
+  const queries = [];
   let time = Date.parse("2026-09-05T00:56:15.064Z");
   class Clock extends Date {
     constructor(...args) { super(...(args.length ? args : [time])); }
@@ -18,6 +19,7 @@ function fixture({ scheduledEnabled = true, includeOkxProduct = false } = {}) {
   const db = {
     ...storage,
     prepare(sql) {
+      queries.push(sql);
       return { bind(...args) {
         const statement = storage.prepare(sql).bind(...args);
         return {
@@ -123,7 +125,7 @@ function fixture({ scheduledEnabled = true, includeOkxProduct = false } = {}) {
   }, { Date: Clock, console: { info: (record) => logs.push(record), warn: (record) => logs.push(record) } });
   const route = load("@/app/private/api/products/route");
   return {
-    route, db, load, logs, catalogCalls,
+    route, db, load, logs, catalogCalls, queries,
     now: () => new Clock().toISOString(),
     step(nextMode) { time += 60000; mode = nextMode; },
     setTime(value) { time = Date.parse(value); },
@@ -213,6 +215,50 @@ test("daily refresh diagnostics report request handling only in diagnostic mode"
 
   const ordinary = await f.read("?visit=1");
   assert.equal(Object.hasOwn(ordinary, "dailyRefreshDiagnostic"), false);
+});
+
+test("cache GET returns a same-snapshot daily marker without acquiring a refresh lock", async () => {
+  const f = fixture({ scheduledEnabled: false });
+  assert.deepEqual((await f.read()).dailyRefresh, { day: "2026-09-05", completed: false });
+  await f.read("?visit=1");
+  f.queries.length = 0;
+  const response = await f.route.GET(new Request("http://test/private/api/products?diagnostics=1"));
+  const data = await response.json();
+  assert.deepEqual(data.dailyRefresh, { day: "2026-09-05", completed: true });
+  assert.equal(data.cache.updatedAt, f.record().updated_at);
+  assert.ok(response.headers.get("server-timing").includes("snapshot_read;dur="));
+  assert.equal(f.queries.filter((sql) => sql.includes("LEFT JOIN sync_snapshots")).length, 1);
+  assert.equal(f.queries.some((sql) => /INSERT INTO refresh_control|UPDATE refresh_control/.test(sql)), false);
+  assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 1);
+  f.setTime("2026-09-05T16:00:00Z");
+  assert.deepEqual((await f.read()).dailyRefresh, { day: "2026-09-06", completed: false });
+});
+
+test("cache markers distinguish saved final failures/partial results from interrupted attempts", async () => {
+  for (const mode of ["error", "partial"]) {
+    const f = fixture({ scheduledEnabled: false });
+    f.step(mode);
+    await f.read("?visit=1");
+    const cache = await f.read();
+    assert.equal(cache.dailyRefresh.completed, true, mode);
+    if (mode === "error") assert.equal(cache.cache.state, "error");
+    else assert.equal(cache.partial, true);
+  }
+  const f = fixture({ scheduledEnabled: false });
+  f.db.batch = async () => { throw Error("interrupted commit"); };
+  await f.read("?visit=1");
+  assert.equal((await f.read()).dailyRefresh.completed, false);
+});
+
+test("cache reads retain busy state while still reporting the committed daily marker", async () => {
+  const f = fixture({ scheduledEnabled: false });
+  await f.read("?visit=1");
+  const control = f.load("@/lib/refresh-control");
+  const token = await control.acquireRefresh(f.db, "test-user");
+  const data = await f.read();
+  assert.equal(data.dailyRefresh.completed, true);
+  assert.equal(data.cache.state, "syncing");
+  await control.releaseRefresh(f.db, "test-user", token);
 });
 
 test("an already-completed daily visit exposes its storage stages without dispatching another sync", async () => {

@@ -93,7 +93,7 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
   let manualCooldownDuration: number;
   let pending = false;
   let dailyRefreshDiagnostic: DailyRefreshDiagnostic | undefined;
-  async function reply(response: Response, maturitiesRecorded = false) {
+  async function reply(response: Response, maturitiesRecorded = false, dailyRefresh?: { day: string; completed: boolean }) {
     const body = await response.json() as Record<string, unknown>;
     const cache = body.cache;
     if (!scheduledSyncEnabled && cache && typeof cache === "object" && !Array.isArray(cache)) {
@@ -104,6 +104,7 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
     return NextResponse.json({
       ...body,
       changeEvents,
+      ...(dailyRefresh ? { dailyRefresh } : {}),
       dailyRefreshPending: daily && pending,
       ...(daily && diagnosticsEnabled && dailyRefreshDiagnostic ? { dailyRefreshDiagnostic } : {}),
     }, {
@@ -126,7 +127,11 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
       timing.measure("maturities", () => recordDueManualMaturities(db, ownerId)),
     ]);
     manualCooldownDuration = saved.cooldownMs;
-    return reply(snapshot(saved.record, saved.leaseUntil > Date.now()), true);
+    const day = refreshDay();
+    return reply(snapshot(saved.record, saved.leaseUntil > Date.now()), true, {
+      day,
+      completed: saved.dailyDay === day && Boolean(saved.record?.payload || saved.record?.lastError),
+    });
   }
   manualCooldownDuration = manualRefreshCooldownMs(await timing.measure("settings", () => loadManualRefreshCooldown(db, identity.userId)));
   const dailyDay = daily ? refreshDay() : undefined;

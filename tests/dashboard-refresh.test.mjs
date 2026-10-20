@@ -77,6 +77,40 @@ test("startup diagnostics distinguish a daily refresh request from a later cache
 });
 
 for (const scenario of [
+  { name: "completed today", marker: { day: "2026-10-20", completed: true }, pending: false },
+  { name: "not committed today", marker: { day: "2026-10-20", completed: false }, pending: true },
+  { name: "missing marker", marker: undefined, pending: true },
+  { name: "malformed marker", marker: { completed: true }, pending: true },
+  { name: "failed cache read", readError: true, pending: true },
+  { name: "saved final failure without a successful cache", marker: { day: "2026-10-20", completed: true }, finalFailure: true, pending: false },
+]) {
+  test(`opening cache controls the daily request safely: ${scenario.name}`, async () => {
+    const requests = [], diagnostics = [];
+    const deps = {
+      productsEndpoint: "/products", isDemo: false,
+      reportStartupDiagnostic: (...entry) => diagnostics.push(entry), formatStartupRequestTiming,
+      dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false },
+      hiddenProductIdsRef: { current: [] },
+      fetch: async (url, options) => {
+        requests.push(options?.method ?? "GET");
+        if (scenario.readError) throw Error("network");
+        return { ok: !scenario.finalFailure, status: scenario.finalFailure ? 502 : 200, json: async () => ({
+          products: [], rates: [], dailyRefresh: scenario.marker, dailyRefreshPending: false,
+          cache: { state: scenario.finalFailure ? "error" : "fresh", updatedAt: null },
+        }) };
+      },
+    };
+    for (const [, name] of code.matchAll(/\b(set[A-Z]\w*)\(/g)) deps[name] = () => {};
+    const refresh = new Function(...Object.keys(deps), `${code}; return refreshRates;`)(...Object.values(deps));
+    await refresh({}, { cacheOnly: true });
+    assert.equal(deps.dailyRefreshPendingRef.current, scenario.pending);
+    assert.equal(diagnostics.some(([key, , message]) => key === "daily-refresh" && message.includes("无需请求")), !scenario.pending);
+    if (deps.dailyRefreshPendingRef.current) await refresh({});
+    assert.deepEqual(requests, scenario.pending ? ["GET", "POST"] : ["GET"]);
+  });
+}
+
+for (const scenario of [
   { name: "partial result", state: "updated", fallbacks: { bitget: "2026-09-05T00:56:15.064Z" } },
   { name: "ordinary cache read", state: "fresh", fallbacks: {} },
   { name: "opening cache read preserves daily opportunity without writing holdings", state: "fresh", fallbacks: {}, daily: true, cacheOnly: true },

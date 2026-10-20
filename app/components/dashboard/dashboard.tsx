@@ -26,6 +26,7 @@ import { readLocalPreviewOverrides, saveLocalPreviewOverrides } from "@/lib/loca
 
 type ApiResult = {
   dailyRefreshPending?: boolean;
+  dailyRefresh?: { day: string; completed: boolean };
   dailyRefreshDiagnostic?: {
     state: "completed" | "waiting" | "skipped" | "failed" | "interrupted";
     reason?: "refresh_in_progress" | "scheduled_retry_window" | "already_attempted_today";
@@ -374,6 +375,18 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     function timing(outcome: string) {
       return `${outcome} · ${formatStartupRequestTiming(response?.headers?.get("server-timing"), startedAt, performance.now())}`;
     }
+    function applyDailyRefreshStatus(data?: Pick<ApiResult, "dailyRefreshPending" | "dailyRefresh"> | null) {
+      if (options?.cacheOnly) {
+        // Only an explicit server marker can skip today's opening request.
+        // Missing metadata/read errors must preserve the pending opportunity.
+        if (data?.dailyRefresh?.completed === true && /^\d{4}-\d{2}-\d{2}$/.test(data.dailyRefresh.day)) {
+          dailyRefreshPendingRef.current = false;
+          reportStartupDiagnostic("daily-refresh", "每日刷新请求", "无需请求：服务端确认今日尝试已完成");
+        }
+      } else if (!options?.manual) {
+        dailyRefreshPendingRef.current = data?.dailyRefreshPending === true;
+      }
+    }
     reportStartupDiagnostic(diagnosticKey, diagnosticLabel, "请求中");
     if (!options?.silent) setLoading(true);
     if (options?.manual || refreshingDaily) setRefreshingExchange(true);
@@ -381,10 +394,10 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       const endpoint = options?.cacheOnly ? { url: productsEndpoint, method: "GET" as const } : refreshEndpoint(options?.manual);
       response = await (options?.response ?? fetch(endpoint.url, { method: endpoint.method, cache: "no-store" }));
       if (!response.ok) {
-        const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending" | "dailyRefreshDiagnostic"> | null;
+        const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending" | "dailyRefreshDiagnostic" | "dailyRefresh"> | null;
         const result = refreshingDaily ? dailyRefreshOutcome(errorData as ApiResult | null) : `HTTP ${response.status}`;
         reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing(`${result} · HTTP ${response.status}`));
-        if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = errorData?.dailyRefreshPending === true;
+        applyDailyRefreshStatus(errorData);
         if (errorData?.cache?.state === "error") {
           setProductSnapshotReady(true);
           setSyncCache(errorData.cache);
@@ -401,7 +414,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       const data = await response.json() as ApiResult;
       const result = refreshingDaily ? `${dailyRefreshOutcome(data)} · HTTP ${response.status}` : `HTTP ${response.status}`;
       reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing(result));
-      if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = data.dailyRefreshPending === true;
+      applyDailyRefreshStatus(data);
       setProductSnapshotReady(true);
       setSyncCache(data.cache);
       const hardFailure = data.cache?.state === "stale" || data.cache?.state === "error";
