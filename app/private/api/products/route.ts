@@ -93,18 +93,21 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
   let manualCooldownDuration: number;
   let pending = false;
   let dailyRefreshDiagnostic: DailyRefreshDiagnostic | undefined;
-  async function reply(response: Response, maturitiesRecorded = false, dailyRefresh?: { day: string; completed: boolean }) {
+  function readHistory() {
+    // Keep already-open older clients functional across a deployment. Only new
+    // clients opt into summaries; they never download the legacy event payload.
+    return timing.measure("history", async () => params.get("history") === "summary"
+      ? { historySummaries: await loadProductHistorySummaries(db, ownerId, timing.enabled ? timing : undefined) }
+      : { changeEvents: await loadProductChangeEvents(db, ownerId, 2000, timing.enabled ? timing : undefined) });
+  }
+  async function reply(response: Response, maturitiesRecorded = false, dailyRefresh?: { day: string; completed: boolean }, prefetchedHistory?: Awaited<ReturnType<typeof readHistory>>) {
     const body = await response.json() as Record<string, unknown>;
     const cache = body.cache;
     if (!scheduledSyncEnabled && cache && typeof cache === "object" && !Array.isArray(cache)) {
       body.cache = { ...(cache as Record<string, unknown>), scheduledAt: null, scheduledState: "disabled" };
     }
     if (!maturitiesRecorded) await timing.measure("maturities", () => recordDueManualMaturities(db, ownerId));
-    // Keep already-open older clients functional across a deployment. Only new
-    // clients opt into summaries; they never download the legacy event payload.
-    const history = await timing.measure("history", async () => params.get("history") === "summary"
-      ? { historySummaries: await loadProductHistorySummaries(db, ownerId, timing.enabled ? timing : undefined) }
-      : { changeEvents: await loadProductChangeEvents(db, ownerId, 2000, timing.enabled ? timing : undefined) });
+    const history = prefetchedHistory ?? await readHistory();
     return NextResponse.json({
       ...body,
       ...history,
@@ -126,16 +129,23 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
 
   // Ordinary polls never contact exchanges, including accounts without a cache.
   if (!manual && !daily) {
-    const [saved] = await Promise.all([
+    const [saved, hasMaturityCandidates, history] = await Promise.all([
       timing.measure("snapshot_read", () => loadPrivateProductsSnapshot<PrivateProductsPayload>(db, ownerId, privateCacheKey)),
       timing.measure("maturities", () => recordDueManualMaturities(db, ownerId)),
+      params.get("history") === "summary" ? readHistory() : undefined,
     ]);
     manualCooldownDuration = saved.cooldownMs;
     const day = refreshDay();
+    // Counts are monotonic (events are append-only). A parallel summary may
+    // predate a concurrent sync commit seen by the cache snapshot. Its count
+    // must cover that same snapshot, not just our own maturity writes.
+    const historyCoversSnapshot = history?.historySummaries
+      && history.historySummaries.reduce((count, summary) => count + summary.eventCount, 0) >= saved.historyEventCount;
+    const currentHistory = !hasMaturityCandidates && historyCoversSnapshot ? history : await readHistory();
     return reply(snapshot(saved.record, saved.leaseUntil > Date.now()), true, {
       day,
       completed: saved.dailyDay === day && Boolean(saved.record?.payload || saved.record?.lastError),
-    });
+    }, currentHistory);
   }
   manualCooldownDuration = manualRefreshCooldownMs(await timing.measure("settings", () => loadManualRefreshCooldown(db, identity.userId)));
   const dailyDay = daily ? refreshDay() : undefined;
