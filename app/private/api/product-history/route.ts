@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDatabase, getUserIdentity } from "@/lib/db";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
-import { loadProductChangeEventPage, markProductChangeEventsRead } from "@/lib/product-change-events";
+import { loadProductChangeEventPage, loadProductHistorySummaries, markProductChangeEventsRead } from "@/lib/product-change-events";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +41,8 @@ export async function POST(request: Request) {
     || eventIds.some((id) => typeof id !== "string" || !id.trim() || id.length > 512)) {
     return NextResponse.json({ error: "变更记录请求格式不正确。" }, { status: 400, headers: privateResponseHeaders });
   }
-  const readAt = await markProductChangeEventsRead(await getDatabase(), identity.userId, productId.trim(), eventIds);
-  return NextResponse.json({ readAt, eventIds }, { headers: privateResponseHeaders });
+  const db = await getDatabase();
+  const readAt = await markProductChangeEventsRead(db, identity.userId, productId.trim(), eventIds);
+  const [historySummary] = await loadProductHistorySummaries(db, identity.userId, undefined, productId.trim());
+  return NextResponse.json({ readAt, eventIds, historySummary }, { headers: privateResponseHeaders });
 }

@@ -281,15 +281,31 @@ test("cache and maturity reads overlap, but history waits until maturity process
     } };
     return statement;
   } });
-  const read = f.read();
+  const read = f.read("?history=summary");
   try {
     for (let i = 0; i < 30 && !(snapshotStarted && maturityStarted); i++) await new Promise(setImmediate);
     assert.equal(snapshotStarted, true);
     assert.equal(maturityStarted, true);
     assert.equal(f.queries.some((sql) => sql.includes("FROM product_change_events")), false);
   } finally { release(); }
-  await read;
+  const result = await read;
+  assert.ok(Array.isArray(result.historySummaries));
+  assert.equal(result.changeEvents, undefined);
   assert.equal(f.queries.some((sql) => sql.includes("FROM product_change_events")), true);
+  assert.equal(f.queries.some((sql) => sql.includes("ORDER BY observed_at DESC, event_id DESC")), false);
+});
+
+test("new clients opt into summary payloads without breaking an already-open legacy client", async () => {
+  const f = fixture({ scheduledEnabled: false });
+  f.db.sqlite.prepare(`INSERT INTO product_change_events
+    (owner_id,event_id,product_id,change_type,title,observed_at,source,attention)
+    VALUES ('test-user','legacy-alert','p','rate','old unread','2026-01-01T00:00:00Z','手动刷新',1)`).run();
+  const legacy = await f.read();
+  assert.equal(legacy.changeEvents[0].id, "legacy-alert");
+  assert.equal(legacy.historySummaries, undefined);
+  const modern = await f.read("?history=summary");
+  assert.equal(modern.changeEvents, undefined);
+  assert.deepEqual(modern.historySummaries, [{ productId: "p", eventCount: 1, unreadCount: 1 }]);
 });
 
 test("an already-completed daily visit exposes its storage stages without dispatching another sync", async () => {

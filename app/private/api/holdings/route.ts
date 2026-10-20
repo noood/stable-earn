@@ -10,6 +10,7 @@ import { loadCatalogProducts } from "@/lib/product-catalog";
 import { withStartupServerTiming, type StartupServerTiming } from "@/lib/startup-timing";
 import {
   buildManualChangeEvents,
+  loadProductHistorySummaries,
   loadProductChangeEvents,
   prepareProductChangeEventStatements,
   type ProductChangeSource,
@@ -294,8 +295,10 @@ export async function PUT(request: Request) {
     ...prepareProductChangeEventStatements(db, userId, changeEvents),
   ];
   if (statements.length > 0) await db.batch(statements);
-  const storedChangeEvents = await loadProductChangeEvents(db, userId);
-  return NextResponse.json({ saved: entries.length, manualUpdated: overrideEntries.length, productUpdated: manualProductUpdates.length, productDeleted: deletedManualProductIds.length, productHidden: hiddenProductsProvided ? hiddenProductIds.length : 0, updatedAt, changeEvents: storedChangeEvents }, { headers: privateResponseHeaders });
+  const history = new URL(request.url).searchParams.get("history") === "summary"
+    ? { historySummaries: await loadProductHistorySummaries(db, userId) }
+    : { changeEvents: await loadProductChangeEvents(db, userId) };
+  return NextResponse.json({ saved: entries.length, manualUpdated: overrideEntries.length, productUpdated: manualProductUpdates.length, productDeleted: deletedManualProductIds.length, productHidden: hiddenProductsProvided ? hiddenProductIds.length : 0, updatedAt, ...history }, { headers: privateResponseHeaders });
 }
 
 function parseChangeSource(value: unknown): ProductChangeSource {

@@ -1,6 +1,6 @@
 import type { D1Database, D1Result } from "@cloudflare/workers-types";
 import type { StartupServerTiming } from "./startup-timing";
-import type { HoldingMap, HoldingPosition, Product, ProductChangeEvent } from "./domain";
+import type { HoldingMap, HoldingPosition, Product, ProductChangeEvent, ProductHistorySummary } from "./domain";
 import { formatAmount } from "./domain";
 import type { LiveRate } from "./live-rates";
 import { minimumOpportunityApr } from "./opportunity-policy";
@@ -328,6 +328,27 @@ export function prepareProductChangeEventStatements(db: D1Database, ownerId: str
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(ownerId, event.id, event.productId, event.type, event.title, event.before ?? null, event.after ?? null,
       event.observedAt, event.source, event.attention ? 1 : 0));
+}
+
+export async function loadProductHistorySummaries(db: D1Database, ownerId: string, timing?: StartupServerTiming, productId?: string) {
+  const read = async () => {
+    // Events are append-only. Count changes also detect backdated maturity events,
+    // unlike a revision based only on the newest timestamp or event ID.
+    const result = await db.prepare(`SELECT product_id, COUNT(*) AS event_count,
+      SUM(CASE WHEN attention = 1 AND read_at IS NULL THEN 1 ELSE 0 END) AS unread_count
+      FROM product_change_events WHERE owner_id = ?${productId === undefined ? "" : " AND product_id = ?"}
+      GROUP BY product_id`).bind(...(productId === undefined ? [ownerId] : [ownerId, productId]))
+      .all<{ product_id: string; event_count: number; unread_count: number }>();
+    timing?.record("history_summary_rows", result.results.length);
+    timing?.record("history_summary_sql", result.meta?.timings?.sql_duration_ms);
+    timing?.record("history_summary_d1", result.meta?.duration);
+    timing?.record("history_summary_read", result.meta?.rows_read);
+    timing?.record("history_summary_attempts", result.meta?.total_attempts);
+    return result.results.map((row): ProductHistorySummary => ({
+      productId: row.product_id, eventCount: row.event_count, unreadCount: row.unread_count,
+    }));
+  };
+  return timing ? timing.measure("history_summary", read) : read();
 }
 
 export async function loadProductChangeEvents(db: D1Database, ownerId: string, limit = 2000, timing?: StartupServerTiming) {

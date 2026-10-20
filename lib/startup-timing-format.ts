@@ -11,6 +11,7 @@ export const startupTimingPhases = {
   daily_check: "检查当日记录",
   maturities: "检查手动产品到期",
   history: "读取变更记录",
+  history_summary: "历史摘要调用总耗时",
   history_recent: "最近历史调用总耗时",
   history_unread: "未读提醒调用总耗时",
   history_merge: "历史合并去重排序",
@@ -21,6 +22,11 @@ export const startupTimingPhases = {
 export const startupTimingMetrics = {
   auth_keys_cached: { label: "解析前公钥缓存有效", unit: "（1是/0否）" },
   auth_keys_loading: { label: "解析前公钥请求进行中", unit: "（1是/0否）" },
+  history_summary_sql: { label: "历史摘要 SQL 执行（末次尝试）", unit: "ms" },
+  history_summary_d1: { label: "历史摘要 D1 duration", unit: "ms" },
+  history_summary_rows: { label: "历史摘要返回", unit: "条" },
+  history_summary_read: { label: "历史摘要扫描", unit: "行" },
+  history_summary_attempts: { label: "历史摘要执行尝试", unit: "次" },
   history_recent_sql: { label: "最近历史 SQL 执行（末次尝试）", unit: "ms" },
   history_unread_sql: { label: "未读提醒 SQL 执行（末次尝试）", unit: "ms" },
   history_recent_d1: { label: "最近历史 D1 duration", unit: "ms" },
@@ -60,7 +66,7 @@ export function formatStartupRequestTiming(header: string | null | undefined, st
     recordedMetrics.add(match[1]);
     return [`${metric.label} ${Number(match[2])}${metric.unit}`];
   });
-  for (const [phase, label] of [["history_recent", "最近历史"], ["history_unread", "未读提醒"]]) {
+  for (const [phase, label] of [["history_recent", "最近历史"], ["history_unread", "未读提醒"], ["history_summary", "历史摘要"]]) {
     if (metrics.some((metric) => metric.name === phase) && !recordedMetrics.has(`${phase}_sql`)) {
       details.push(`${label}：D1 未提供独立 SQL 耗时`);
     }

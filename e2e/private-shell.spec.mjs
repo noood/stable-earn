@@ -57,6 +57,8 @@ test("module-loading skeleton has no visible copy and gives way to the dashboard
 });
 
 test("module-download failure keeps the fixed shell without a retry button", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
   let dashboardRequestBlocked = false;
   const accountReads = [];
   page.on("request", (request) => {
@@ -83,6 +85,23 @@ test("module-download failure keeps the fixed shell without a retry button", asy
   await expect(page.getByRole("columnheader", { name: "平台 / 产品" })).toBeVisible();
   await expect(page.getByText("实际到账以平台账户为准。", { exact: false })).toBeVisible();
   expect(accountReads).toHaveLength(0);
+  expect(pageErrors).toEqual([]);
+});
+
+test("dashboard preload starts before client mount and downloads once", async ({ page }) => {
+  const dashboardRequests = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/app/components/dashboard/dashboard.tsx")) dashboardRequests.push(request);
+  });
+  await page.goto("/private?diagnostics=1");
+  const diagnostics = page.getByLabel("页面启动诊断");
+  await expect(diagnostics).toContainText("私人页面模块");
+  await expect(diagnostics).toContainText("客户端挂载");
+  const started = await diagnostics.locator("li").filter({ hasText: "页面模块开始加载" }).textContent();
+  const mounted = await diagnostics.locator("li").filter({ hasText: "客户端挂载" }).textContent();
+  expect(Number(started.match(/导航后 (\d+)ms/)[1])).toBeLessThanOrEqual(Number(mounted.match(/导航后 (\d+)ms/)[1]));
+  expect(dashboardRequests).toHaveLength(1);
+  await expect(page.locator(".metrics-panel .skeleton-block")).toHaveCount(0);
 });
 
 test("a completed server daily marker removes the extra request without hiding the saved failure", async ({ page }) => {

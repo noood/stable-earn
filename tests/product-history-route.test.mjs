@@ -39,8 +39,10 @@ test("opening product history persists read state for the caller only", async ()
     body: JSON.stringify({ productId: "product-a", eventIds: ["event-user-1"] }),
   }));
   assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.deepEqual(result.historySummary, { productId: "product-a", eventCount: 1, unreadCount: 0 });
   const listed = await authorized.GET(new Request("https://example.test/private/api/product-history?productId=product-a"));
-  assert.equal((await listed.json()).events[0].readAt, (await response.json()).readAt);
+  assert.equal((await listed.json()).events[0].readAt, result.readAt);
 
   const crossOrigin = routeFixture();
   assert.equal((await crossOrigin.POST(new Request("https://example.test/private/api/product-history", {

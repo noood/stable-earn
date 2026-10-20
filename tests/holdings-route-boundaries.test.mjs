@@ -27,7 +27,7 @@ function fixture({ savedAmount = 0, snapshotAmount = 50, mixedSource = false, ma
   db.sqlite.prepare("INSERT INTO sync_snapshots (owner_id, cache_key, payload, updated_at) VALUES (?, 'private-products', ?, ?)")
     .run("user", JSON.stringify({ holdingUpdates: { [product.id]: snapshotAmount }, holdingSyncStates: { [product.id]: "synced" } }), time);
   const route = load("@/app/private/api/holdings/route");
-  const request = (payload) => new Request("https://local.test/private/api/holdings", {
+  const request = (payload, query = "") => new Request(`https://local.test/private/api/holdings${query}`, {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
   });
   const amount = () => db.sqlite.prepare("SELECT amount FROM holdings WHERE user_id = 'user' AND product_id = ?")
@@ -76,6 +76,23 @@ test("a null amount cannot erase a holding, and an API amount must match its tru
   }
   const accepted = await f.route.PUT(f.request({ holdings: { [f.product.id]: 50 }, changedHoldingProductIds: [f.product.id] }));
   assert.equal(accepted.status, 200);
+  assert.equal(f.amount(), 50);
+});
+
+test("manual saves return refreshed summaries to new clients and keep legacy event responses compatible", async () => {
+  const f = fixture({ manualCatalog: true, savedAmount: 100 });
+  const save = async (amount, query = "") => {
+    const response = await f.route.PUT(f.request({ holdings: { [f.product.id]: amount },
+      changedHoldingProductIds: [f.product.id], source: "手动编辑" }, query));
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const modern = await save(75, "?history=summary");
+  assert.equal(modern.changeEvents, undefined);
+  assert.deepEqual(modern.historySummaries, [{ productId: f.product.id, eventCount: 1, unreadCount: 0 }]);
+  const legacy = await save(50);
+  assert.equal(legacy.historySummaries, undefined);
+  assert.equal(legacy.changeEvents.length, 2);
   assert.equal(f.amount(), 50);
 });
 
