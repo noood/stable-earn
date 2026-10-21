@@ -16,7 +16,7 @@ function insert(db, owner, product, id, attention = 0, observedAt = "2026-10-20T
     .run(owner, id, product, observedAt, attention);
 }
 
-test("one grouped query returns small owner-scoped summaries, including old unread alerts beyond the latest page", async () => {
+test("one materialized read returns small owner-scoped summaries, including old unread alerts beyond the latest page", async () => {
   const db = sqliteDb();
   insert(db, "a", "p", "old-unread", 1, "2020-01-01T00:00:00Z");
   for (let i = 0; i < 2100; i++) insert(db, "a", "p", `ordinary-${i}`);

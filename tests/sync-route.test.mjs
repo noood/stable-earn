@@ -3,6 +3,8 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
+const isHistoryRead = (sql) => /FROM product_change_events\s+WHERE|LEFT JOIN product_history_summaries/.test(sql);
+
 function fixture({ scheduledEnabled = true, includeOkxProduct = false } = {}) {
   const logs = [];
   const queries = [];
@@ -261,7 +263,7 @@ test("cache reads retain busy state while still reporting the committed daily ma
   await control.releaseRefresh(f.db, "test-user", token);
 });
 
-test("cache and maturity reads overlap, but history waits until maturity processing finishes", async () => {
+test("cache, maturity and history reads overlap without a second history read when no alerts are due", async () => {
   const f = fixture({ scheduledEnabled: false });
   const prepare = f.db.prepare.bind(f.db);
   let release;
@@ -274,7 +276,7 @@ test("cache and maturity reads overlap, but history waits until maturity process
       await gate;
       return statement.first();
     } };
-    if (sql.includes("SELECT product_id, amount FROM holdings")) return { ...statement, all: async () => {
+    if (sql.includes("FROM holdings h")) return { ...statement, all: async () => {
       maturityStarted = true;
       await gate;
       return statement.all();
@@ -286,13 +288,111 @@ test("cache and maturity reads overlap, but history waits until maturity process
     for (let i = 0; i < 30 && !(snapshotStarted && maturityStarted); i++) await new Promise(setImmediate);
     assert.equal(snapshotStarted, true);
     assert.equal(maturityStarted, true);
-    assert.equal(f.queries.some((sql) => sql.includes("FROM product_change_events")), false);
+    assert.equal(f.queries.some(isHistoryRead), true);
   } finally { release(); }
   const result = await read;
   assert.ok(Array.isArray(result.historySummaries));
   assert.equal(result.changeEvents, undefined);
-  assert.equal(f.queries.some((sql) => sql.includes("FROM product_change_events")), true);
+  assert.equal(f.queries.filter(isHistoryRead).length, 1);
   assert.equal(f.queries.some((sql) => sql.includes("ORDER BY observed_at DESC, event_id DESC")), false);
+});
+
+function seedDueManualPosition(db) {
+  db.sqlite.prepare(`INSERT INTO user_products
+    (user_id,product_id,account_id,asset,product_kind,term_days,created_at,updated_at)
+    VALUES ('test-user','manual-due','binance-global','USDT','fixed',7,'2026-08-01','2026-08-01')`).run();
+  db.sqlite.prepare(`INSERT INTO holdings (user_id,product_id,amount,updated_at)
+    VALUES ('test-user','manual-due',100,'2026-08-01')`).run();
+  db.sqlite.prepare(`INSERT INTO product_overrides (user_id,product_id,purchase_date,updated_at)
+    VALUES ('test-user','manual-due','2026-08-01','2026-08-01')`).run();
+}
+
+test("a due alert is committed before history is reread, and repeat visits preserve its read state", async () => {
+  for (const query of ["?history=summary", ""]) {
+    const f = fixture({ scheduledEnabled: false });
+    seedDueManualPosition(f.db);
+    const batch = f.db.batch.bind(f.db);
+    let release, writing = false;
+    const gate = new Promise((resolve) => { release = resolve; });
+    f.db.batch = async (statements) => { writing = true; await gate; return batch(statements); };
+    let settled = false;
+    const read = f.read(query).finally(() => { settled = true; });
+    try {
+      for (let i = 0; i < 30 && !writing; i++) await new Promise(setImmediate);
+      assert.equal(writing, true);
+      assert.equal(settled, false);
+      assert.equal(f.queries.filter(isHistoryRead).length, query ? 1 : 0);
+    } finally { release(); }
+    const data = await read;
+    if (query) assert.deepEqual(data.historySummaries, [{ productId: "manual-due", eventCount: 1, unreadCount: 1 }]);
+    else assert.equal(data.changeEvents[0].title, "定期已到期");
+    assert.equal(f.queries.filter(isHistoryRead).length, 2);
+
+    f.db.sqlite.prepare("UPDATE product_change_events SET read_at = '2026-09-05' WHERE owner_id = 'test-user'").run();
+    const repeated = await f.read(query);
+    if (query) assert.equal(repeated.historySummaries[0].unreadCount, 0);
+    else assert.equal(repeated.changeEvents[0].readAt, "2026-09-05");
+    assert.equal(f.db.sqlite.prepare("SELECT COUNT(*) AS n FROM product_change_events").get().n, 1);
+  }
+});
+
+test("an ignored maturity insert still rereads history if another request wrote the alert after prefetch", async () => {
+  const f = fixture({ scheduledEnabled: false });
+  seedDueManualPosition(f.db);
+  const batch = f.db.batch.bind(f.db);
+  f.db.batch = async (statements) => {
+    // Model a concurrent request committing after this request's empty prefetch.
+    await statements[0].run();
+    const results = await batch(statements);
+    assert.equal(results[0].meta.changes, 0);
+    return results;
+  };
+  const data = await f.read("?history=summary");
+  assert.deepEqual(data.historySummaries, [{ productId: "manual-due", eventCount: 1, unreadCount: 1 }]);
+  assert.equal(f.queries.filter(isHistoryRead).length, 2);
+});
+
+test("failed maturity writes or history reads reject instead of returning a successful stale summary", async () => {
+  const f = fixture({ scheduledEnabled: false });
+  seedDueManualPosition(f.db);
+  f.db.batch = async () => { throw Error("maturity commit failed"); };
+  await assert.rejects(f.read("?history=summary"), /maturity commit failed/);
+
+  const g = fixture({ scheduledEnabled: false });
+  const prepare = g.db.prepare.bind(g.db);
+  g.db.prepare = (sql) => isHistoryRead(sql)
+    ? { bind: () => ({ all: async () => { throw Error("history read failed"); } }) }
+    : prepare(sql);
+  await assert.rejects(g.read("?history=summary"), /history read failed/);
+});
+
+test("parallel history cannot lag behind a concurrent commit observed by the cache snapshot", async () => {
+  for (const delayed of ["snapshot", "history"]) {
+    const f = fixture({ scheduledEnabled: false });
+    const prepare = f.db.prepare.bind(f.db);
+    let release, blocked = false;
+    const gate = new Promise((resolve) => { release = resolve; });
+    f.db.prepare = (sql) => ({ bind(...args) {
+      const statement = prepare(sql).bind(...args);
+      const method = delayed === "snapshot" && sql.includes("FROM (SELECT ? AS owner_id)") ? "first"
+        : delayed === "history" && isHistoryRead(sql) ? "all" : null;
+      if (!method) return statement;
+      return { ...statement, [method]: async () => { blocked = true; await gate; return statement[method](); } };
+    } });
+    const read = f.read("?history=summary");
+    try {
+      for (let i = 0; i < 30 && !blocked; i++) await new Promise(setImmediate);
+      assert.equal(blocked, true);
+      // Let the other parallel read complete before the synthetic sync commit.
+      await new Promise(setImmediate);
+      f.db.sqlite.prepare(`INSERT INTO product_change_events
+        (owner_id,event_id,product_id,change_type,title,observed_at,source,attention)
+        VALUES ('test-user','concurrent','p','rate','new alert','2026-09-05','手动刷新',1)`).run();
+    } finally { release(); }
+    const data = await read;
+    assert.deepEqual(data.historySummaries, [{ productId: "p", eventCount: 1, unreadCount: 1 }]);
+    assert.equal(f.queries.filter(isHistoryRead).length, delayed === "snapshot" ? 2 : 1);
+  }
 });
 
 test("new clients opt into summary payloads without breaking an already-open legacy client", async () => {

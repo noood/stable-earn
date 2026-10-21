@@ -22,6 +22,7 @@ test("daily opening and manual refresh use POST; ordinary cache polling stays GE
   const requests = [], methods = [];
   const deps = {
     productsEndpoint: "/products", isDemo: false,
+    lastProductRequestAtRef: { current: null },
     reportStartupDiagnostic: () => {},
     formatStartupRequestTiming,
     dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false },
@@ -52,6 +53,7 @@ test("startup diagnostics distinguish a daily refresh request from a later cache
   let requests = 0;
   const deps = {
     productsEndpoint: "/products?diagnostics=1", isDemo: false,
+    lastProductRequestAtRef: { current: null },
     reportStartupDiagnostic: (...entry) => diagnostics.push(entry),
     formatStartupRequestTiming,
     dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false },
@@ -88,6 +90,7 @@ for (const scenario of [
     const requests = [], diagnostics = [];
     const deps = {
       productsEndpoint: "/products", isDemo: false,
+      lastProductRequestAtRef: { current: null },
       reportStartupDiagnostic: (...entry) => diagnostics.push(entry), formatStartupRequestTiming,
       dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false },
       hiddenProductIdsRef: { current: [] },
@@ -130,6 +133,7 @@ for (const scenario of [
     };
     const deps = {
       isDemo: false, productsEndpoint: "/products", holdingsEndpoint: "/holdings",
+      lastProductRequestAtRef: { current: null },
       reportStartupDiagnostic: () => {},
       formatStartupRequestTiming,
       hiddenProductIdsRef: { current: [] }, productOverridesRef: { current: {} }, manualProductsRef: { current: [] },

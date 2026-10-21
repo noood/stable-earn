@@ -14,23 +14,31 @@ import { buildPrivatePayload } from "./payload";
 
 export const privateCacheKey = "private-products";
 
-export async function recordDueManualMaturities(db: D1Database, userId: string) {
-  const [catalogProducts, userProducts, holdingRows, overrideRows, limitRows, termRows] = await Promise.all([
+/** True means due candidates were processed; a prefetched history may be stale. */
+export async function recordDueManualMaturities(db: D1Database, userId: string): Promise<boolean> {
+  const [catalogProducts, userProducts, holdingRows] = await Promise.all([
     loadCatalogProducts(db, userId),
     loadUserProducts(db, userId),
-    db.prepare("SELECT product_id, amount FROM holdings WHERE user_id = ?").bind(userId).all<{ product_id: string; amount: number }>(),
-    db.prepare("SELECT product_id, confirmed_apr, purchase_date, product_kind_override, updated_at FROM product_overrides WHERE user_id = ?").bind(userId).all<{ product_id: string; confirmed_apr: number | null; purchase_date: string | null; product_kind_override: "flexible" | "fixed" | "limited" | null; updated_at: string }>(),
-    db.prepare("SELECT product_id, first_tier_limit FROM product_override_limits WHERE user_id = ?").bind(userId).all<{ product_id: string; first_tier_limit: number | null }>(),
-    db.prepare("SELECT product_id, term_days FROM product_override_terms WHERE user_id = ?").bind(userId).all<{ product_id: string; term_days: number | null }>(),
+    // Only positive positions can produce maturity alerts. Join on both account
+    // and product so one read replaces the four separate holding/override reads.
+    db.prepare(`SELECT h.product_id, h.amount, o.confirmed_apr, o.purchase_date,
+        o.product_kind_override, o.updated_at, l.first_tier_limit, t.term_days
+      FROM holdings h
+      LEFT JOIN product_overrides o ON o.user_id = h.user_id AND o.product_id = h.product_id
+      LEFT JOIN product_override_limits l ON l.user_id = h.user_id AND l.product_id = h.product_id
+      LEFT JOIN product_override_terms t ON t.user_id = h.user_id AND t.product_id = h.product_id
+      WHERE h.user_id = ? AND h.amount > 0`).bind(userId).all<{
+        product_id: string; amount: number; confirmed_apr: number | null;
+        purchase_date: string | null; product_kind_override: "flexible" | "fixed" | "limited" | null;
+        updated_at: string | null; first_tier_limit: number | null; term_days: number | null;
+      }>(),
   ]);
   const products = [...catalogProducts, ...userProducts].filter((product) => product.productDataMode === "manual");
-  if (products.length === 0) return;
-  const limits = new Map(limitRows.results.map((row) => [row.product_id, row.first_tier_limit]));
-  const terms = new Map(termRows.results.map((row) => [row.product_id, row.term_days]));
-  const overrides = Object.fromEntries(overrideRows.results.map((row) => [row.product_id, {
+  if (products.length === 0) return false;
+  const overrides = Object.fromEntries(holdingRows.results.map((row) => [row.product_id, {
     apr: row.confirmed_apr,
-    firstTierLimit: limits.get(row.product_id) ?? null,
-    termDays: terms.get(row.product_id) ?? null,
+    firstTierLimit: row.first_tier_limit,
+    termDays: row.term_days,
     purchaseDate: row.purchase_date,
     updatedAt: row.updated_at,
     manualKind: row.product_kind_override,
@@ -38,7 +46,12 @@ export async function recordDueManualMaturities(db: D1Database, userId: string) 
   const resolvedProducts = products.map((product) => applyProductOverride(product, overrides[product.id]));
   const holdings = Object.fromEntries(holdingRows.results.map((row) => [row.product_id, Number(row.amount)])) as HoldingMap;
   const events = buildManualMaturityEvents(resolvedProducts, holdings, overrides);
-  if (events.length > 0) await db.batch(prepareProductChangeEventStatements(db, userId, events));
+  if (events.length === 0) return false;
+  await db.batch(prepareProductChangeEventStatements(db, userId, events));
+  // Even an ignored insert may have raced with another request that just wrote
+  // this alert, after our history prefetch. Always reread when candidates exist.
+  // INSERT OR IGNORE still preserves the existing event's read state.
+  return true;
 }
 
 export async function refreshPrivateProductsCache(db: D1Database, userId: string, options: RefreshOptions = {}) {

@@ -14,7 +14,7 @@ type RuntimeEnv = Cloudflare.Env & {
 
 type UserIdentity = { userId: string; email: string };
 
-let initialized = false;
+const databaseInitializations = new WeakMap<D1Database, Promise<void>>();
 let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 let jwksIssuer: string | null = null;
 
@@ -22,12 +22,45 @@ export async function getDatabase() {
   const db = (env as RuntimeEnv).DB;
   if (!db) throw new Error("D1 binding DB is not configured");
 
-  if (!initialized) {
-    await db.batch(schemaStatements.map((statement) => db.prepare(statement)));
-    initialized = true;
+  let initialization = databaseInitializations.get(db);
+  if (!initialization) {
+    initialization = initializeDatabase(db).catch((error) => {
+      databaseInitializations.delete(db);
+      throw error;
+    });
+    databaseInitializations.set(db, initialization);
   }
+  await initialization;
 
   return db;
+}
+
+async function initializeDatabase(db: D1Database) {
+  let marker: { version: unknown } | null;
+  try {
+    marker = await db.prepare("SELECT version FROM product_history_meta WHERE singleton = 1").bind().first<{ version: unknown }>();
+  } catch (error) {
+    if (!isMissingHistoryMetaTable(error)) throw error;
+    marker = null;
+  }
+  if (marker?.version === 1) return;
+  // A newer/unknown schema must never be bootstrapped with this version's DDL.
+  if (marker !== null) throw new Error("Unsupported database schema version");
+  const results = await db.batch(schemaStatements.map((statement) => db.prepare(statement)));
+  if (!Array.isArray(results) || results.length !== schemaStatements.length || results.some((result) => result?.success !== true)) {
+    throw new Error("Database schema initialization failed");
+  }
+}
+
+function isMissingHistoryMetaTable(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current = error;
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    if (/\bno such table:\s*(?:main\.)?product_history_meta(?:\s*:\s*SQLITE_ERROR)?\s*$/i.test(current.message)) return true;
+    current = current.cause;
+  }
+  return false;
 }
 
 export function isScheduledSyncEnabled() {

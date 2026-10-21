@@ -1,3 +1,5 @@
+import { historySchemaStatements } from "@/lib/product-history-schema";
+
 export const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS refresh_control (
     user_id TEXT PRIMARY KEY,
@@ -172,4 +174,5 @@ export const schemaStatements = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_hidden_products_user_id
     ON hidden_products (user_id)`,
+  ...historySchemaStatements,
 ] as const;

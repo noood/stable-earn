@@ -1,4 +1,4 @@
-import type { D1Database, D1Result } from "@cloudflare/workers-types";
+import type { D1Database } from "@cloudflare/workers-types";
 import type { StartupServerTiming } from "./startup-timing";
 import type { HoldingMap, HoldingPosition, Product, ProductChangeEvent, ProductHistorySummary } from "./domain";
 import { formatAmount } from "./domain";
@@ -334,58 +334,110 @@ export async function loadProductHistorySummaries(db: D1Database, ownerId: strin
   const read = async () => {
     // Events are append-only. Count changes also detect backdated maturity events,
     // unlike a revision based only on the newest timestamp or event ID.
-    const result = await db.prepare(`SELECT product_id, COUNT(*) AS event_count,
-      SUM(CASE WHEN attention = 1 AND read_at IS NULL THEN 1 ELSE 0 END) AS unread_count
-      FROM product_change_events WHERE owner_id = ?${productId === undefined ? "" : " AND product_id = ?"}
-      GROUP BY product_id`).bind(...(productId === undefined ? [ownerId] : [ownerId, productId]))
-      .all<{ product_id: string; event_count: number; unread_count: number }>();
-    timing?.record("history_summary_rows", result.results.length);
+    const result = await db.prepare(`SELECT h.product_id, h.event_count, h.unread_count, m.version AS history_version
+      FROM product_history_meta m
+      LEFT JOIN product_history_summaries h ON h.owner_id = ?${productId === undefined ? "" : " AND h.product_id = ?"}
+      WHERE m.singleton = 1 ORDER BY h.product_id`)
+      .bind(...(productId === undefined ? [ownerId] : [ownerId, productId]))
+      .all<{ product_id: string | null; event_count: number; unread_count: number; history_version: number }>();
+    if (!result.results.length || result.results.some((row) => row.history_version !== 1)) throw new Error("product history summaries not initialized");
+    const rows = result.results.filter((row) => row.product_id !== null);
+    timing?.record("history_summary_rows", rows.length);
     timing?.record("history_summary_sql", result.meta?.timings?.sql_duration_ms);
     timing?.record("history_summary_d1", result.meta?.duration);
     timing?.record("history_summary_read", result.meta?.rows_read);
     timing?.record("history_summary_attempts", result.meta?.total_attempts);
-    return result.results.map((row): ProductHistorySummary => ({
-      productId: row.product_id, eventCount: row.event_count, unreadCount: row.unread_count,
+    return rows.map((row): ProductHistorySummary => ({
+      productId: row.product_id!, eventCount: row.event_count, unreadCount: row.unread_count,
     }));
   };
   return timing ? timing.measure("history_summary", read) : read();
 }
 
 export async function loadProductChangeEvents(db: D1Database, ownerId: string, limit = 2000, timing?: StartupServerTiming) {
-  async function query(kind: "recent" | "unread", operation: () => Promise<D1Result<ProductChangeEventRow>>) {
-    const read = async () => {
-      const result = await operation();
-      timing?.record(`history_${kind}_rows`, result.results.length);
-      timing?.record(`history_${kind}_sql`, result.meta?.timings?.sql_duration_ms);
-      timing?.record(`history_${kind}_d1`, result.meta?.duration);
-      timing?.record(`history_${kind}_read`, result.meta?.rows_read);
-      timing?.record(`history_${kind}_attempts`, result.meta?.total_attempts);
-      return result;
-    };
-    return timing ? timing.measure(`history_${kind}`, read) : read();
+  const readCache = () => db.prepare(`SELECT m.version AS history_version, COALESCE(h.revision, 0) AS revision,
+      COALESCE(h.event_count, 0) AS event_count, c.revision AS cached_revision, c.payload
+    FROM product_history_meta m
+    LEFT JOIN product_history_state h ON h.owner_id = ?
+    LEFT JOIN product_history_cache c ON c.owner_id = ? AND c.limit_value = ?
+    WHERE m.singleton = 1`).bind(ownerId, ownerId, limit).first<{
+      history_version: number; revision: number; event_count: number; cached_revision: number | null; payload: string | null;
+    }>();
+  const cached = await (timing ? timing.measure("history_cache", readCache) : readCache());
+  if (cached?.history_version !== 1) throw new Error("product history summaries not initialized");
+  if (cached.event_count === 0) {
+    timing?.record("history_cache_hit", 1);
+    return [];
   }
-  const [recent, unread] = await Promise.all([
-    query("recent", () => db.prepare(`SELECT event_id, product_id, change_type, title, before_value, after_value,
+  if (cached.cached_revision === cached.revision && cached.payload) {
+    const events = parseCachedHistory(cached.payload);
+    if (events) {
+      timing?.record("history_cache_hit", 1);
+      return events;
+    }
+  }
+  timing?.record("history_cache_hit", 0);
+  // Build a legacy payload only when history really changed. All three reads
+  // share one D1 transaction, so the payload is tagged with its actual version.
+  const build = () => db.batch<ProductChangeEventRow | { revision: number }>([
+    db.prepare("SELECT revision FROM product_history_state WHERE owner_id = ?").bind(ownerId),
+    db.prepare(`SELECT event_id, product_id, change_type, title, before_value, after_value,
       observed_at, source, attention, read_at
       FROM product_change_events
       WHERE owner_id = ?
       ORDER BY observed_at DESC, event_id DESC
-      LIMIT ?`).bind(ownerId, limit).all<ProductChangeEventRow>()),
-    query("unread", () => db.prepare(`SELECT event_id, product_id, change_type, title, before_value, after_value,
+      LIMIT ?`).bind(ownerId, limit),
+    db.prepare(`SELECT event_id, product_id, change_type, title, before_value, after_value,
       observed_at, source, attention, read_at
       FROM product_change_events
       WHERE owner_id = ? AND attention = 1 AND read_at IS NULL
-      ORDER BY observed_at DESC, event_id DESC`).bind(ownerId).all<ProductChangeEventRow>()),
+      ORDER BY observed_at DESC, event_id DESC`).bind(ownerId),
   ]);
+  const [state, recent, unread] = await (timing ? timing.measure("history_legacy_build", build) : build());
+  if (![state, recent, unread].every((result) => result?.success && Array.isArray(result.results))) throw new Error("history cache rebuild failed");
+  const revision = (state.results[0] as { revision: number } | undefined)?.revision ?? 0;
+  for (const [kind, result] of [["recent", recent], ["unread", unread]] as const) {
+    timing?.record(`history_${kind}_rows`, result.results.length);
+    timing?.record(`history_${kind}_sql`, result.meta?.timings?.sql_duration_ms);
+    timing?.record(`history_${kind}_d1`, result.meta?.duration);
+    timing?.record(`history_${kind}_read`, result.meta?.rows_read);
+    timing?.record(`history_${kind}_attempts`, result.meta?.total_attempts);
+  }
   const merge = async () => {
     const rows = new Map<string, ProductChangeEventRow>();
-    for (const row of recent.results) rows.set(row.event_id, row);
-    for (const row of unread.results) rows.set(row.event_id, row);
+    for (const row of recent.results as ProductChangeEventRow[]) rows.set(row.event_id, row);
+    for (const row of unread.results as ProductChangeEventRow[]) rows.set(row.event_id, row);
     return [...rows.values()]
       .sort((left, right) => right.observed_at.localeCompare(left.observed_at) || right.event_id.localeCompare(left.event_id))
       .map(mapProductChangeEvent);
   };
-  return timing ? timing.measure("history_merge", merge) : merge();
+  const events = await (timing ? timing.measure("history_merge", merge) : merge());
+  const payload = JSON.stringify(events);
+  // Oversize legacy responses remain readable even when they cannot fit safely
+  // in one D1 cache row. Never trim unread events to make a cache fit.
+  if (new TextEncoder().encode(payload).byteLength <= 1_000_000) {
+    try {
+      await db.prepare(`INSERT INTO product_history_cache (owner_id, limit_value, revision, payload)
+        VALUES (?, ?, ?, ?) ON CONFLICT(owner_id, limit_value) DO UPDATE SET
+          revision = excluded.revision, payload = excluded.payload
+        WHERE excluded.revision >= product_history_cache.revision`).bind(ownerId, limit, revision, payload).run();
+    } catch {
+      // A derivative-cache write must not turn a successful history read into
+      // a false empty result or a failed product response.
+      timing?.record("history_cache_store_failed", 1);
+    }
+  }
+  return events;
+}
+
+function parseCachedHistory(payload: string): ProductChangeEvent[] | null {
+  try {
+    const value = JSON.parse(payload) as unknown;
+    return Array.isArray(value) && value.length > 0 && value.every((event) => event && typeof event === "object"
+      && typeof event.id === "string" && typeof event.productId === "string" && typeof event.title === "string"
+      && typeof event.observedAt === "string" && typeof event.source === "string" && typeof event.type === "string")
+      ? value as ProductChangeEvent[] : null;
+  } catch { return null; }
 }
 
 export async function markProductChangeEventsRead(db: D1Database, ownerId: string, productId: string, eventIds: string[], readAt = new Date().toISOString()) {

@@ -31,6 +31,7 @@ async function open({ personalFailure = false, cacheFailure = false, dailyFailur
     isDemo: false, holdingsEndpoint: "/holdings", productsEndpoint: "/products", emptyHoldings: {},
     localPreview: false, readLocalPreviewOverrides: () => ({}), saveLocalPreviewOverrides: () => {},
     reportStartupDiagnostic: () => {},
+    lastProductRequestAtRef: { current: null },
     formatStartupRequestTiming,
     holdingsRef: { current: {} }, productOverridesRef: { current: {} }, manualProductsRef: { current: [] }, hiddenProductIdsRef: { current: [] },
     personalDataReadyRef: { current: false }, personalDataLoadingRef: { current: false },

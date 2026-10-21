@@ -46,6 +46,32 @@ test("a newer positive API snapshot prevents hiding a product whose saved amount
   assert.deepEqual((await read.json()).hiddenProductIds, []);
 });
 
+test("GET keeps positive detailed positions visible and preserves unknown/corrupt cache fallbacks", async () => {
+  const f = fixture({ savedAmount: 0, snapshotAmount: 0 });
+  f.db.sqlite.prepare("INSERT INTO hidden_products (user_id,product_id,hidden_at) VALUES ('user',?,'2026-10-06')").run(f.product.id);
+  for (const [key, amount] of [["a", 10], ["b", 20]]) f.db.sqlite.prepare(`INSERT INTO holding_positions
+    (user_id,product_id,position_key,amount,source,updated_at) VALUES ('user',?, ?,?,'api','2026-10-06')`).run(f.product.id, key, amount);
+  const read = async () => (await f.route.GET(new Request("https://local.test/private/api/holdings?diagnostics=1"))).json();
+  assert.deepEqual((await read()).hiddenProductIds, []);
+  f.db.sqlite.prepare("DELETE FROM holding_positions WHERE user_id = 'user'").run();
+  assert.deepEqual((await read()).hiddenProductIds, [f.product.id]);
+  f.db.sqlite.prepare("UPDATE holdings SET amount = 50 WHERE user_id = 'user'").run();
+  for (const cache of ["{broken", "null", "[]", JSON.stringify({ holdingUpdates: { [f.product.id]: 0 }, holdingSyncStates: { [f.product.id]: "partial" } })]) {
+    f.db.sqlite.prepare("UPDATE sync_snapshots SET payload = ?").run(cache);
+    assert.deepEqual((await read()).hiddenProductIds, []);
+  }
+  f.db.sqlite.prepare("UPDATE holdings SET amount = 0 WHERE user_id = 'user'").run();
+  assert.deepEqual((await read()).hiddenProductIds, [f.product.id]);
+});
+
+test("GET exposes one private snapshot timing only when diagnostics are requested", async () => {
+  const f = fixture();
+  const enabled = await f.route.GET(new Request("https://local.test/private/api/holdings?diagnostics=1"));
+  assert.match(enabled.headers.get("server-timing"), /holdings_snapshot;dur=/);
+  const ordinary = await f.route.GET(new Request("https://local.test/private/api/holdings"));
+  assert.equal(ordinary.headers.get("server-timing"), null);
+});
+
 test("a catalogue product with manual APR and API holdings cannot hide a positive or unknown API holding", async () => {
   const positive = fixture({ mixedSource: true, savedAmount: 100, snapshotAmount: 100 });
   const hide = { holdings: {}, changedHoldingProductIds: [], hiddenProductIds: [positive.product.id] };
