@@ -13,6 +13,7 @@ import { publishStartupDiagnostics, reportStartupDiagnostic, startupDiagnosticsE
 import { formatStartupRequestTiming } from "@/lib/startup-timing-format";
 import { effectiveApr, formatAmount, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent, type ProductHistorySummary } from "@/lib/domain";
 import { mergeProductHistorySummaries } from "@/lib/product-history-state";
+import { startDashboardPolling } from "@/lib/dashboard-polling";
 import { applyProductOverride, productOverrideForSave, productTermDays, productTypeSelectionAvailable, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { productInformationIssues, productParticipatesInInterest, type ProductInformationIssue } from "@/lib/product-status";
 import { completedDataSummary, dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
@@ -163,6 +164,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const [clock, setClock] = useState(() => Date.now());
   const dailyRefreshPendingRef = useRef(!isDemo && !localPreview);
   const refreshInFlightRef = useRef(false);
+  const lastProductRequestAtRef = useRef<number | null>(null);
   const manualRefreshInFlightRef = useRef(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const productOverridesRef = useRef<ProductOverrideMap>({});
@@ -313,6 +315,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       setLoading(true);
       // Show the saved snapshot before requesting today's opening refresh.
       const productsRequestStartedAt = performance.now();
+      lastProductRequestAtRef.current = productsRequestStartedAt;
       const productsResponse = fetch(productsEndpoint, { cache: "no-store" });
       personalDataLoadingRef.current = true;
       try {
@@ -396,6 +399,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     if (options?.manual || refreshingDaily) setRefreshingExchange(true);
     try {
       const endpoint = options?.cacheOnly ? { url: productsEndpoint, method: "GET" as const } : refreshEndpoint(options?.manual);
+      if (!options?.response) lastProductRequestAtRef.current = performance.now();
       response = await (options?.response ?? fetch(endpoint.url, { method: endpoint.method, cache: "no-store" }));
       if (!response.ok) {
         const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending" | "dailyRefreshDiagnostic" | "dailyRefresh" | "historySummaries"> | null;
@@ -487,11 +491,19 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     // Keep polling even when the first request failed and there is no cache
     // timestamp yet; a later scheduled refresh should appear without reload.
     if (isDemo || editing || openingLoading || (!holdingsReady && !dailyRefreshPendingRef.current)) return;
-    const timer = window.setInterval(() => {
-      if (!personalDataReadyRef.current && !dailyRefreshPendingRef.current) return;
-      void refreshRates(holdingsRef.current, { silent: true });
-    }, 60_000);
-    return () => window.clearInterval(timer);
+    return startDashboardPolling({
+      isHidden: () => document.hidden,
+      canPoll: () => !refreshInFlightRef.current && (personalDataReadyRef.current || dailyRefreshPendingRef.current),
+      lastRequestAt: () => lastProductRequestAtRef.current,
+      poll: () => { void refreshRates(holdingsRef.current, { silent: true }); },
+      now: () => performance.now(),
+      setTimer: (callback, delay) => window.setTimeout(callback, delay),
+      clearTimer: (timer) => window.clearTimeout(timer),
+      subscribeVisibility: (callback) => {
+        document.addEventListener("visibilitychange", callback);
+        return () => document.removeEventListener("visibilitychange", callback);
+      },
+    });
     // Polls only read cache once this opening's daily refresh has been handled.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing, holdingsReady, isDemo, openingLoading, productsEndpoint]);

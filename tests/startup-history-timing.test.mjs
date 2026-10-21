@@ -13,13 +13,13 @@ test("one response contains both history call spans and D1 metadata, without eve
   db.sqlite.prepare(`INSERT INTO product_change_events
     (owner_id,event_id,product_id,change_type,title,observed_at,source,attention)
     VALUES ('private-owner','private-event','private-product','rate','private-title','2026-10-20T00:00:00Z','手动刷新',1)`).run();
-  const wrapped = { prepare(sql) { return { bind(...args) {
-    const statement = db.prepare(sql).bind(...args);
-    return { ...statement, all: async () => ({ ...await statement.all(), meta: {
-      duration: 5, timings: { sql_duration_ms: sql.includes("LIMIT") ? 3.9 : 1.2 },
-      total_attempts: sql.includes("LIMIT") ? 2 : 1, rows_read: 760,
-    } }) };
-  } }; } };
+  const wrapped = {
+    prepare: (sql) => ({ bind: (...args) => ({ ...db.prepare(sql).bind(...args), sql }) }),
+    batch: async (statements) => (await db.batch(statements)).map((result, index) => ({ ...result, meta: {
+      duration: 5, timings: { sql_duration_ms: statements[index].sql.includes("LIMIT") ? 3.9 : 1.2 },
+      total_attempts: statements[index].sql.includes("LIMIT") ? 2 : 1, rows_read: 760,
+    } })),
+  };
   const response = await withStartupServerTiming(new Request("https://app.example/private/api/products?diagnostics=1"), async (timing) => {
     const events = await timing.measure("history", () => loadProductChangeEvents(wrapped, "private-owner", 2000, timing));
     assert.equal(events.length, 1);
@@ -27,8 +27,8 @@ test("one response contains both history call spans and D1 metadata, without eve
     return Response.json({ ok: true });
   });
   const header = response.headers.get("server-timing");
-  assert.match(header, /history_recent;dur=/);
-  assert.match(header, /history_unread;dur=/);
+  assert.match(header, /history_cache;dur=/);
+  assert.match(header, /history_legacy_build;dur=/);
   assert.match(header, /history_merge;dur=/);
   assert.match(header, /history_recent_sql;desc="value=3.9"/);
   assert.match(header, /history_unread_attempts;desc="value=1"/);
@@ -42,6 +42,9 @@ test("one response contains both history call spans and D1 metadata, without eve
 
 test("missing D1 SQL/retry metadata stays unknown, never silently becomes zero or one", async () => {
   const db = sqliteDb();
+  db.sqlite.prepare(`INSERT INTO product_change_events
+    (owner_id,event_id,product_id,change_type,title,observed_at,source,attention)
+    VALUES ('private-owner','event','product','rate','title','2026-10-20T00:00:00Z','手动刷新',1)`).run();
   const response = await withStartupServerTiming(new Request("https://app.example/private/api/products?diagnostics=1"), async (timing) => {
     await loadProductChangeEvents(db, "private-owner", 2000, timing);
     timing.record("history_recent_sql", NaN);

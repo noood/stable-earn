@@ -12,6 +12,8 @@ export const startupTimingPhases = {
   daily_check: "检查当日记录",
   maturities: "检查手动产品到期",
   history: "读取变更记录",
+  history_cache: "读取旧版历史缓存",
+  history_legacy_build: "重建旧版历史缓存",
   history_summary: "历史摘要调用总耗时",
   history_recent: "最近历史调用总耗时",
   history_unread: "未读提醒调用总耗时",
@@ -21,6 +23,8 @@ export const startupTimingPhases = {
 } as const;
 
 export const startupTimingMetrics = {
+  history_cache_hit: { label: "旧版历史缓存命中", unit: "（1是/0否）" },
+  history_cache_store_failed: { label: "旧版历史缓存保存失败", unit: "（1是/0否）" },
   auth_keys_cached: { label: "解析前公钥缓存有效", unit: "（1是/0否）" },
   auth_keys_loading: { label: "解析前公钥请求进行中", unit: "（1是/0否）" },
   history_summary_sql: { label: "历史摘要 SQL 执行（末次尝试）", unit: "ms" },
@@ -68,10 +72,11 @@ export function formatStartupRequestTiming(header: string | null | undefined, st
     return [`${metric.label} ${Number(match[2])}${metric.unit}`];
   });
   for (const [phase, label] of [["history_recent", "最近历史"], ["history_unread", "未读提醒"], ["history_summary", "历史摘要"]]) {
-    if (metrics.some((metric) => metric.name === phase) && !recordedMetrics.has(`${phase}_sql`)) {
+    const measured = metrics.some((metric) => metric.name === phase || (metric.name === "history_legacy_build" && phase !== "history_summary"));
+    if (measured && !recordedMetrics.has(`${phase}_sql`)) {
       details.push(`${label}：D1 未提供独立 SQL 耗时`);
     }
-    if (metrics.some((metric) => metric.name === phase) && !recordedMetrics.has(`${phase}_attempts`)) {
+    if (measured && !recordedMetrics.has(`${phase}_attempts`)) {
       details.push(`${label}：D1 未提供执行尝试次数`);
     }
   }

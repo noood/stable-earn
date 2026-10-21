@@ -20,6 +20,7 @@ function harness(fetch) {
   const state = { setHoldings: { manual: 100 }, setHoldingsReady: false };
   const reads = [];
   const deps = {
+    lastProductRequestAtRef: { current: null },
     fetch, holdingsEndpoint: "/holdings", productsEndpoint: "/products", emptyHoldings: {}, isDemo: false,
     localPreview: false, readLocalPreviewOverrides: () => ({}), saveLocalPreviewOverrides: () => {},
     reportStartupDiagnostic: () => {},

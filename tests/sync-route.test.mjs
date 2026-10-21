@@ -3,7 +3,7 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
-const isHistoryRead = (sql) => /FROM product_change_events\s+WHERE/.test(sql);
+const isHistoryRead = (sql) => /FROM product_change_events\s+WHERE|LEFT JOIN product_history_summaries/.test(sql);
 
 function fixture({ scheduledEnabled = true, includeOkxProduct = false } = {}) {
   const logs = [];
