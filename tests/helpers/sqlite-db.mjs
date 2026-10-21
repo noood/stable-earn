@@ -13,10 +13,16 @@ export function sqliteDb({ legacyIdentityFingerprint = false } = {}) {
           first: async () => sqlite.prepare(sql).get(...args) ?? null,
           all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
           run: async () => {
-            const statement = sqlite.prepare(sql);
-            return statement.columns().length
-              ? { success: true, results: statement.all(...args), meta: { changes: 0 } }
-              : { success: true, results: [], meta: statement.run(...args) };
+            // Node 22.13 has no StatementSync.columns(). all() executes reads
+            // and writes exactly once, including statements with RETURNING.
+            const before = sqlite.prepare("SELECT total_changes() AS total").get().total;
+            const results = sqlite.prepare(sql).all(...args);
+            const after = sqlite.prepare(`SELECT total_changes() AS total,
+              changes() AS changes, last_insert_rowid() AS lastInsertRowid`).get();
+            // changes() alone retains the previous write's count after a SELECT.
+            const meta = after.total === before ? { changes: 0 }
+              : { changes: after.changes, lastInsertRowid: after.lastInsertRowid };
+            return { success: true, results, meta };
           },
         };
       } };
