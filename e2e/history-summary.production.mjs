@@ -34,9 +34,17 @@ async function fixture(page, { failFirst = false, failRead = false, delayHistory
         pages++;
         if (delayHistory) await historyGate;
         if (failFirst) { failFirst = false; return route.fulfill({ status: 503, json: { error: "test failure" } }); }
-        const offset = Number(url.searchParams.get("cursor") ?? 0);
-        const items = events.slice(offset, offset + 50);
-        return route.fulfill({ json: { events: items, nextCursor: offset + 50 < events.length ? String(offset + 50) : null } });
+        const cursor = url.searchParams.get("cursor");
+        const boundary = cursor === null ? null : JSON.parse(cursor);
+        const ordered = [...events].sort((a, b) => a.observedAt === b.observedAt
+          ? a.id === b.id ? 0 : a.id < b.id ? 1 : -1
+          : a.observedAt < b.observedAt ? 1 : -1);
+        const remaining = ordered.filter((item) => !boundary || item.observedAt < boundary.observedAt
+          || (item.observedAt === boundary.observedAt && item.id < boundary.id));
+        const items = remaining.slice(0, 50);
+        const last = items.at(-1);
+        return route.fulfill({ json: { events: items, nextCursor: remaining.length > items.length
+          ? JSON.stringify({ observedAt: last.observedAt, id: last.id }) : null } });
       }
       writes++;
       if (failRead) return route.fulfill({ status: 503, json: { error: "test failure" } });
@@ -128,16 +136,21 @@ test("summary revision refreshes the latest page and retains loaded older pages,
   await expect(f.dialog.getByText("刷新后新记录", { exact: true })).toBeVisible();
   await expect(f.dialog.locator(".product-history-event")).toHaveCount(61);
   await expect(f.trigger).toHaveAccessibleName("查看变更记录");
-  expect(f.pages()).toBe(pages + 1);
+  // Both already-loaded pages must be reconciled before confirming this
+  // revision, not just the newest 50 records.
+  expect(f.pages()).toBe(pages + 2);
   await f.refresh();
   await f.trigger.click();
-  expect(f.pages()).toBe(pages + 1); // read-state-only changes do not invalidate details
-  f.events.push({ ...f.events[0], id: "backdated", observedAt: "2020-01-01T00:00:00Z", readAt: undefined });
+  expect(f.pages()).toBe(pages + 2); // read-state-only changes do not invalidate details
+  f.events.push({ ...f.events[0], id: "backdated", title: "补记的更早记录", observedAt: "2020-01-01T00:00:00Z", readAt: undefined });
   await f.refresh();
   await expect(f.trigger).toHaveAccessibleName("查看变更记录，有需要关注的变化");
   await f.trigger.click();
-  await expect.poll(f.pages).toBe(pages + 2);
-  await expect(f.trigger).toHaveAccessibleName("查看变更记录，有需要关注的变化");
+  await expect(f.dialog.locator(".product-history-event")).toHaveCount(62);
+  await expect(f.dialog.getByText("补记的更早记录", { exact: true })).toBeVisible();
+  await expect(f.trigger).toHaveAccessibleName("查看变更记录");
+  expect(f.pages()).toBe(pages + 4);
+  expect(f.events.find((item) => item.id === "backdated").readAt).toBe(at.toISOString());
 });
 
 test("detail failures and failed read acknowledgements never clear the summary dot", async ({ page }) => {

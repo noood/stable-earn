@@ -82,6 +82,7 @@ export function buildFailures(status: PrivateStatuses, diagnostics: PrivateDiagn
     ...(status.binanceBahrain === "partial" ? scopedBinanceFailures("Binance Bahrain", diagnostics.binanceBahrain) : []),
     ...(status.bybitGlobal === "partial" ? scopedBybitFailures(diagnostics.bybitGlobal) : []),
     ...(status.bitget === "partial" ? scopedBitgetFailures(diagnostics.bitget) : []),
+    ...(status.okx === "partial" ? scopedOkxFailures(diagnostics.okx) : []),
   ];
   const publicPlatforms = summarizePublicFailures(publicFailures);
   const partialPublicPlatforms = summarizePublicFailures(publicPartials).map((platform) => `${platform}（部分数据未返回）`);
@@ -211,8 +212,28 @@ function scopedBitgetFailures(diagnostic?: string) {
   }) : [diagnostic || "Bitget 部分数据未返回"];
 }
 
-export function productHoldingSyncState(product: Product, statuses: PrivateStatuses): HoldingSyncState | null {
+function scopedOkxFailures(diagnostic?: string) {
+  // Only application-defined asset codes enter user-visible copy, never raw
+  // upstream errors or arbitrary diagnostic strings.
+  const assets = diagnostic?.startsWith("unreadable_balance:")
+    ? diagnostic.slice("unreadable_balance:".length).split(",")
+      .filter((asset) => ["USDT", "USDC", "BTC"].includes(asset))
+    : [];
+  return [`OKX ${assets.length ? `${[...new Set(assets)].join("/")} ` : ""}持仓部分数据未返回`];
+}
+
+export function productHoldingSyncState(
+  product: Product,
+  statuses: PrivateStatuses,
+  binanceSnapshots: Partial<Record<string, BinanceAccountSnapshot | null>> = {},
+): HoldingSyncState | null {
   if (product.holdingDataMode !== "api") return null;
+  const binance = binanceSnapshots[product.accountId];
+  if (binance) {
+    const holdingStatus = product.productType === "fixed"
+      ? binance.apiStatuses.fixedHoldings : binance.apiStatuses.flexibleHoldings;
+    return holdingStatus === "complete" ? "synced" : holdingStatus;
+  }
   const statusByAccountId: Record<string, PrivateStatus> = {
     "binance-global": statuses.binanceGlobal,
     "binance-bahrain": statuses.binanceBahrain,

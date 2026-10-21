@@ -3,6 +3,7 @@ import { cloudflare } from '@cloudflare/vite-plugin';
 import vinext from 'vinext';
 import { existsSync } from 'node:fs';
 import { defineConfig } from 'vite';
+import { licenseReportFile, thirdPartyNoticesPlugin } from './scripts/third-party-notices.mjs';
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
@@ -19,11 +20,13 @@ export default defineConfig(async () => {
     ?? (existsSync(localWranglerConfig) ? 'wrangler.local.jsonc' : undefined);
 
   return {
+    build: { license: { fileName: licenseReportFile } },
     css: { postcss: { plugins: [tailwindcss()] } },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
+      thirdPartyNoticesPlugin(),
       vinext(),
       cloudflare({
         configPath: wranglerConfigPath,
