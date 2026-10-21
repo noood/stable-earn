@@ -711,7 +711,7 @@ test("incomplete OKX coin-balance response keeps the previous holding instead of
   assert.equal(response.holdingUpdates["okx-usdt"], 25);
   assert.ok(response.holdingFallbacks["okx-usdt"]);
   assert.equal(response.holdingSyncStates["okx-usdt"], "partial");
-  assert.deepEqual(response.failures, []);
+  assert.deepEqual(response.failures, ["OKX 持仓部分数据未返回"]);
 });
 
 test("product APR cache keeps its own timestamp even without a matching failure label", async () => {

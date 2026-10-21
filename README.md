@@ -130,3 +130,5 @@ npm run deploy
 ## 许可证
 
 本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)。允许个人及符合许可证定义的非商业组织学习、修改和分发；商业用途不在许可范围内。
+
+第三方依赖、字体及品牌素材不由本项目许可证覆盖，范围和待确认项见[第三方许可证盘点](docs/THIRD-PARTY-LICENSES.md)。构建会根据实际打包依赖生成 `third-party-notices.txt`，客户端文件通过部署后的站点路径 `/third-party-notices.txt` 提供；服务端产物也保留对应清单。已核对的补充许可全文位于 `licenses/`。更新依赖或更换字体时须复核；新增缺失许可材料会使构建失败，不能靠跳过声明解决。

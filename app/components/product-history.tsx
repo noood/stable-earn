@@ -178,14 +178,34 @@ export function ProductHistory({ productId, events, summary, loadPage, onEventsR
       && !!popoverRef.current?.contains(focused);
     setHistoryLoading(true);
     try {
-      const page = await loadPage(cursor);
+      let page = await loadPage(cursor);
       if (requestId !== historyRequestIdRef.current) return;
+      const oldestLoaded = cursor === null ? loadedHistoryEvents?.at(-1) : undefined;
+      const beforeLoadedBoundary = (event: ProductChangeEvent) => oldestLoaded !== undefined
+        && (event.observedAt < oldestLoaded.observedAt
+          || (event.observedAt === oldestLoaded.observedAt && event.id < oldestLoaded.id));
+      const refreshedEvents = [...page.events];
+      const visitedCursors = new Set<string>();
+      // Reconcile the whole previously displayed range, including new events
+      // spanning multiple pages or backdated into an already loaded page.
+      // If that range reached the end, include newly backdated tail events too.
+      while (oldestLoaded && page.nextCursor !== null
+        && (nextCursor === null || !page.events.some((event) => event.id === oldestLoaded.id || beforeLoadedBoundary(event)))) {
+        if (visitedCursors.has(page.nextCursor)) throw new Error("History pagination did not advance");
+        visitedCursors.add(page.nextCursor);
+        page = await loadPage(page.nextCursor);
+        if (requestId !== historyRequestIdRef.current) return;
+        refreshedEvents.push(...page.events);
+      }
+      // A catch-up page can extend below the old boundary. Leave those items
+      // for the user's next load-more request so its preserved cursor advances.
+      const keepingBoundary = oldestLoaded !== undefined && nextCursor !== null;
       setInitialSnapshotIds((current) => current ?? events.map((event) => event.id));
       setLoadedHistoryEvents((current) => mergeProductHistoryEvents(
         current === null ? [] : mergeNewProductHistoryEvents(current, events, initialSnapshotIds ?? []),
-        page.events,
+        keepingBoundary ? refreshedEvents.filter((event) => !beforeLoadedBoundary(event)) : refreshedEvents,
       ));
-      setNextCursor(page.nextCursor);
+      setNextCursor(keepingBoundary ? nextCursor : page.nextCursor);
       setHistoryError(false);
       if (cursor === null) setLoadedRevision(eventsRevision);
     } catch {
@@ -198,7 +218,7 @@ export function ProductHistory({ productId, events, summary, loadPage, onEventsR
         if (cursor === null) setInitialHistoryLoadComplete(true);
       }
     }
-  }, [loadPage, eventsRevision, events, initialSnapshotIds]);
+  }, [loadPage, eventsRevision, events, initialSnapshotIds, loadedHistoryEvents, nextCursor]);
 
   const ensureInitialHistoryRequest = useCallback(() => {
     if (!loadPage || requestedRevisionRef.current === eventsRevision) return;

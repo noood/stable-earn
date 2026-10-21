@@ -226,7 +226,13 @@ export async function buildPrivatePayload(
   const holdingPositions = mergeHoldingPositions(
     cached?.payload?.holdingPositions ?? [],
     normalizedHoldingPositions,
-    new Set(completeAccountIds),
+    // Position details currently come only from Binance's locked endpoint.
+    // An unrelated product/flexible failure must not retain redeemed positions
+    // beside this endpoint's complete replacement (including an empty list).
+    new Set([
+      binanceGlobal?.apiStatuses.fixedHoldings === "complete" ? "binance-global" : null,
+      binanceBahrain?.apiStatuses.fixedHoldings === "complete" ? "binance-bahrain" : null,
+    ].filter((accountId): accountId is string => accountId !== null)),
     catalogProductAccounts,
   ).filter((position) => activeProductIds.has(position.productId));
   const freshHoldingProductIds = new Set(Object.keys(normalizedFreshHoldings));
@@ -238,7 +244,10 @@ export async function buildPrivatePayload(
     okx: okxStatus,
   };
   const holdingSyncStates: Record<string, HoldingSyncState> = Object.fromEntries(catalog.products.flatMap((product) => {
-    const state = productHoldingSyncState(product, privateStatus);
+    const state = productHoldingSyncState(product, privateStatus, {
+      "binance-global": binanceGlobal,
+      "binance-bahrain": binanceBahrain,
+    });
     return state ? [[product.id, state] as const] : [];
   })) as Record<string, HoldingSyncState>;
   for (const productId of catalog.authoritativeZeroProductIds) holdingSyncStates[productId] = "synced";
