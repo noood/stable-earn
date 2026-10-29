@@ -25,7 +25,7 @@ test("daily opening and manual refresh use POST; ordinary cache polling stays GE
     lastProductRequestAtRef: { current: null },
     reportStartupDiagnostic: () => {},
     formatStartupRequestTiming,
-    dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false },
+    dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false }, productRequestGenerationRef: { current: 0 },
     hiddenProductIdsRef: { current: [] },
     fetch: async (url, options) => {
       requests.push(url);
@@ -56,7 +56,7 @@ test("startup diagnostics distinguish a daily refresh request from a later cache
     lastProductRequestAtRef: { current: null },
     reportStartupDiagnostic: (...entry) => diagnostics.push(entry),
     formatStartupRequestTiming,
-    dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false },
+    dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false }, productRequestGenerationRef: { current: 0 },
     hiddenProductIdsRef: { current: [] },
     fetch: async () => {
       requests += 1;
@@ -92,7 +92,7 @@ for (const scenario of [
       productsEndpoint: "/products", isDemo: false,
       lastProductRequestAtRef: { current: null },
       reportStartupDiagnostic: (...entry) => diagnostics.push(entry), formatStartupRequestTiming,
-      dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false },
+      dailyRefreshPendingRef: { current: true }, refreshInFlightRef: { current: false }, productRequestGenerationRef: { current: 0 },
       hiddenProductIdsRef: { current: [] },
       fetch: async (url, options) => {
         requests.push(options?.method ?? "GET");
@@ -139,7 +139,7 @@ for (const scenario of [
       hiddenProductIdsRef: { current: [] }, productOverridesRef: { current: {} }, manualProductsRef: { current: [] },
       personalDataReadyRef: { current: scenario.personalReady !== false },
       holdingsRef: { current: {} },
-      refreshInFlightRef: { current: false }, dailyRefreshPendingRef: { current: Boolean(scenario.daily) },
+      refreshInFlightRef: { current: false }, productRequestGenerationRef: { current: 0 }, dailyRefreshPendingRef: { current: Boolean(scenario.daily) },
       manualProductPayload: (product) => product,
       fetch: async (_url, options) => {
         if (options?.method === "PUT") writes.push(JSON.parse(options.body));

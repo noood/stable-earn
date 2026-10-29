@@ -195,3 +195,28 @@ test("a missing APR preserves changed live single-tier capacity and the original
   assert.equal(merged.aprFetchedAt, "2026-10-08T10:00:00.000Z");
   assert.equal(merged.rateCoverage, "complete");
 });
+
+test("BGW manual APR never adopts an obsolete automatic cached rate or quota", () => {
+  const { bitgetWalletRate } = moduleLoader()("@/lib/bitget-wallet-product");
+  const placeholder = bitgetWalletRate();
+  const obsolete = {
+    ...placeholder,
+    productDataMode: "api",
+    apr: 6.73,
+    tiers: [{ min: 0, max: null, apr: 6.73, maxStatus: "unlimited" }],
+    aprStatus: "available",
+    capacityStatus: "available",
+    rateCoverage: "complete",
+    rateShape: "single_rate",
+    sourceLabel: "Dune 参考 APY（含奖励）",
+  };
+  const [merged] = mergeRateFields([placeholder], [obsolete]);
+  assert.equal(merged.productDataMode, "manual");
+  assert.equal(merged.rateCoverage, "unavailable");
+  assert.equal(merged.apr, 0);
+  assert.equal(merged.aprSource, undefined);
+  assert.equal(merged.aprFetchedAt, undefined);
+  assert.equal(merged.capacitySource, undefined);
+  assert.equal(merged.tiers[0].maxStatus, "unlimited");
+  assert.doesNotMatch(merged.sourceLabel, /Dune/);
+});

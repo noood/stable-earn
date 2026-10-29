@@ -17,7 +17,7 @@ test("an unreadable quota is never presented as an open-ended tier", () => {
     assert.equal(headline.label, "首档 · 上限未获取");
     assert.equal(headline.label.includes("以上"), false);
   }
-  assert.equal(rateHeadlineFor(product({ rateCoverage: "complete", tiers: [{ id: "tier", min: 0, max: null, apr: 7, maxStatus: "unlimited" }] })).label, "首档 · 0.00 以上");
+  assert.equal(rateHeadlineFor(product({ rateCoverage: "complete", tiers: [{ id: "tier", min: 0, max: null, apr: 7, maxStatus: "unlimited" }] })).label, "不限额");
 });
 
 test("missing APR does not hide a confirmed quota in either source mode", () => {

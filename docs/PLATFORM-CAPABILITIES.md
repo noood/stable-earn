@@ -6,7 +6,9 @@
 
 ## 全量逐项能力表（112 项）
 
-本表按“7 个展示平台 × 4 种资产 × 活期/定期 × 产品/APR、持仓”逐项列出，共 112 项。代码中有 8 个平台注册/地区账号条目；总览将 MEXC PH、UK 合并为一个展示平台，所以是 7 组。最近检查日期只说明端点或公开产品目录何时核验；鉴权持仓的账户结果不在本表公开。MEXC 的 PH、UK 依据分别列在同一行。日常接入状态来自代码能力配置，不由检查结果推断。
+此表与设置中的“API 检测”覆盖交易所接口。Bitget Wallet / Morph 的钱包公开读取与手动整体 APR 使用独立配置，范围、实测状态和限制见 [BGW 接入说明](BITGET-WALLET-MORPH-USDC.md)，不计入下面的交易所矩阵。
+
+本表按“7 个展示平台 × 4 种资产 × 活期/定期 × 产品/APR、持仓”逐项列出，共 112 项。交易所能力配置中有 8 个平台/地区账号条目；总览将 MEXC PH、UK 合并为一个展示平台，所以是 7 组。最近检查日期只说明端点或公开产品目录何时核验；鉴权持仓的账户结果不在本表公开。MEXC 的 PH、UK 依据分别列在同一行。日常接入状态来自代码能力配置，不由检查结果推断。
 
 **“是否支持 API”的口径：**依据项目已核验并配置的接口能力与适用范围；有可用接口即标“支持”，没有项目可用接口才标“不支持”。某次请求为空、未配置凭证、暂时失败或只返回部分数据，不会改变这项能力结论；这些情况单独记录在“最近结果”。产品/APR 行中，`有数据` 后分项列产品 APR、档位边界、额度字段和资格；成功但空统一写“没有返回该币种产品”。
 
@@ -127,7 +129,7 @@
 | MEXC（PH/UK） | BTC | 定期 | 产品/APR | 不支持 | 项目没有可用接口 | 2026-10-04：PH/UK 官方目录核对；没有可用 API，未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [PH 官方目录](https://www.mexc.com/api-docs/spot-v3/introduction)；[UK 官方目录](https://www.mexc.com/api-docs/spot-v3/introduction) | 不适用／人工维护 | — |
 | MEXC（PH/UK） | BTC | 定期 | 持仓 | 不支持 | 未查询：项目无可用接口 | 2026-10-04：PH/UK 官方目录核对；没有可用 API，未请求 | 人工维护／项目无可用 API | —（项目没有可用接口） | 项目当前没有可用接口；人工维护 | [PH 官方目录](https://www.mexc.com/api-docs/spot-v3/introduction)；[UK 官方目录](https://www.mexc.com/api-docs/spot-v3/introduction) | 不适用／人工维护 | 不可以；项目没有可用的产品级持仓接口，不能用空结果推断具体产品为零。 |
 
-＊ Bybit 定期 USDGO：未筛选产品目录请求成功但没有产品行；显式传入 USDGO 参数时接口拒绝。MEXC PH 与 UK 分别检查了官方 API 目录，没有本项目可用的 Earn/Savings API，因此未发送 API 请求。OKX 普通 Savings APR 没有本项目可用接口。On-chain Earn 是另一类产品，不属于这 112 项，也不在默认 API 检测中；Bitget Wallet 的 Morph USDC Morpho 金库调研和未来接入待办单独记录在[专门文档](BITGET-WALLET-MORPH-USDC.md)，不并入交易所 Savings 结果。
+＊ Bybit 定期 USDGO：未筛选产品目录请求成功但没有产品行；显式传入 USDGO 参数时接口拒绝。MEXC PH 与 UK 分别检查了官方 API 目录，没有本项目可用的 Earn/Savings API，因此未发送 API 请求。OKX 普通 Savings APR 没有本项目可用接口。On-chain Earn 是另一类产品，不属于这 112 项，也不在默认 API 检测中。
 
 “持仓空结果能否判零”的依据按接口分别限定：Binance Simple Earn position 返回产品 ID 和持仓量；Bitget Savings assets 返回币种、期限类型、产品 ID 和持仓量；Bybit Global 活期官方说明已全部赎回的 Flexible Saving position 仍会返回，定期接口则只返回活动中的 position、排除已结算记录。只有请求范围正确、所有分页读完、必要字段/产品身份校验通过时，这些完整快照才允许把缺行解释为当前零持仓。OKX 虽只返回币种汇总，但本项目每个币种只跟踪一条 OKX 活期产品，因此在回包为数组、币种身份可读、受监控币种没有重复行且金额有效时，缺少该币种行可映射为该产品持仓为零；回包失败或不完整时不成立。Bybit EU 与 MEXC 没有本项目可用的产品级持仓接口。
 ## 空、部分、失败及目录处理规则
@@ -159,7 +161,7 @@
 - **同步与目录：**Binance、Bitget、Bybit、OKX 已区分完整、部分、失败的关键持仓结果；Bybit 目录/持仓扫描会跟随接口返回的 cursor，游标重复、下一页失败、必要身份或持仓金额异常时标为部分，不能当成功空。可识别产品的 APR/额度缺失只影响该行字段有效性，不等同于扫描不完整。目录按稳定产品身份匹配，Bitget 和 Bybit 定期身份包含期限。缺行补零及以缺行为依据的归档共用逐项能力配置的判零闸门；本轮明确返回的有效持仓按资产门槛判断，不把低于门槛的正数改写为零。
 - **OKX 汇总余额：**日常同步更新 USDT、USDC、BTC。虽然接口不含产品 ID，但项目每币种只跟踪一条活期产品；有效完整数组中缺少该币种时补零并解除旧缓存标记。响应字段异常、币种不可识别、目标币重复行或金额无效时不补零，沿用已知缓存并标记部分结果。
 - **检查 API：**报告现为 112 条自足 `checks` 记录，分别列出产品/APR 与持仓；每条带平台、地区、币种、期限、信息项、API 支持、最近结果、接口方式、方法/路径、权限、官方文档、检查时间、日常接入状态及持仓空结果判零依据。`apiSupport` 来自经过核验的项目接口配置，不随一次请求是否为空、是否失败或是否配置凭证而改变；最近结果单独记录。鉴权持仓只显示“接口调用成功 / 部分返回 / 请求失败”等状态，不输出是否非空、行数、持仓产品 ID、正持仓判断或金额；公开产品目录可保留产品行信息。MEXC 的 PH/UK 依据放在同一平台记录的地区子项中。检查器不自动发现未知端点，不写入产品、持仓、缓存或历史；不请求 OKX On-chain Earn。
-- **API 设置弹窗：**区块顺序为“配置 API → 手动刷新频率 → API 检测”。检查按钮默认“检测 API”，报告生成后短暂显示对勾，3 秒后恢复；JSON 下载保留到下一次检查开始。整体检查失败时显示失败提示，不显示成功对勾或下载。
+- **数据源设置弹窗：**区块顺序为“配置 API → 钱包地址 → 手动刷新频率 → API 检测”。检查按钮默认“检测 API”，报告生成后短暂显示对勾，3 秒后恢复；JSON 下载保留到下一次检查开始。整体检查失败时显示失败提示，不显示成功对勾或下载。
 - **回归测试：**自动化测试覆盖能力矩阵、分页完整性、空/部分/失败、APR/额度字段、产品身份、零值归档边界、MEXC 合并报告及 API 检测按钮状态。每次发布前按当前分支的测试结果记录本次审查，不在能力说明中保留旧测试次数或部署状态。
 
 ## 复查与新能力发现
@@ -172,7 +174,7 @@
 - API 检查器：`lib/platform-capability-probe.ts`、`app/private/api/diagnostics/platform-capabilities/route.ts`
 - 日常适配器：`lib/integrations/`
 - 产品目录与归档：`lib/product-catalog.ts`、`lib/opportunity-policy.ts`
-- API 设置界面：`app/components/api-settings.tsx`
+- 数据源设置界面：`app/components/api-settings.tsx`
 - 主要回归测试：`tests/platform-capabilities.test.mjs`、`tests/platform-capability-probe.test.mjs`、`tests/product-catalog.test.mjs`、`tests/sync-route.test.mjs`
 
 其他诊断入口与一次性专项探针统一见[诊断索引](DIAGNOSTICS.md)。

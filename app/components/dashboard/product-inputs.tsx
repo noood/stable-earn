@@ -1,7 +1,8 @@
 "use client";
 
-import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { InfoTooltip } from "@/app/components/info-tooltip";
 import { useDismissiblePopover } from "@/app/components/use-dismissible-popover";
 import type { Asset } from "@/lib/domain";
 
@@ -78,15 +79,16 @@ export function ManualLimitInput({ value, placeholder, asset, disabled, onChange
   return <ManualNumberInput label="首档额度" value={value} placeholder={placeholder} suffix={asset} disabled={disabled} maxDecimals={8} onChange={(nextValue) => onChange(nextValue !== null && nextValue > 0 ? nextValue : null)} />;
 }
 
-export function ManualAprInput({ value, placeholder, note, disabled, onChange }: { value: number | null; placeholder?: number; note?: string; disabled: boolean; onChange: (value: number | null) => void }) {
-  return <ManualNumberInput label="APR" value={value} placeholder={placeholder} suffix="%" note={note} disabled={disabled} maxDecimals={4} onChange={onChange} />;
+export function ManualAprInput({ value, placeholder, note, explanation, disabled, onChange }: { value: number | null; placeholder?: number; note?: string; explanation?: ReactNode; disabled: boolean; onChange: (value: number | null) => void }) {
+  return <ManualNumberInput label="APR" value={value} placeholder={placeholder} suffix="%" note={note} explanation={explanation} disabled={disabled} maxDecimals={4} onChange={onChange} />;
 }
 
 export function ManualTermInput({ label = "期限", value, disabled, onChange }: { label?: string; value: number | null; disabled: boolean; onChange: (value: number | null) => void }) {
   return <ManualNumberInput label={label} value={value} placeholder="填写" suffix="天" disabled={disabled} maxDecimals={2} onChange={(termDays) => onChange(termDays !== null && termDays > 0 ? termDays : null)} />;
 }
 
-function ManualNumberInput({ label, value, placeholder, suffix, note, disabled, maxDecimals, onChange }: { label: string; value: number | null; placeholder?: number | string; suffix: string; note?: string; disabled: boolean; maxDecimals: number; onChange: (value: number | null) => void }) {
+function ManualNumberInput({ label, value, placeholder, suffix, note, explanation, disabled, maxDecimals, onChange }: { label: string; value: number | null; placeholder?: number | string; suffix: string; note?: string; explanation?: ReactNode; disabled: boolean; maxDecimals: number; onChange: (value: number | null) => void }) {
+  const inputId = useId();
   const [displayValue, setDisplayValue] = useState(value === null ? "" : String(value));
 
   function updateValue(nextValue: string) {
@@ -97,7 +99,7 @@ function ManualNumberInput({ label, value, placeholder, suffix, note, disabled, 
   }
 
   const placeholderText = typeof placeholder === "number" ? placeholder.toFixed(2) : placeholder ?? "0.00";
-  return <label className="manual-field"><span className="manual-field-label">{label}</span><span className={`manual-field-control ${disabled ? "manual-field-control-disabled" : ""}`}><input type="text" inputMode="decimal" placeholder={placeholderText} value={displayValue} onFocus={(event) => event.currentTarget.select()} onChange={(event) => updateValue(event.target.value)} onBlur={() => setDisplayValue(value === null ? "" : String(value))} disabled={disabled} aria-label={label} /><span>{suffix}</span></span>{note && <span className="manual-field-note manual-field-note-control">{note}</span>}</label>;
+  return <div className="manual-field"><span className="manual-field-label product-rate-label"><label htmlFor={inputId}>{label}</label>{explanation && <InfoTooltip label={`${label}说明`}>{explanation}</InfoTooltip>}</span><span className={`manual-field-control ${disabled ? "manual-field-control-disabled" : ""}`}><input id={inputId} type="text" inputMode="decimal" placeholder={placeholderText} value={displayValue} onFocus={(event) => event.currentTarget.select()} onChange={(event) => updateValue(event.target.value)} onBlur={() => setDisplayValue(value === null ? "" : String(value))} disabled={disabled} aria-label={label} /><span>{suffix}</span></span>{note && <span className="manual-field-note manual-field-note-control">{note}</span>}</div>;
 }
 
 export function HoldingInput({ value, asset, disabled, onChange }: { value: number; asset: Asset; disabled: boolean; onChange: (value: number) => void }) {

@@ -1,6 +1,6 @@
 # 产品身份与 ID 规则
 
-这份文档是产品身份、数据库行 ID 和平台外部 ID 的唯一说明。代码实现分别位于 `lib/product-identity.ts`、`lib/product-catalog.ts` 和 `lib/platform-capabilities.ts`。
+这份文档是产品身份、数据库行 ID 和平台外部 ID 的唯一说明。交易所/手动身份实现在 `lib/product-identity.ts`，链上身份由对应适配器声明，数据库目录统一由 `lib/product-catalog.ts` 匹配。
 
 ## 三种 ID，各自只做一件事
 
@@ -32,6 +32,16 @@ bitget-global:USDT:flexible:bg-usdt-standard
 `accountId` 已经包含平台和区域，例如 `binance-global`、`binance-bahrain`、`bybit-eu`。`ASSET` 使用大写；`productType` 只能是 `flexible` 或 `fixed`。
 
 通常，`externalProductId` 是交易所原始产品 ID。若同一原始 ID 在产品列表中对应多个不同产品，而且产品接口与持仓接口都提供稳定的区分字段，则身份值必须合并这两个字段。例如 Bybit 定期产品的两个接口都有 `productId` 和 `duration`；线上样本中 `productId=4` 同时对应 7 天和 90 天，因此应用层用 `4@7d` 与 `4@90d` 分开识别和配对持仓。
+
+### 链上产品
+
+链上产品使用“平台账户 + 链 ID + 金库合约地址”作为稳定身份；链相同、合约不同仍是不同产品，同一合约地址出现在不同链上也不合并。当前 BGW 身份由 `lib/integrations/bitget-wallet.ts` 声明：
+
+```text
+bitget-wallet-morph:2818:0x9131eb40bd0bdce73c72755f1bb2cf39a9453341
+```
+
+`externalProductId` 为“链 ID:合约地址”，用户钱包地址属于账户配置，不参与产品身份。APR、奖励活动及用户申购时间不进入身份；不同用户的持仓和手动设置仍由用户范围隔离。钱包更换时的数据清理见[数据规则](DATA-STATES.md#bitget-wallet--morph)。
 
 ### 手动产品
 
@@ -73,6 +83,7 @@ okx-global:BTC:flexible:manual:btc-campaign
 | 规则 | 唯一代码来源 | 配套文档 |
 |---|---|---|
 | API/手动 `identityKey` | `lib/product-identity.ts` | 本文 |
+| 链上 `identityKey` | 对应链上适配器（当前为 `lib/integrations/bitget-wallet.ts`） | 本文 |
 | 数据库目录匹配与归档 | `lib/product-catalog.ts` | `docs/DATA-STATES.md` |
 | 平台 × 区域 × 资产 × 产品类型 API 能力 | `lib/platform-capabilities.ts` | `docs/PLATFORM-CAPABILITIES.md`、`docs/DATA-STATES.md` |
 | API 字段是否支持 | `lib/api-capabilities.ts` | `docs/DATA-STATES.md` |

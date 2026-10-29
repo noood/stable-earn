@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { ProductHistory, type ProductHistoryPage } from "@/app/components/product-history";
 import { AccountBadge, HoldingSummary, TableCell } from "@/app/components/ui";
+import { InfoTooltip } from "@/app/components/info-tooltip";
 import { HoldingInput, InlineSelect, ManualAprInput, ManualLimitInput, ManualTermInput } from "@/app/components/dashboard/product-inputs";
 import { PurchaseDateInput, parseCalendarDate } from "@/app/components/dashboard/purchase-date-input";
 import { effectiveApr, formatAmount, type Account, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent, type ProductHistorySummary, type ProductKind } from "@/lib/domain";
@@ -42,7 +43,7 @@ export function ProductRow({ product, baseProduct, manualSettings, holdingTiming
 }
 
 function ManualProductIdentityEditor({ product, account, disabled, onChange, onDelete }: { product: Product; account: Account; disabled: boolean; onChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
-  return <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="manual-identity-fields min-w-0 flex-1"><InlineSelect className="inline-select-trigger-primary" ariaLabel="平台" value={product.accountId} options={accounts.map((item) => ({ value: item.id, label: item.name }))} disabled={disabled} onChange={(accountId) => onChange({ accountId })} /><InlineSelect className="inline-select-trigger-secondary" ariaLabel="产品类型" value={product.manualKind ?? "flexible"} options={productKindOptions} disabled={disabled} onChange={(manualKind) => onChange({ manualKind: manualKind as Product["manualKind"] })} /><button type="button" className="manual-product-delete text-danger type-caption" disabled={disabled} onClick={onDelete}>移除产品</button></div></div>;
+  return <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="manual-identity-fields min-w-0 flex-1"><InlineSelect className="inline-select-trigger-primary" ariaLabel="平台" value={product.accountId} options={accounts.filter((item) => item.exchange !== "bitget-wallet").map((item) => ({ value: item.id, label: item.name }))} disabled={disabled} onChange={(accountId) => onChange({ accountId })} /><InlineSelect className="inline-select-trigger-secondary" ariaLabel="产品类型" value={product.manualKind ?? "flexible"} options={productKindOptions} disabled={disabled} onChange={(manualKind) => onChange({ manualKind: manualKind as Product["manualKind"] })} /><button type="button" className="manual-product-delete text-danger type-caption" disabled={disabled} onClick={onDelete}>移除产品</button></div></div>;
 }
 
 function ProductTierSummary({ product, baseProduct, manualSettings, holdingTiming, holding, editing, saving, manualProduct, rateFallbackAt, onOverrideChange, onManualProductChange }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingTiming?: HoldingTiming; holding: number; editing: boolean; saving: boolean; manualProduct: boolean; rateFallbackAt?: string; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void }) {
@@ -118,7 +119,10 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
     : Boolean(termStatus && termStatus.remainingDays <= 0);
   const lifecycleValue = <>{lifecycleDateLabel}{termStatusText && <><span className="product-fact-separator">｜</span><span className={lifecycleStatusWarning ? "product-fact-danger" : "product-fact-note"}>{termStatusText}</span></>}</>;
 
-  return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
+  const rateExplanation = product.exchange === "bitget-wallet" ? <p>整体 APR 包含基础收益和奖励利率。奖励每 8 小时结算一次，赎回时空投到钱包余额。</p> : undefined;
+
+  return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} explanation={editing ? undefined : rateExplanation} />
+    {manualApr && !manualLimit && product.rateCoverage !== "unavailable" && <ProductMeta text={`手动填写${manualSettings?.updatedAt ? ` · 更新于 ${formatSyncDateTime(manualSettings.updatedAt)}` : ""}`} />}
     {(!editing || !manualProduct) && fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
     {(!editing || !manualProduct) && qualificationFact && <ProductFact label="申购资格" value={qualificationFact} />}
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
@@ -127,7 +131,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
     {incompleteText && <ProductMeta text={incompleteText} danger={product.rateCoverage === "partial" || holding > 0 || productInfoIssues.some((issue) => issue.endsWith("未获取"))} />}
     {editing && showManualFields && <div className="manual-fields">
       {manualLimit && <ManualLimitInput value={manualSettings?.firstTierLimit ?? null} asset={product.asset} disabled={saving} onChange={(firstTierLimitValue) => onOverrideChange({ firstTierLimit: firstTierLimitValue })} />}
-      {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
+      {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} explanation={rateExplanation} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
       {manualTerm && <ManualTermInput label={manualTermLabel} value={manualSettings?.termDays ?? null} disabled={saving} onChange={(termDays) => onOverrideChange({ termDays })} />}
       {manualProductTerm && <ManualTermInput label={manualKind === "limited" ? "活动期限" : "锁定期限"} value={baseProduct.termDays ?? null} disabled={saving} onChange={(termDays) => onManualProductChange({ termDays: termDays ?? undefined })} />}
       {showManualPurchaseDate && durationDays && <PurchaseDateInput value={manualSettings?.purchaseDate ?? null} durationDays={durationDays} disabled={saving} onChange={(purchaseDate) => onOverrideChange({ purchaseDate })} />}
@@ -155,8 +159,8 @@ function apiMaturityIsPast(value: string) {
   return Date.parse(value) <= Date.now();
 }
 
-function ProductRateHeadline({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
-  return <div className="product-rate-headline"><span>{label}</span><span className={`status-chip ${muted ? "status-chip-muted" : "status-chip-highlight"}`}>{value}</span></div>;
+function ProductRateHeadline({ label, value, muted = false, explanation }: { label: string; value: string; muted?: boolean; explanation?: ReactNode }) {
+  return <div className="product-rate-headline"><span>{label}</span><span className="product-rate-label"><span className={`status-chip ${muted ? "status-chip-muted" : "status-chip-highlight"}`}>{value}</span>{explanation && <InfoTooltip label="APR说明">{explanation}</InfoTooltip>}</span></div>;
 }
 
 function ProductFact({ label, value }: { label: string; value: ReactNode }) {

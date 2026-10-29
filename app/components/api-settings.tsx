@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode, type InputHTMLAttributes } from "react";
 import { AccountBadge, ActionButton, ModalFrame, SectionIntro } from "@/app/components/ui";
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
 import type { Account } from "@/lib/domain";
 import { accounts } from "@/lib/seed-data";
 import { apiCheckSuccessFeedbackMs, formatRetryWait, initialApiCheckUiState, parseRetryAfterSeconds, transitionApiCheckUiState } from "@/lib/api-check-ui-state";
+import { normalizeWalletAddress } from "@/lib/wallet-address";
 
 type ApiCredentialSource = {
   id: string;
@@ -77,6 +78,15 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
   const [localRateLimitDemoEnabled, setLocalRateLimitDemoEnabled] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [statusError, setStatusError] = useState(false);
+  const [walletAddress, setWalletAddress] = useState<string | null | undefined>(undefined);
+  const [walletDraft, setWalletDraft] = useState("");
+  const [editingWallet, setEditingWallet] = useState(false);
+  const [pendingWalletRemoval, setPendingWalletRemoval] = useState(false);
+  const [walletBusy, setWalletBusy] = useState(false);
+  const [walletLoadError, setWalletLoadError] = useState(false);
+  const [walletMessage, setWalletMessage] = useState<string | null>(null);
+  const [walletMessageError, setWalletMessageError] = useState(false);
+  const walletRequestGeneration = useRef(0);
   const capabilityCompletionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function loadStatus() {
@@ -111,6 +121,67 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
   useEffect(() => {
     setLocalRateLimitDemoEnabled(isLocalRateLimitDemoUrl());
   }, []);
+
+  async function loadWallet() {
+    const generation = ++walletRequestGeneration.current;
+    try {
+      const response = await fetch("/private/api/wallet", { cache: "no-store" });
+      if (!response.ok) throw new Error("wallet unavailable");
+      const result = await response.json() as { address: string | null };
+      if (result.address !== null && !normalizeWalletAddress(result.address)) throw new Error("invalid wallet");
+      if (generation !== walletRequestGeneration.current) return;
+      setWalletAddress(result.address);
+      setWalletLoadError(false);
+    } catch {
+      if (generation !== walletRequestGeneration.current) return;
+      setWalletLoadError(true);
+    }
+  }
+
+  useEffect(() => {
+    if (open) void loadWallet();
+    else {
+      walletRequestGeneration.current += 1;
+      setEditingWallet(false);
+      setPendingWalletRemoval(false);
+      setWalletDraft("");
+      setWalletMessage(null);
+    }
+  }, [open]);
+
+  async function changeWallet(remove = false) {
+    const address = remove ? null : normalizeWalletAddress(walletDraft);
+    if (!remove && !address) return;
+    walletRequestGeneration.current += 1;
+    setWalletBusy(true);
+    setWalletMessage(null);
+    setWalletMessageError(false);
+    try {
+      const response = await fetch("/private/api/wallet", {
+        method: remove ? "DELETE" : "PUT",
+        ...(remove ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }) }),
+      });
+      const result = await response.json() as { address?: string | null; error?: string };
+      if (!response.ok) throw new Error(result.error || (remove ? "钱包移除失败。" : "钱包保存失败。"));
+      setWalletAddress(address);
+      setWalletDraft("");
+      setEditingWallet(false);
+      setPendingWalletRemoval(false);
+      setWalletLoadError(false);
+      setWalletMessage(remove ? "钱包地址已移除。" : "钱包地址已保存；下次刷新将读取此钱包的持仓。");
+      try {
+        await onCredentialsRemoved();
+      } catch {
+        setWalletMessage(remove ? "钱包已移除，页面数据读取失败，请刷新页面。" : "钱包已保存，页面数据读取失败，请刷新页面。");
+        setWalletMessageError(true);
+      }
+    } catch (error) {
+      setWalletMessage(error instanceof Error ? error.message : "钱包配置更新失败，请稍后重试。");
+      setWalletMessageError(true);
+    } finally {
+      setWalletBusy(false);
+    }
+  }
 
   useEffect(() => () => {
     if (capabilityCompletionTimer.current) clearTimeout(capabilityCompletionTimer.current);
@@ -283,10 +354,21 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
   }
 
   const probingCapabilities = apiCheckState.phase === "checking";
-  const modalBusy = busy || savingCooldown || probingCapabilities;
+  const modalBusy = busy || walletBusy || savingCooldown || probingCapabilities;
   const retryWaitLabel = formatRetryWait(retryWaitSeconds);
 
   if (!open) return null;
+
+  if (pendingWalletRemoval) return (
+    <ModalFrame ariaLabel="移除钱包地址" title="移除钱包地址" onClose={() => { setPendingWalletRemoval(false); setWalletMessage(null); }} busy={walletBusy}>
+      <p className="text-secondary type-body">移除后，Bitget Wallet / Morph 产品会从列表中移除，已同步的当前持仓会清除；产品资料与变更记录保留。重新添加钱包并成功同步后可恢复展示。</p>
+      {walletMessage && <div className="error-panel api-feedback-panel type-caption mt-4" role="alert">{walletMessage}</div>}
+      <div className="mt-5 flex justify-end gap-2">
+        <ActionButton variant="secondary" disabled={walletBusy} onClick={() => { setPendingWalletRemoval(false); setWalletMessage(null); }}>取消</ActionButton>
+        <ActionButton variant="danger" disabled={walletBusy} onClick={() => void changeWallet(true)}>{walletBusy ? "正在移除…" : "确认移除钱包"}</ActionButton>
+      </div>
+    </ModalFrame>
+  );
 
   if (pendingRemoval) return (
     <ModalFrame ariaLabel="移除 API 配置及产品" title="移除 API 配置及产品" onClose={() => setPendingRemoval(null)} busy={busy}>
@@ -300,7 +382,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
   );
 
   return (
-    <ModalFrame ariaLabel="API 设置" title="API 设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-8">
+    <ModalFrame ariaLabel="数据源设置" title="数据源设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-8">
       <section>
         <SectionIntro title="配置 API" description="Key 和 Secret 由服务器加密保存；完整密钥不会返回浏览器。" />
         {statusError && <div className="error-panel api-feedback-panel type-caption mb-3" role="alert">配置状态读取失败，请重试。<ActionButton variant="text" size="small" onClick={() => { setStatusError(false); void loadStatus(); }}>重试</ActionButton></div>}
@@ -317,29 +399,42 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
             };
 
             return (
-              <div key={source.id} className={`api-connection-row ${index ? "api-connection-row-divided" : ""}`}>
-                <div className="flex items-center justify-between gap-6">
-                  <SourceSummary account={account} label={source.label} statusLabel={statusLabel} statusClass={statusClass} description={source.syncDescription} />
-                  <div className="flex shrink-0 items-center gap-2">
-                    {!source.configured && <ActionButton variant="secondary" disabled={modalBusy} onClick={openEditor}>添加</ActionButton>}
-                    {source.configured && <ApiRowMenu label={source.label} disabled={modalBusy || isSelected} onUpdate={openEditor} onRemove={() => { setMessage(null); setPendingRemoval(source); }} />}
-                  </div>
-                </div>
-                {isSelected && <form className="api-credential-form mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void save(); }} autoComplete="off"><div><h4 className="type-body font-semibold">配置 {source.label}</h4><p className="text-muted type-caption mt-1">只填写只读密钥；交易、转账、申购、赎回和提现权限必须关闭。</p></div><SecretField label="API Key" value={apiKey} onChange={setApiKey} /><SecretField label="API Secret" value={apiSecret} onChange={setApiSecret} />{source.requiresPassphrase && <SecretField label="Passphrase" value={passphrase} onChange={setPassphrase} />}<div className="flex justify-end gap-2"><ActionButton type="button" variant="secondary" disabled={modalBusy} onClick={() => { setSelectedId(null); clearForm(); }}>取消</ActionButton><ActionButton type="submit" disabled={modalBusy || !apiKey.trim() || !apiSecret.trim() || (source.requiresPassphrase && !passphrase.trim())}>{busy ? "加密保存中…" : "加密保存"}</ActionButton></div></form>}
-              </div>
+              <SourceRow key={source.id} divided={index > 0} account={account} label={source.label} statusLabel={statusLabel} statusClass={statusClass} description={source.syncDescription} actions={<>
+                {!source.configured && <ActionButton variant="secondary" disabled={modalBusy} onClick={openEditor}>添加</ActionButton>}
+                {source.configured && <SourceRowMenu label={source.label} updateLabel="更新 API 配置" removeLabel="移除 API 配置" disabled={modalBusy || isSelected} onUpdate={openEditor} onRemove={() => { setMessage(null); setPendingRemoval(source); }} />}
+              </>}>
+                {isSelected && <form className="api-credential-form mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void save(); }} autoComplete="off"><div><h4 className="type-body font-semibold">配置 {source.label}</h4><p className="text-muted type-caption mt-1">只填写只读密钥；交易、转账、申购、赎回和提现权限必须关闭。</p></div><SettingsField label="API Key" type="password" value={apiKey} onChange={setApiKey} disabled={modalBusy} /><SettingsField label="API Secret" type="password" value={apiSecret} onChange={setApiSecret} disabled={modalBusy} />{source.requiresPassphrase && <SettingsField label="Passphrase" type="password" value={passphrase} onChange={setPassphrase} disabled={modalBusy} />}<div className="flex justify-end gap-2"><ActionButton type="button" variant="secondary" disabled={modalBusy} onClick={() => { setSelectedId(null); clearForm(); }}>取消</ActionButton><ActionButton type="submit" disabled={modalBusy || !apiKey.trim() || !apiSecret.trim() || (source.requiresPassphrase && !passphrase.trim())}>{busy ? "加密保存中…" : "加密保存"}</ActionButton></div></form>}
+              </SourceRow>
             );
           }) ?? (statusError ? null : <ApiSettingsSkeleton />)}
           {(status?.manualSources ?? []).map((source, index) => {
             const account = accounts.find((item) => item.id === source.id);
             const divided = (status?.sources.length ?? 0) > 0 || index > 0;
-            return <div key={source.id} className={`api-connection-row ${divided ? "api-connection-row-divided" : ""}`}><SourceSummary account={account} label={source.label} statusLabel={source.statusLabel ?? "手动维护"} statusClass="status-chip-muted" description={source.syncDescription} /></div>;
+            return <SourceRow key={source.id} divided={divided} account={account} label={source.label} statusLabel={source.statusLabel ?? "手动维护"} statusClass="status-chip-muted" description={source.syncDescription} />;
           })}
         </div>
       </section>
       {message && <div className="muted-panel api-feedback-panel type-caption font-normal">{message}</div>}
       <section>
+        <SectionIntro title="钱包地址" description="通过钱包地址同步链上理财持仓。" />
+        {walletLoadError ? <div className="error-panel api-feedback-panel type-caption" role="alert">钱包配置读取失败。<ActionButton variant="text" size="small" disabled={modalBusy} onClick={() => void loadWallet()}>重试读取钱包</ActionButton></div>
+          : walletAddress === undefined ? <p className="text-secondary type-caption" role="status">正在读取钱包配置…</p>
+          : <div className="api-connection-list"><SourceRow account={accounts.find((account) => account.id === "bitget-wallet-morph")} label="Bitget Wallet" statusLabel={walletAddress ? "已配置" : "未配置"} statusClass={walletAddress ? "status-chip-highlight" : "status-chip-muted"} description="Morph 链" actions={walletAddress
+            ? <SourceRowMenu label="Bitget Wallet" updateLabel="修改钱包" removeLabel="移除钱包" disabled={modalBusy || editingWallet} onUpdate={() => { setWalletDraft(walletAddress); setEditingWallet(true); setWalletMessage(null); }} onRemove={() => { setWalletMessage(null); setPendingWalletRemoval(true); }} />
+            : <ActionButton variant="secondary" disabled={modalBusy || editingWallet} onClick={() => { setWalletDraft(""); setEditingWallet(true); setWalletMessage(null); }}>添加</ActionButton>}>
+            {walletAddress && <p className="text-secondary type-caption mt-3 break-all">{walletAddress}</p>}
+            {editingWallet && <form className="api-credential-form mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void changeWallet(); }} autoComplete="off">
+              <SettingsField label="钱包地址" value={walletDraft} onChange={setWalletDraft} disabled={modalBusy} maxLength={42} placeholder="0x…" />
+              {walletAddress && <p className="text-secondary type-caption">更换钱包会清除上一钱包的当前持仓和同步缓存，重新刷新后展示新钱包余额。</p>}
+              {walletDraft && !normalizeWalletAddress(walletDraft) && <p className="text-danger type-caption">请填写 0x 开头、40 位十六进制字符的钱包地址。</p>}
+              <div className="flex justify-end gap-2"><ActionButton type="button" variant="secondary" disabled={modalBusy} onClick={() => { setEditingWallet(false); setWalletDraft(""); setWalletMessage(null); }}>取消</ActionButton><ActionButton type="submit" disabled={modalBusy || !normalizeWalletAddress(walletDraft)}>{walletBusy ? "正在保存…" : "保存"}</ActionButton></div>
+            </form>}
+          </SourceRow></div>}
+        {walletMessage && <p className={`${walletMessageError ? "error-panel" : "muted-panel"} api-feedback-panel type-caption mt-3`} role={walletMessageError ? "alert" : "status"}>{walletMessage}</p>}
+      </section>
+      <section>
         <div className="api-settings-split-row">
-          <SectionIntro title="手动刷新频率" description="仅限制手动刷新；当天首次打开页面时仍会自动更新。设置同步至此邮箱所有设备。" />
+          <SectionIntro title="手动刷新频率" description="仅限制账号维度手动刷新的间隔，不影响每日首次打开页面的自动刷新。" />
           <div className="cooldown-options" role="radiogroup" aria-label="手动刷新冷却时间" aria-busy={cooldownMinutes === null || savingCooldown}>
             {([{ value: 0, label: "无" }, { value: 30, label: "30 分钟" }] as const).map((option) => (
               <button key={option.value} type="button" role="radio" aria-checked={cooldownMinutes === option.value} className="cooldown-option" disabled={cooldownMinutes === null || savingCooldown} onClick={() => void updateCooldown(option.value)}>
@@ -351,7 +446,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
       </section>
       <section>
         <div className="api-settings-split-row">
-          <SectionIntro title="API 检测" description="只读检查已知接口，不写入产品、持仓或历史；报告不含持仓金额或密钥。" />
+          <SectionIntro title="API 检测" description="检查交易所接口是否可用、能获取哪些数据，并生成检测报告。" />
           <div className="api-check-actions">
             <ActionButton
               variant="secondary"
@@ -371,9 +466,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
             {capabilityReport
               && apiCheckState.downloadable
               && !rateLimitDetected
-              && capabilityReport.requestSafety?.stopReason == null && <>
-              <ActionButton variant="text" size="small" onClick={downloadCapabilityReport}>下载 JSON · {new Date(capabilityReport.generatedAt).toLocaleDateString("zh-CN")}</ActionButton>
-            </>}
+              && capabilityReport.requestSafety?.stopReason == null && <ActionButton variant="text" size="small" onClick={downloadCapabilityReport}>下载 JSON · {new Date(capabilityReport.generatedAt).toLocaleDateString("zh-CN")}</ActionButton>}
           </div>
         </div>
         {rateLimitDetected && <p className="error-panel api-feedback-panel type-caption mt-3" role="status">
@@ -392,20 +485,26 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
   );
 }
 
-function SourceSummary({ account, label, statusLabel, statusClass, description }: { account?: Account; label: string; statusLabel: string; statusClass: string; description: string }) {
-  return <div className="flex min-w-0 items-center gap-3">{account && <AccountBadge account={account} />}<div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="type-label font-semibold">{label}</span><span className={`status-chip status-chip-compact ${statusClass}`}>{statusLabel}</span></div><p className="text-secondary type-caption mt-2">{description}</p></div></div>;
+type SourceSummaryProps = { account?: Account; label: string; statusLabel: string; statusClass: string; description: string };
+
+function SourceRow({ divided = false, actions, children, ...summary }: SourceSummaryProps & { divided?: boolean; actions?: ReactNode; children?: ReactNode }) {
+  return <div className={`api-connection-row ${divided ? "api-connection-row-divided" : ""}`}><div className="flex items-center justify-between gap-6"><SourceSummary {...summary} />{actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}</div>{children}</div>;
+}
+
+function SourceSummary({ account, label, statusLabel, statusClass, description }: SourceSummaryProps) {
+  return <div className="flex min-w-0 items-center gap-3">{account && <AccountBadge account={account} />}<div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="type-label font-semibold">{label}</span><span className={`status-chip status-chip-compact ${statusClass}`}>{statusLabel}</span></div><p className="text-secondary type-caption mt-1">{description}</p></div></div>;
 }
 
 function ApiSettingsSkeleton() {
   return <div className="api-settings-skeleton" aria-label="正在读取配置状态" aria-busy="true">{Array.from({ length: 6 }, (_, index) => <div key={index} className="api-settings-skeleton-row"><span className="api-settings-skeleton-badge" /><span className="api-settings-skeleton-copy"><span /><span /></span></div>)}</div>;
 }
 
-function ApiRowMenu({ label, disabled, onUpdate, onRemove }: { label: string; disabled: boolean; onUpdate: () => void; onRemove: () => void }) {
+function SourceRowMenu({ label, updateLabel, removeLabel, disabled, onUpdate, onRemove }: { label: string; updateLabel: string; removeLabel: string; disabled: boolean; onUpdate: () => void; onRemove: () => void }) {
   const menuRef = useDismissibleDetails();
 
-  return <details ref={menuRef} className="api-row-menu relative"><summary className="icon-button api-row-menu-trigger list-none" aria-label={`${label} 更多操作`} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} onClick={(event) => { if (disabled) event.preventDefault(); }}><span aria-hidden="true">⋯</span></summary><div className="surface-popover api-row-menu-popover"><button type="button" onClick={() => { menuRef.current?.removeAttribute("open"); onUpdate(); }} className="menu-item menu-item-compact">更新 API 配置</button><button type="button" onClick={() => { menuRef.current?.removeAttribute("open"); onRemove(); }} className="menu-item menu-item-compact menu-item-danger">移除 API 配置</button></div></details>;
+  return <details ref={menuRef} className="api-row-menu relative"><summary className="icon-button api-row-menu-trigger list-none" aria-label={`${label} 更多操作`} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} onClick={(event) => { if (disabled) event.preventDefault(); }}><span aria-hidden="true">⋯</span></summary><div className="surface-popover api-row-menu-popover"><button type="button" onClick={() => { menuRef.current?.removeAttribute("open"); onUpdate(); }} className="menu-item menu-item-compact">{updateLabel}</button><button type="button" onClick={() => { menuRef.current?.removeAttribute("open"); onRemove(); }} className="menu-item menu-item-compact menu-item-danger">{removeLabel}</button></div></details>;
 }
 
-function SecretField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  return <label className="block"><span className="text-secondary type-caption mb-2 block font-normal">{label}</span><input type="password" value={value} onChange={(event) => onChange(event.target.value)} autoComplete="new-password" autoCapitalize="none" spellCheck={false} className="secret-input type-body" /></label>;
+function SettingsField({ label, value, onChange, type = "text", ...inputProps }: { label: string; value: string; onChange: (value: string) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "className">) {
+  return <label className="block"><span className="text-secondary type-caption mb-2 block font-normal">{label}</span><input {...inputProps} type={type} value={value} onChange={(event) => onChange(event.target.value)} autoComplete={type === "password" ? "new-password" : "off"} autoCapitalize="none" spellCheck={false} className="settings-input type-body" /></label>;
 }

@@ -5,6 +5,7 @@ export const accountDisplayNames = {
   "bybit-global": "Bybit Global",
   "bybit-eu": "Bybit EU",
   "bitget-global": "Bitget",
+  "bitget-wallet-morph": "Bitget Wallet",
   "okx-global": "OKX",
   "mexc-ph": "MEXC · PH 🇵🇭",
   "mexc-uk": "MEXC · UK 🇬🇧",

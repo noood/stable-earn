@@ -91,6 +91,15 @@ export const schemaStatements = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_exchange_credentials_user_id
     ON exchange_credentials (user_id)`,
+  `CREATE TABLE IF NOT EXISTS wallet_configs (
+    user_id TEXT PRIMARY KEY,
+    address TEXT NOT NULL CHECK (
+      length(address) = 42 AND substr(address, 1, 2) = '0x'
+      AND substr(address, 3) NOT GLOB '*[^0-9a-f]*'
+      AND address != '0x0000000000000000000000000000000000000000'
+    ),
+    updated_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS user_settings (
     user_id TEXT PRIMARY KEY,
     manual_refresh_cooldown_minutes INTEGER NOT NULL DEFAULT 30

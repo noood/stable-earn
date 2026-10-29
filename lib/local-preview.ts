@@ -4,6 +4,7 @@ import { previewProducts } from "./preview-fixtures";
 import { buildManualProductIdentity } from "./product-identity";
 import { nextScheduledRefreshAt } from "./sync-cache";
 import { isLocalDevelopmentRequest } from "./request-security";
+import { bitgetWalletRate } from "./bitget-wallet-product";
 
 /** Pin local-only preview fixtures for repeatable browser screenshots. */
 export function localPreviewTime(requestUrl: string) {
@@ -390,6 +391,25 @@ export function localPrivateHoldingsPreview(now = new Date(), apiDatesPreview = 
 // Fixed source time makes repeated page reloads useful for timestamp regression
 // checks. These scenarios are available only behind the development preview.
 export function localSyncScenarioPreview(scenario: string | null, now = new Date()) {
+  if (scenario === "bgw") {
+    const preview = localPrivateProductsPreview(now);
+    const rate = bitgetWalletRate();
+    const id = "preview-bgw-morph-usdc";
+    const product: Product = {
+      id, accountId: "bitget-wallet-morph", exchange: "bitget-wallet", region: "morph", asset: "USDC",
+      name: "Gauntlet USDC", identityKey: rate.identityKey!, externalProductId: rate.externalProductId,
+      productDataMode: "manual", holdingDataMode: "api", productType: "flexible", productTypeStatus: "known",
+      rateCoverage: "unavailable", capacityStatus: "available", tierStructureStatus: "complete",
+      tiers: [{ id: `${id}-tier-0`, min: 0, max: null, maxStatus: "unlimited", apr: 0 }], source: { kind: "manual", label: "手动填写整体 APR" },
+    };
+    return {
+      ...preview,
+      products: [...preview.products, product],
+      holdingUpdates: { ...preview.holdingUpdates, [id]: 123.45 },
+      holdingSourceIds: [...preview.holdingSourceIds, id],
+      holdingSyncStates: { ...preview.holdingSyncStates, [id]: "synced" },
+    };
+  }
   if (!scenario || !["empty", "partial", "error", "success", "syncing", "initial-syncing", "initial-error"].includes(scenario)) return null;
   const initial = scenario.startsWith("initial-");
   const empty = scenario === "empty";

@@ -20,6 +20,13 @@ test("consecutive partial or total failures preserve each holding's original tim
   assert.deepEqual(second, { bitget: sourceTime, binance: firstFailureTime });
 });
 
+test("a chain holding keeps its block time when the whole snapshot later fails", () => {
+  const sources = { wallet: sourceTime };
+  const first = cachedHoldingTimes({ wallet: 123, exchange: 0 }, {}, firstFailureTime, sources);
+  assert.deepEqual(first, { wallet: sourceTime, exchange: firstFailureTime });
+  assert.deepEqual(cachedHoldingTimes({ wallet: 123, exchange: 0 }, first, secondFailureTime, sources), first);
+});
+
 test("a complete empty position snapshot clears only that account's cached positions", () => {
   const oldPositions = [
     { productId: "bn-global-fixed", accountId: "binance-global", positionId: "g-1", amount: 100, source: "api", updatedAt: sourceTime },

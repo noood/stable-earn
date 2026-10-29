@@ -228,7 +228,7 @@ function cachedResponse(
       ? Object.fromEntries(payload.rates.map((rate) => [rate.productId, rate.fetchedAt || record.updatedAt]))
       : payload.rateFallbacks ?? {},
     holdingFallbacks: failed
-      ? cachedHoldingTimes(payload.holdingUpdates, payload.holdingFallbacks ?? {}, record.updatedAt ?? payload.fetchedAt)
+      ? cachedHoldingTimes(payload.holdingUpdates, payload.holdingFallbacks ?? {}, record.updatedAt ?? payload.fetchedAt, payload.holdingFetchedAt)
       : payload.holdingFallbacks ?? {},
     holdingSyncStates: failed
       ? Object.fromEntries(Object.entries(payload.holdingSyncStates ?? {}).map(([id, status]) => [id, status === "not_configured" ? status : "error"]))

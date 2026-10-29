@@ -5,9 +5,10 @@ export function cachedHoldingTimes(
   holdings: Record<string, number>,
   previousFallbacks: Record<string, string>,
   snapshotTime: string,
+  sourceTimes: Record<string, string> = {},
 ): Record<string, string> {
   return Object.fromEntries(Object.keys(holdings).map((id) => [
-    id, previousFallbacks[id] ?? snapshotTime,
+    id, previousFallbacks[id] ?? sourceTimes[id] ?? snapshotTime,
   ]));
 }
 

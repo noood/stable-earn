@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import type { ProductChangeEvent, ProductHistorySummary } from "@/lib/domain";
+import { useAnchoredPopover } from "@/app/components/use-anchored-popover";
 import { useDismissiblePopover } from "@/app/components/use-dismissible-popover";
 import { ActionButton } from "@/app/components/ui";
 import { mergeNewProductHistoryEvents, mergeProductHistoryEvents, mergeProductHistorySummaries, productHistoryRevision } from "@/lib/product-history-state";
@@ -32,7 +33,7 @@ export function ProductHistory({ productId, events, summary, loadPage, onEventsR
   const suppressFocusOpenRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [acknowledgedEventIds, setAcknowledgedEventIds] = useState<string[]>([]);
-  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const position = useAnchoredPopover(open, setOpen, buttonRef, popoverRef, "end");
   const [loadedHistoryEvents, setLoadedHistoryEvents] = useState<ProductChangeEvent[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -91,50 +92,6 @@ export function ProductHistory({ productId, events, summary, loadPage, onEventsR
       document.removeEventListener("focusin", closeWhenFocusLeaves);
     };
   }, [open, instanceId]);
-
-  useEffect(() => {
-    if (!open || typeof IntersectionObserver === "undefined") return;
-    const trigger = buttonRef.current;
-    if (!trigger) return;
-    const observer = new IntersectionObserver(([entry]) => {
-      if (!entry) return;
-      const triggerVisible = entry.isIntersecting
-        && entry.intersectionRect.width > 0
-        && entry.intersectionRect.height > 0;
-      if (!triggerVisible) {
-        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-        closeTimerRef.current = null;
-        setOpen(false);
-      }
-    });
-    observer.observe(trigger);
-    return () => observer.disconnect();
-  }, [open, setOpen]);
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    function updatePosition() {
-      const trigger = buttonRef.current;
-      const popover = popoverRef.current;
-      if (!trigger || !popover) return;
-      const triggerRect = trigger.getBoundingClientRect();
-      const popoverRect = popover.getBoundingClientRect();
-      const gutter = 12;
-      const left = Math.max(gutter, Math.min(triggerRect.right - popoverRect.width, window.innerWidth - popoverRect.width - gutter));
-      const preferredTop = window.innerHeight - triggerRect.bottom >= popoverRect.height + 8 || triggerRect.top < popoverRect.height + 8
-        ? triggerRect.bottom + 8
-        : triggerRect.top - popoverRect.height - 8;
-      const top = Math.max(gutter, Math.min(preferredTop, window.innerHeight - popoverRect.height - gutter));
-      setPosition((current) => current.top === top && current.left === left ? current : { top, left });
-    }
-    updatePosition();
-    window.addEventListener("scroll", updatePosition, true);
-    window.addEventListener("resize", updatePosition);
-    return () => {
-      window.removeEventListener("scroll", updatePosition, true);
-      window.removeEventListener("resize", updatePosition);
-    };
-  }, [open, sortedEvents.length]);
 
   useEffect(() => () => {
     historyRequestIdRef.current += 1;
@@ -278,16 +235,6 @@ export function ProductHistory({ productId, events, summary, loadPage, onEventsR
     cancelScheduledClose();
     cancelScheduledHoverOpen();
     window.dispatchEvent(new CustomEvent(PRODUCT_HISTORY_OPEN_EVENT, { detail: instanceId }));
-    const rect = buttonRef.current?.getBoundingClientRect();
-    if (rect) {
-      const width = Math.min(288, window.innerWidth - 24);
-      const estimatedHeight = Math.min(352, Math.max(108, sortedEvents.length * 92 + 58));
-      const left = Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12));
-      const top = window.innerHeight - rect.bottom >= estimatedHeight + 8 || rect.top < estimatedHeight + 8
-        ? rect.bottom + 8
-        : rect.top - estimatedHeight - 8;
-      setPosition({ top, left });
-    }
     setOpen(true);
     ensureInitialHistoryRequest();
   }
@@ -406,7 +353,7 @@ export function ProductHistory({ productId, events, summary, loadPage, onEventsR
       <div
         ref={popoverRef}
         id={`${instanceId}-history`}
-        className="product-history-popover surface-popover"
+        className="product-history-popover surface-popover anchored-popover"
         role="dialog"
         aria-label="产品变更记录"
         tabIndex={-1}

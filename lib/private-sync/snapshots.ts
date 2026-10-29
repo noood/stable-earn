@@ -7,9 +7,10 @@ import { fetchPublicRateSnapshot } from "@/lib/live-rates";
 import { diagnosticErrorKind, syncDiagnostic, withSyncPlatform } from "@/lib/sync-diagnostics";
 import { combineApiReadStatuses, safeDiagnostic } from "./status";
 import type { BinanceAccountSnapshot, PrivateResult } from "./types";
+import { fetchBitgetWalletHolding } from "@/lib/integrations/bitget-wallet";
 
 /** Read all configured platform scopes concurrently; this layer never writes data. */
-export async function fetchPrivateSnapshots(credentials: Awaited<ReturnType<typeof loadCredentials>>) {
+export async function fetchPrivateSnapshots(credentials: Awaited<ReturnType<typeof loadCredentials>>, wallet?: { address: string } | null) {
   const publicSnapshotPromise = withSyncPlatform("public", fetchPublicRateSnapshot);
   const binanceGlobalCredential = credentials["binance-global"];
   const binanceGlobalJob = runPrivate(
@@ -117,15 +118,17 @@ export async function fetchPrivateSnapshots(credentials: Awaited<ReturnType<type
       passphrase: okxCredential!.passphrase!,
     }),
   );
-  const [publicSnapshot, binanceGlobalResult, binanceBahrainResult, bybitGlobalResult, bitgetResult, okxResult] = await Promise.all([
+  const walletHoldingJob = runPrivate("bitget-wallet-morph", Boolean(wallet), () => fetchBitgetWalletHolding(wallet!.address));
+  const [publicSnapshot, binanceGlobalResult, binanceBahrainResult, bybitGlobalResult, bitgetResult, okxResult, walletHoldingResult] = await Promise.all([
     publicSnapshotPromise,
     binanceGlobalJob,
     binanceBahrainJob,
     bybitGlobalJob,
     bitgetJob,
     okxJob,
+    walletHoldingJob,
   ]);
-  return { publicSnapshot, binanceGlobalResult, binanceBahrainResult, bybitGlobalResult, bitgetResult, okxResult };
+  return { publicSnapshot, binanceGlobalResult, binanceBahrainResult, bybitGlobalResult, bitgetResult, okxResult, walletHoldingResult };
 }
 
 function runPrivate<T>(platform: string, configured: boolean, task: () => Promise<T>): Promise<PrivateResult<T>> {

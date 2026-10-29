@@ -2,9 +2,7 @@
 
 ## Reporting a vulnerability
 
-请不要在公开 issue、讨论区或 pull request 中提交漏洞细节、API Key、Secret、Access 配置或个人数据。
-
-仓库已启用 GitHub 私下漏洞报告。请前往仓库的 **Security** 页面，使用 **Report a vulnerability** 私下提交漏洞详情；不要在公开 issue、讨论区或 pull request 中披露漏洞细节。报告时尽量包含：
+仓库已启用 GitHub 私下漏洞报告。请通过 **Security → Report a vulnerability** 私下提交，不要在公开 issue、讨论区或 pull request 中披露漏洞细节、API Key、Secret、Access 配置或个人数据。报告时尽量包含：
 
 - 受影响的版本或提交；
 - 可复现步骤；
@@ -23,3 +21,9 @@
 - 使用只读权限的交易所 API Key；
 - 将 `CREDENTIAL_ENCRYPTION_KEY` 保存在 Worker Secret 中；
 - 不把 `.env`、生产配置、D1 导出或日志中的个人数据提交到仓库。
+
+## Public wallet addresses
+
+链上理财接入仅接收钱包公开地址，不要求私钥、助记词或签名。公开地址按用户隔离保存在 D1，当前不作应用层加密；只读查询会将该地址发送至对应链的公开 RPC 服务。交易所密钥仍沿用加密保存机制。
+
+钱包更换或移除会清除对应的当前持仓、使旧刷新失效；产品资料与变更历史保留。读取失败、零值与清理范围以[数据规则](docs/DATA-STATES.md#bitget-wallet--morph)为准。

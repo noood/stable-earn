@@ -66,7 +66,7 @@ test("unknown tier bounds do not claim an open range, while confirmed unlimited 
     tierStructureStatus: "complete",
     tiers: [{ id: "preview-apr-six-tier-0", min: 0, max: null, maxStatus: "unlimited", apr: 6 }],
   });
-  await expect(unlimited.locator(".product-rate-headline")).toContainText("申购额度 · 0.00 以上");
+  await expect(unlimited.locator(".product-rate-headline")).toContainText("不限额");
   await expect(unlimited).toContainText("申购额度不限额");
   await expect(unlimited).not.toContainText("额度未获取");
 });

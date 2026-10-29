@@ -13,6 +13,9 @@ import { formatCacheTime, type SyncCacheRecord } from "@/lib/sync-cache";
 import type { BinanceAccountSnapshot, PrivateDiagnostics, PrivatePayloadBuild, PrivateProductsPayload, PrivateStatus, PrivateStatuses } from "./types";
 import { binanceScopes, buildFailures, buildNote, productHoldingSyncState, resolveBinanceStatus } from "./status";
 import { fetchPrivateSnapshots } from "./snapshots";
+import { loadWalletConfig } from "@/lib/wallet-config";
+import { bitgetWalletRate } from "@/lib/bitget-wallet-product";
+import { BGW_ACCOUNT_ID, BGW_IDENTITY_KEY } from "@/lib/integrations/bitget-wallet";
 
 /** Build a candidate and prepared statements without committing any changes. */
 export async function buildPrivatePayload(
@@ -20,8 +23,12 @@ export async function buildPrivatePayload(
   userId: string,
   cached: SyncCacheRecord<PrivateProductsPayload> | null,
 ): Promise<PrivatePayloadBuild> {
-  const credentials = await loadCredentials(db, userId);
-  const { publicSnapshot, binanceGlobalResult, binanceBahrainResult, bybitGlobalResult, bitgetResult, okxResult } = await fetchPrivateSnapshots(credentials);
+  const [credentials, wallet] = await Promise.all([loadCredentials(db, userId), loadWalletConfig(db, userId)]);
+  const { publicSnapshot, binanceGlobalResult, binanceBahrainResult, bybitGlobalResult, bitgetResult, okxResult, walletHoldingResult } = await fetchPrivateSnapshots(credentials, wallet);
+  const walletHolding = walletHoldingResult?.snapshot ?? null;
+  const walletFailures = wallet ? [
+    ...(!walletHolding ? ["Bitget Wallet · Morph（持仓接口读取失败）"] : []),
+  ] : [];
   const okxInvalidAssets = okxResult.snapshot?.invalidAssets ?? [];
   const okxSnapshotIncomplete = okxResult.status === "synced"
     && okxResult.snapshot?.snapshotComplete !== true;
@@ -74,8 +81,16 @@ export async function buildPrivatePayload(
     ...(binanceBahrain?.rates ?? []),
     ...(bybitGlobal?.rates ?? []),
     ...(bitget?.rates ?? []),
+    ...(wallet ? [bitgetWalletRate()] : []),
   ];
-  const fallbackRates = cached?.payload?.rates ?? [];
+  // BGW APR is maintained in user overrides, not fetched or cached rates.
+  // Discard obsolete automatic values instead of restoring their old source.
+  const cachedWalletProductIds = new Set((cached?.payload?.products ?? [])
+    .filter((product) => product.accountId === BGW_ACCOUNT_ID).map((product) => product.id));
+  const fallbackRates = (cached?.payload?.rates ?? []).filter((rate) => (
+    rate.catalog?.accountId !== BGW_ACCOUNT_ID && rate.identityKey !== BGW_IDENTITY_KEY
+    && rate.productId !== BGW_IDENTITY_KEY && !cachedWalletProductIds.has(rate.productId)
+  ));
   const freshRates = mergeRateFields(adapterRates, fallbackRates);
   const apiFieldNotices: ApiFieldNotice[] = [
     ...(publicSnapshot.fieldNotices ?? []).flatMap((notice) => {
@@ -116,6 +131,7 @@ export async function buildPrivatePayload(
     ...(bybitGlobal?.holdings ?? {}),
     ...(bitget?.holdings ?? {}),
     ...(okxResult.snapshot?.holdings ?? {}),
+    ...(walletHolding ? { [BGW_IDENTITY_KEY]: walletHolding.amount } : {}),
   };
   const freshHoldingPositions = [
     ...(binanceGlobal?.positions ?? []).map((position) => ({ ...position, accountId: "binance-global" })),
@@ -145,7 +161,10 @@ export async function buildPrivatePayload(
     // unambiguous response makes missing coin rows authoritative zeroes.
     okxStatus === "synced" && okxResult.snapshot?.snapshotComplete === true ? "okx-global" : null,
   ].filter((accountId): accountId is string => Boolean(accountId));
-  const completeScopeKeys = authoritativeEmptyHoldingScopeKeys(completeAccountIds);
+  const completeScopeKeys = [
+    ...authoritativeEmptyHoldingScopeKeys(completeAccountIds),
+    ...(walletHolding ? [platformCapabilityScopeKey(BGW_ACCOUNT_ID, "USDC", "flexible")] : []),
+  ];
   // Catalog zero/absence evidence must stay inside the configured asset ×
   // product-type scopes. Passing a whole account ID here would make a
   // complete Bybit response authoritative for unsupported scopes such as
@@ -244,6 +263,7 @@ export async function buildPrivatePayload(
     okx: okxStatus,
   };
   const holdingSyncStates: Record<string, HoldingSyncState> = Object.fromEntries(catalog.products.flatMap((product) => {
+    if (product.accountId === BGW_ACCOUNT_ID) return [[product.id, walletHoldingResult?.status ?? "not_configured"] as const];
     const state = productHoldingSyncState(product, privateStatus, {
       "binance-global": binanceGlobal,
       "binance-bahrain": binanceBahrain,
@@ -258,18 +278,20 @@ export async function buildPrivatePayload(
     bitget: bitgetDiagnostic,
     okx: okxDiagnostic,
   };
-  const configuredError = Object.values(privateStatus).some((status) => status === "error" || status === "partial");
+  const configuredError = Object.values(privateStatus).some((status) => status === "error" || status === "partial") || walletFailures.length > 0;
   const holdingFallbacks = Object.fromEntries(Object.entries(cachedHoldingTimes(
     cached?.payload?.holdingUpdates ?? {},
     cached?.payload?.holdingFallbacks ?? {},
     cached?.updatedAt ?? updatedFallbackTime(cached?.payload?.fetchedAt),
+    cached?.payload?.holdingFetchedAt,
   ))
     .map(([productId, time]) => [normalizeCatalogHoldingId(productId, activeProductIds, catalogProductIds), time])
     .filter(([productId]) => activeProductIds.has(productId) && !freshHoldingProductIds.has(productId)));
-  const successfulPrivateJobs = Object.values(privateStatus).filter((status) => status === "synced" || status === "partial").length;
+  const successfulPrivateJobs = Object.values(privateStatus).filter((status) => status === "synced" || status === "partial").length + (walletHolding ? 1 : 0);
   // Log before the all-failed throw, which deliberately preserves the old cache.
   syncDiagnostic("sync_platforms", {
     ...privateStatus,
+    walletHolding: walletHoldingResult?.status ?? "not_configured",
     publicOutcome: publicFailures.length ? "error" : publicPartials.length ? "partial" : publicRates.length ? "returned" : "empty",
     publicEmptyScopes: publicEmpty,
     ...(bitget ? {
@@ -290,7 +312,9 @@ export async function buildPrivatePayload(
 
   const updatedAt = new Date().toISOString();
   const partial = publicFailures.length > 0 || publicPartials.length > 0 || configuredError;
-  const failures = buildFailures(privateStatus, privateDiagnostics, publicFailures, publicPartials);
+  const failures = [...buildFailures(privateStatus, privateDiagnostics, publicFailures, publicPartials), ...walletFailures];
+  const holdingFetchedAt = Object.fromEntries(Object.entries(cached?.payload?.holdingFetchedAt ?? {}).filter(([id]) => activeProductIds.has(id)));
+  if (walletHolding) holdingFetchedAt[normalizeCatalogHoldingId(BGW_IDENTITY_KEY, activeProductIds, catalogProductIds)] = walletHolding.updatedAt;
   const fallbackNote = partial && cached?.updatedAt
     ? `未成功更新的项目沿用 ${formatCacheTime(cached.updatedAt)} 的最近一次成功数据。`
     : "";
@@ -307,6 +331,7 @@ export async function buildPrivatePayload(
         ...Object.keys(normalizedFreshHoldings),
       ])].filter((productId) => activeProductIds.has(productId)),
       holdingFallbacks,
+      holdingFetchedAt,
       holdingSyncStates,
       holdingPositions,
       apiFieldNotices,

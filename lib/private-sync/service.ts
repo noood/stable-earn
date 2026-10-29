@@ -101,7 +101,7 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
         VALUES (?, ?, ?, ?)
         ON CONFLICT(user_id, product_id)
         DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`)
-        .bind(userId, productId, amount, payload.fetchedAt));
+        .bind(userId, productId, amount, payload.holdingFetchedAt?.[productId] ?? payload.fetchedAt));
     await db.batch([
       ...(options.leaseToken ? [prepareRefreshCommitGuard(db, userId, options.leaseToken)] : []),
       ...catalog.statements,
@@ -140,6 +140,7 @@ export async function listPrivateSyncUserIds(db: D1Database) {
   // with SQLITE_ERROR even when it only contains a handful of branches.
   const statements = [
     "SELECT user_id FROM exchange_credentials",
+    "SELECT user_id FROM wallet_configs",
     "SELECT user_id FROM holdings",
     "SELECT user_id FROM holding_positions",
     "SELECT user_id FROM user_products",

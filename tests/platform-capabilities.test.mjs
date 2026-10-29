@@ -11,7 +11,9 @@ test("platform capability matrix covers every monitored account, asset, and prod
     "binance-global", "binance-bahrain", "bybit-global", "bybit-eu",
     "bitget-global", "okx-global", "mexc-ph", "mexc-uk",
   ];
-  assert.deepEqual(seedAccounts.map((account) => account.id), accountIds);
+  // Wallet JSON-RPC and its manual APR use their own configuration, not exchange credential probes.
+  assert.deepEqual(seedAccounts.filter((account) => account.exchange !== "bitget-wallet").map((account) => account.id), accountIds);
+  assert.ok(seedAccounts.some((account) => account.id === "bitget-wallet-morph"));
   assert.equal(platformCapabilities.length, accountIds.length * monitoredAssets.length * 2);
   for (const accountId of accountIds) {
     for (const asset of monitoredAssets) {
