@@ -422,7 +422,6 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
           : <div className="api-connection-list"><SourceRow account={accounts.find((account) => account.id === "bitget-wallet-morph")} label="Bitget Wallet" statusLabel={walletAddress ? "已配置" : "未配置"} statusClass={walletAddress ? "status-chip-highlight" : "status-chip-muted"} description="Morph 链" actions={walletAddress
             ? <SourceRowMenu label="Bitget Wallet" updateLabel="修改钱包" removeLabel="移除钱包" disabled={modalBusy || editingWallet} onUpdate={() => { setWalletDraft(walletAddress); setEditingWallet(true); setWalletMessage(null); }} onRemove={() => { setWalletMessage(null); setPendingWalletRemoval(true); }} />
             : <ActionButton variant="secondary" disabled={modalBusy || editingWallet} onClick={() => { setWalletDraft(""); setEditingWallet(true); setWalletMessage(null); }}>添加</ActionButton>}>
-            {walletAddress && <p className="text-secondary type-caption mt-3 break-all">{walletAddress}</p>}
             {editingWallet && <form className="api-credential-form mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void changeWallet(); }} autoComplete="off">
               <SettingsField label="钱包地址" value={walletDraft} onChange={setWalletDraft} disabled={modalBusy} maxLength={42} placeholder="0x…" />
               {walletAddress && <p className="text-secondary type-caption">更换钱包会清除上一钱包的当前持仓和同步缓存，重新刷新后展示新钱包余额。</p>}

@@ -341,7 +341,6 @@ input:focus-visible,
   line-height: var(--leading-caption);
 }
 .product-rate-headline { align-items: center; font-weight: 600; }
-.product-rate-label { display: inline-flex; align-items: center; gap: 0; }
 .info-tooltip-trigger { width: var(--space-6); height: var(--space-6); padding: 0; border-radius: var(--radius-sm); color: var(--text-secondary); }
 .info-tooltip-trigger:hover { background: var(--surface-muted); color: var(--text-primary); }
 .info-tooltip-trigger svg { width: var(--space-4); height: var(--space-4); fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
@@ -370,6 +369,8 @@ input:focus-visible,
   padding-top: var(--space-control);
 }
 .manual-field-label {
+  display: inline-flex;
+  align-items: center;
   color: var(--text-secondary);
   font-size: var(--type-caption);
   font-weight: 600;
@@ -731,7 +732,6 @@ input:focus-visible,
 }
 .api-settings-split-row > :first-child { margin-bottom: 0; }
 .api-connection-list {
-  overflow: hidden;
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-card);
   background: var(--surface);

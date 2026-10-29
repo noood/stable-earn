@@ -3,7 +3,6 @@
 import type { ReactNode } from "react";
 import { ProductHistory, type ProductHistoryPage } from "@/app/components/product-history";
 import { AccountBadge, HoldingSummary, TableCell } from "@/app/components/ui";
-import { InfoTooltip } from "@/app/components/info-tooltip";
 import { HoldingInput, InlineSelect, ManualAprInput, ManualLimitInput, ManualTermInput } from "@/app/components/dashboard/product-inputs";
 import { PurchaseDateInput, parseCalendarDate } from "@/app/components/dashboard/purchase-date-input";
 import { effectiveApr, formatAmount, type Account, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent, type ProductHistorySummary, type ProductKind } from "@/lib/domain";
@@ -118,10 +117,9 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
     ? apiMaturityIsPast(apiMaturity)
     : Boolean(termStatus && termStatus.remainingDays <= 0);
   const lifecycleValue = <>{lifecycleDateLabel}{termStatusText && <><span className="product-fact-separator">｜</span><span className={lifecycleStatusWarning ? "product-fact-danger" : "product-fact-note"}>{termStatusText}</span></>}</>;
-
   const rateExplanation = product.exchange === "bitget-wallet" ? <p>整体 APR 包含基础收益和奖励利率。奖励每 8 小时结算一次，赎回时空投到钱包余额。</p> : undefined;
 
-  return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} explanation={editing ? undefined : rateExplanation} />
+  return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
     {manualApr && !manualLimit && product.rateCoverage !== "unavailable" && <ProductMeta text={`手动填写${manualSettings?.updatedAt ? ` · 更新于 ${formatSyncDateTime(manualSettings.updatedAt)}` : ""}`} />}
     {(!editing || !manualProduct) && fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
     {(!editing || !manualProduct) && qualificationFact && <ProductFact label="申购资格" value={qualificationFact} />}
@@ -159,8 +157,8 @@ function apiMaturityIsPast(value: string) {
   return Date.parse(value) <= Date.now();
 }
 
-function ProductRateHeadline({ label, value, muted = false, explanation }: { label: string; value: string; muted?: boolean; explanation?: ReactNode }) {
-  return <div className="product-rate-headline"><span>{label}</span><span className="product-rate-label"><span className={`status-chip ${muted ? "status-chip-muted" : "status-chip-highlight"}`}>{value}</span>{explanation && <InfoTooltip label="APR说明">{explanation}</InfoTooltip>}</span></div>;
+function ProductRateHeadline({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
+  return <div className="product-rate-headline"><span>{label}</span><span className={`status-chip ${muted ? "status-chip-muted" : "status-chip-highlight"}`}>{value}</span></div>;
 }
 
 function ProductFact({ label, value }: { label: string; value: ReactNode }) {
@@ -199,7 +197,7 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
       ? (holdingCacheNote ? <HoldingSummary muted compact cacheNote={holdingCacheNote} /> : null)
       : <HoldingSummary compact label={holdingLabel()} cacheNote={holdingCacheNote} />;
   } else if (firstTierCapacity === null) {
-    summary = <HoldingSummary compact label={holdingLabel(`${capacityLabel}不限额`)} cacheNote={holdingCacheNote} />;
+    summary = <HoldingSummary compact label={holdingLabel("不限额")} cacheNote={holdingCacheNote} />;
   } else {
     const remainingLabel = !typeResolved ? "首档剩余" : isFixed ? "还可申购" : "还可放";
     const note = overflow > 0
