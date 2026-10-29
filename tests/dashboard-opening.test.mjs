@@ -35,7 +35,7 @@ async function open({ personalFailure = false, cacheFailure = false, dailyFailur
     formatStartupRequestTiming,
     holdingsRef: { current: {} }, productOverridesRef: { current: {} }, manualProductsRef: { current: [] }, hiddenProductIdsRef: { current: [] },
     personalDataReadyRef: { current: false }, personalDataLoadingRef: { current: false },
-    dailyRefreshPendingRef: { current: daily }, refreshInFlightRef: { current: false },
+    dailyRefreshPendingRef: { current: daily }, refreshInFlightRef: { current: false }, productRequestGenerationRef: { current: 0 },
     manualProductPayload: product => product,
     fetch: async (url, options) => {
       requests.push(url);

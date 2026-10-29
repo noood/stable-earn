@@ -1,6 +1,6 @@
 export type Asset = "USDT" | "USDC" | "USDGO" | "BTC";
-type Exchange = "binance" | "bybit" | "bitget" | "okx" | "mexc";
-type Region = "global" | "bahrain" | "eu" | "philippines" | "uk";
+type Exchange = "binance" | "bybit" | "bitget" | "bitget-wallet" | "okx" | "mexc";
+type Region = "global" | "bahrain" | "eu" | "philippines" | "uk" | "morph";
 
 export type Account = {
   id: string;

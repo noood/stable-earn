@@ -38,7 +38,7 @@ async function getHoldings(request: Request, timing: StartupServerTiming) {
       if (scenario === "both-read-error") await delayLocalPreviewScenario(request, scenario);
       return NextResponse.json({ error: "本地模拟：个人数据读取失败" }, { status: 503, headers: privateResponseHeaders });
     }
-    return NextResponse.json(scenario && scenario !== "api-dates"
+    return NextResponse.json(scenario && scenario !== "api-dates" && scenario !== "bgw"
       ? { holdings: {}, overrides: {}, manualProducts: [], hiddenProductIds: [], found: false }
       : localPrivateHoldingsPreview(localPreviewTime(request.url), scenario === "api-dates"), { headers: privateResponseHeaders });
   }
@@ -200,7 +200,7 @@ export async function PUT(request: Request) {
     return parseProductOverride(product, overrideCandidate[productId]);
   });
   if (overrideEntries.some((entry) => entry === null)) {
-    return NextResponse.json({ error: "人工额度、APR、期限或买入日格式不正确。" }, { status: 400, headers: privateResponseHeaders });
+    return NextResponse.json({ error: "人工额度、收益率、期限或买入日格式不正确。" }, { status: 400, headers: privateResponseHeaders });
   }
   if (entries.length === 0 && overrideEntries.length === 0 && manualProductUpdates.length === 0 && deletedManualProductIds.length === 0 && !hiddenProductsProvided) {
     return NextResponse.json({ error: "没有需要保存的变更。" }, { status: 400, headers: privateResponseHeaders });

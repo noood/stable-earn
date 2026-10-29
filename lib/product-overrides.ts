@@ -46,8 +46,9 @@ export function applyProductOverride(product: Product, override?: ProductOverrid
     ...nextProduct,
     termDays: useManualTerm ? override!.termDays! : needsManualTerm ? undefined : product.termDays,
     rateCoverage: needsManualApr
-      ? !useManualApr ? "unavailable" as const : !useManualLimit ? "base_only" as const : "complete" as const
+      ? !useManualApr ? "unavailable" as const : needsManualLimit && !useManualLimit ? "base_only" as const : "complete" as const
       : product.rateCoverage,
+    ...(needsManualApr ? { aprStatus: useManualApr ? "available" as const : "unavailable" as const } : {}),
     tiers: product.tiers.map((tier, index) => index === 0 ? {
       ...tier,
       apr: useManualApr ? override!.apr! : tier.apr,
@@ -61,7 +62,7 @@ export function productNeedsManualApr(product: Product) {
 }
 
 export function productNeedsManualLimit(product: Product) {
-  return product.productDataMode === "manual" && product.source.kind !== "demo";
+  return product.productDataMode === "manual" && product.source.kind !== "demo" && !(product.tiers.length === 1 && product.tiers[0].max === null && product.tiers[0].maxStatus === "unlimited" && product.capacityStatus === "available");
 }
 
 export function productNeedsManualTerm(product: Product) {

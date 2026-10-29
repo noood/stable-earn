@@ -14,7 +14,7 @@ export function moduleLoader(mocks = {}, globals = {}) {
     if (Object.hasOwn(mocks, id)) return mocks[id];
     if (!id.startsWith(".") && !id.startsWith("@/") && !id.startsWith("/")) return nativeRequire(id);
     let file = id.startsWith("@/") ? resolve(root, id.slice(2)) : resolve(parent, id);
-    if (!existsSync(file)) file += ".ts";
+    if (!existsSync(file)) file = [file + ".ts", file + ".tsx"].find(existsSync) ?? file + ".ts";
     if (modules.has(file)) return modules.get(file).exports;
     const loadedModule = { exports: {} };
     modules.set(file, loadedModule);

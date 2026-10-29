@@ -584,6 +584,9 @@ function manualCapacity(product: Product, override?: ProductOverride) {
 }
 
 function manualApr(product: Product | undefined, override?: ProductOverride) {
+  if (product?.productDataMode === "manual" && product.source.kind !== "demo") {
+    return override?.apr !== null && override?.apr !== undefined && Number.isFinite(override.apr) ? override.apr : null;
+  }
   const value = override?.apr ?? product?.tiers[0]?.apr;
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

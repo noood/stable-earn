@@ -33,7 +33,7 @@ const { dashboardReadState, serverReadFailureMessage } = moduleLoader()("@/lib/s
 function render(part, overrides = {}) {
   const props = {
     ...ui, dataBlocked: true, initialLoading: false, isDemo: false, asset: "USDT", serverReadFailureMessage,
-    totalHolding: 100, holdingProductCount: 1, portfolioApr: 8, annualEarn: 8,
+    totalHolding: 100, holdingProductCount: 1, portfolioApr: 8, annualEarn: 8, hasApy: false,
     bestProduct: { accountId: "test", rateCoverage: "complete", tiers: [{ min: 0, max: 100, apr: 10 }] }, highYieldLeft: 50, tierOneOverflow: 20,
     formatAmount: (value) => value.toFixed(2), highestProductApr: () => 10, accountName: () => "Test Exchange",
     tableProducts: [],

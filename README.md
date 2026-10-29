@@ -1,6 +1,6 @@
 # Stable Earn
 
-Stable Earn 是一个基于 Cloudflare Workers 的稳定币与 BTC 理财监控台，用于集中查看不同平台的理财产品、APR、额度、持仓和预估收益。
+Stable Earn 是一个基于 Cloudflare Workers 的稳定币与 BTC 理财监控台，用于集中查看交易所及已支持的链上理财产品、APR、额度、持仓和预估收益。
 
 ## 主要功能
 
@@ -10,6 +10,7 @@ Stable Earn 是一个基于 Cloudflare Workers 的稳定币与 BTC 理财监控�
 - 展示 APR、阶梯额度、持仓、到期信息和预估收益。
 - 支持 API 同步产品与持仓，也支持手动维护产品。
 - 支持多账号数据隔离和 API 产品隐藏。
+- 支持 Bitget Wallet 的 Morph USDC 链上理财：公开钱包地址同步持仓，收益率手动维护。配置与范围见[接入说明](docs/BITGET-WALLET-MORPH-USDC.md)。
 
 数据仅用于监控和比较，不构成投资建议；最终结果以对应平台账户为准。
 
@@ -71,7 +72,7 @@ npx playwright install chromium
 - 一个 D1 数据库，名称使用 `stablecoin-earn-monitor`。
 - 一个 Queue，名称使用 `stable-earn-sync`。
 - Cloudflare Access 应用，路径规则使用 `/private*`，覆盖 `/private` 页面入口及其子路径。如果新增其他以 `/private` 开头的公开路径，应重新检查匹配范围。
-- 交易所只读 API Key；关闭交易、转账、申购、赎回和提现权限。
+- 按数据源准备交易所只读 API Key，或已支持链上产品的钱包公开地址。交易所 Key 须关闭交易、转账、申购、赎回和提现权限；钱包接入不需要私钥或助记词。
 
 ### 第一次部署
 
@@ -110,7 +111,7 @@ npm run deploy
 
 #### 历史摘要迁移（0021）
 
-本版本必须在合并触发自动部署**之前**，由单一操作者完成以下步骤：
+尚未完成 0021 的已有部署，须在合并触发自动部署**之前**，由单一操作者完成以下步骤：
 
 1. 备份当前数据库，确认历史事件表及 `attention`、`read_at` 列已经存在（对应 0013、0017），且此前适用的迁移已完成。
 2. 使用绑定到目标数据库的本机私密 Wrangler 配置，完整执行 `drizzle/0021_product_history_summaries.sql`。这是一次原子迁移，不要拆开回填、触发器和版本标记执行；部署脚本不会代做此步骤。
@@ -120,6 +121,16 @@ npm run deploy
 0021 可重复执行，版本标记已就绪时不再次扫描历史回填或重置版本。需要回退应用时，可保留新增摘要表、缓存和触发器，旧代码仍可运行；不要为回退应用删除原历史或重置摘要版本。数据库恢复需另按备份方案处理。
 
 部署环境变量和 Worker Secret 只保存在本机私密环境或 Cloudflare，不要提交真实值。
+
+#### 钱包配置迁移（0022）
+
+BGW 接入增加 `wallet_configs` 表。新版本的同步流程会读取该表，必须在合并触发自动部署**之前**，由单一操作者完成：
+
+1. 备份目标数据库并确认前序适用迁移（包括 0021）已经完成。
+2. 使用绑定到目标数据库的本机私密 Wrangler 配置，完整执行 `drizzle/0022_wallet_configs.sql`；部署脚本不会自动迁移。
+3. 只读核对 `wallet_configs` 包含 `user_id` 主键、`address`、`updated_at` 三列及 SQL 中的钱包地址约束，再合并部署。迁移只新增表，不回填钱包、不扫描持仓或历史。
+
+0022 使用 `CREATE TABLE IF NOT EXISTS`，可重复执行，但不会修正已存在的错误表结构。应用回退时保留新增表及钱包配置，旧代码不使用该表；不要为了回退应用删除钱包配置。数据库恢复需另按备份方案处理。
 
 `wrangler.jsonc` 默认将 `SCHEDULED_SYNC_ENABLED` 设为 `false`，因此不会启用每日队列同步；每日首次打开和手动刷新仍可使用。若要启用定时同步，应先确认 Cloudflare Queues 已创建并绑定，再按自己的请求额度评估后修改该设置并重新部署。
 

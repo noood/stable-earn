@@ -72,7 +72,7 @@ function isIncompleteFailure(value: string) {
 }
 
 function failureTarget(value: string) {
-  const platform = ["Binance Global", "Binance Bahrain", "Bybit Global", "Bybit EU", "Bitget", "OKX", "MEXC"]
+  const platform = ["Binance Global", "Binance Bahrain", "Bybit Global", "Bybit EU", "Bitget Wallet · Morph", "Bitget", "OKX", "MEXC"]
     .find((candidate) => value.startsWith(candidate));
   if (!platform) return value.replace(/（.*$/, "").trim();
   const scope = value.slice(platform.length);

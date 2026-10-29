@@ -19,7 +19,7 @@ export type UserProductRow = {
   term_days: number | null;
 };
 
-const validAccountIds = new Set(accounts.map((account) => account.id));
+const validAccountIds = new Set(accounts.filter((account) => account.exchange !== "bitget-wallet").map((account) => account.id));
 const validAssets = new Set<Asset>(["USDT", "USDC", "USDGO", "BTC"]);
 const validKinds = new Set<UserProductInput["manualKind"]>(["flexible", "fixed", "limited"]);
 

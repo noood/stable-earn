@@ -164,6 +164,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const [clock, setClock] = useState(() => Date.now());
   const dailyRefreshPendingRef = useRef(!isDemo && !localPreview);
   const refreshInFlightRef = useRef(false);
+  const productRequestGenerationRef = useRef(0);
   const lastProductRequestAtRef = useRef<number | null>(null);
   const manualRefreshInFlightRef = useRef(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
@@ -359,6 +360,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   async function refreshRates(baseHoldings: HoldingMap = holdings, options?: { manual?: boolean; response?: Promise<Response>; silent?: boolean; cacheOnly?: boolean; startedAt?: number }) {
     if (refreshInFlightRef.current) return false;
     refreshInFlightRef.current = true;
+    const generation = productRequestGenerationRef.current;
     const startedAt = options?.startedAt ?? performance.now();
     const refreshingDaily = !options?.manual && !options?.cacheOnly && dailyRefreshPendingRef.current;
     const diagnosticKey = options?.cacheOnly ? "product-cache" : options?.manual ? "manual-refresh" : refreshingDaily ? "daily-refresh" : "product-poll";
@@ -401,8 +403,10 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       const endpoint = options?.cacheOnly ? { url: productsEndpoint, method: "GET" as const } : refreshEndpoint(options?.manual);
       if (!options?.response) lastProductRequestAtRef.current = performance.now();
       response = await (options?.response ?? fetch(endpoint.url, { method: endpoint.method, cache: "no-store" }));
+      if (generation !== productRequestGenerationRef.current) return false;
       if (!response.ok) {
         const errorData = await response.json().catch(() => null) as Pick<ApiResult, "cache" | "dailyRefreshPending" | "dailyRefreshDiagnostic" | "dailyRefresh" | "historySummaries"> | null;
+        if (generation !== productRequestGenerationRef.current) return false;
         const result = refreshingDaily ? dailyRefreshOutcome(errorData as ApiResult | null) : `HTTP ${response.status}`;
         reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing(`${result} · HTTP ${response.status}`));
         applyDailyRefreshStatus(errorData);
@@ -421,6 +425,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         throw new Error("rate refresh failed");
       }
       const data = await response.json() as ApiResult;
+      if (generation !== productRequestGenerationRef.current) return false;
       const result = refreshingDaily ? `${dailyRefreshOutcome(data)} · HTTP ${response.status}` : `HTTP ${response.status}`;
       reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing(result));
       applyDailyRefreshStatus(data);
@@ -471,6 +476,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       setClock(Date.now());
       return true;
     } catch {
+      if (generation !== productRequestGenerationRef.current) return false;
       reportStartupDiagnostic(diagnosticKey, diagnosticLabel, timing("请求或响应读取失败"));
       // A network/read failure does not start a repeating exchange retry loop.
       if (!options?.manual && !options?.cacheOnly) dailyRefreshPendingRef.current = false;
@@ -481,9 +487,11 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       }
       return false;
     } finally {
-      refreshInFlightRef.current = false;
-      setRefreshingExchange(false);
-      if (!options?.silent) setLoading(false);
+      if (generation === productRequestGenerationRef.current) {
+        refreshInFlightRef.current = false;
+        setRefreshingExchange(false);
+        if (!options?.silent) setLoading(false);
+      }
     }
   }
 
@@ -540,17 +548,18 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     hiddenProductIdsRef.current = nextHiddenProductIds;
     try {
       const result = await persistPortfolio(nextHoldings, nextOverrides, nextManualProducts, changes);
-      if (localPreview) saveLocalPreviewOverrides(nextOverrides);
+      const savedOverrideUpdates = Object.fromEntries(changes.overrideProductIds.map((productId) => [productId, {
+        apr: nextOverrides[productId]?.apr ?? null,
+        firstTierLimit: nextOverrides[productId]?.firstTierLimit ?? null,
+        termDays: nextOverrides[productId]?.termDays ?? null,
+        purchaseDate: nextOverrides[productId]?.purchaseDate ?? null,
+        manualKind: nextOverrides[productId]?.manualKind ?? null,
+        updatedAt: result.updatedAt,
+      }]));
+      if (localPreview) saveLocalPreviewOverrides({ ...nextOverrides, ...savedOverrideUpdates });
       setProductOverrides((current) => ({
         ...current,
-        ...Object.fromEntries(changes.overrideProductIds.map((productId) => [productId, {
-          apr: current[productId]?.apr ?? null,
-          firstTierLimit: current[productId]?.firstTierLimit ?? null,
-          termDays: current[productId]?.termDays ?? null,
-          purchaseDate: current[productId]?.purchaseDate ?? null,
-          manualKind: current[productId]?.manualKind ?? null,
-          updatedAt: result.updatedAt,
-        }])),
+        ...savedOverrideUpdates,
       }));
       if (!isDemo) {
         setChangeEvents(result.changeEvents ?? []);
@@ -903,7 +912,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
           title={<h2 className="type-title font-semibold tracking-[-0.02em]">{asset} 持仓</h2>}
           subtitle={<p className="table-toolbar-subtitle text-muted type-caption">
             {editing
-              ? <>{catalogRuleText}，去<ActionButton variant="text" className="button-text-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置 API</ActionButton></>
+              ? <>{catalogRuleText}，去<ActionButton variant="text" className="button-text-inline-action" onClick={isDemo ? openPrivateApiSettings : openApiSettings}>配置数据源</ActionButton></>
               : catalogRuleText}
           </p>}
           actions={editing
@@ -954,7 +963,14 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         <DashboardFooter />
       </div>
 
-      {!isDemo && apiSettingsMounted && <ApiSettings open={showApiSettings} onClose={() => setShowApiSettings(false)} onCooldownChange={() => setManualRefreshAvailableAt(null)} onCredentialsRemoved={async () => { await loadPersonalData(); }} />}
+      {!isDemo && apiSettingsMounted && <ApiSettings open={showApiSettings} onClose={() => setShowApiSettings(false)} onCooldownChange={() => setManualRefreshAvailableAt(null)} onCredentialsRemoved={async () => {
+        // A response started before a wallet/config change must never restore its old balances or refresh marker.
+        productRequestGenerationRef.current += 1;
+        refreshInFlightRef.current = false;
+        dailyRefreshPendingRef.current = true;
+        setProductSnapshotReady(false);
+        await retryPersonalData();
+      }} />}
       {showAssetSwitchWarning && <ModalFrame ariaLabel="请先完成编辑" title="请先完成编辑" onClose={() => { if (!savingHoldings) { setPendingAsset(null); setShowAssetSwitchWarning(false); } }}><p className="text-secondary type-body">请先完成当前编辑，再切换币种。</p><div className="mt-5 flex justify-end gap-2"><ActionButton variant="secondary" onClick={() => { if (savingHoldings) return; setPendingAsset(null); setShowAssetSwitchWarning(false); }} disabled={savingHoldings}>取消</ActionButton><ActionButton onClick={() => void saveAndLeaveAssetSwitch()} disabled={savingHoldings || !pendingAsset}>{savingHoldings ? "保存中…" : "保存并离开"}</ActionButton></div></ModalFrame>}
       {pendingDeleteProductId && (() => {
         const isManual = draftManualProducts.some((product) => product.id === pendingDeleteProductId);
@@ -988,7 +1004,7 @@ function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUn
     action();
   }
 
-  return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><span aria-hidden="true">⋯</span></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}{!demo && <button type="button" disabled={loading || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-refresh">{refreshLabel}</button>}<button type="button" onClick={(event) => closeMenu(event, onApiSettings)} className="menu-item menu-item-leading">API 设置</button>{!demo && <a href="/logout" className="menu-item menu-item-danger">退出登录</a>}</div></details></div>;
+  return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><span aria-hidden="true">⋯</span></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}{!demo && <button type="button" disabled={loading || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-refresh">{refreshLabel}</button>}<button type="button" onClick={(event) => closeMenu(event, onApiSettings)} className="menu-item menu-item-leading">数据源设置</button>{!demo && <a href="/logout" className="menu-item menu-item-danger">退出登录</a>}</div></details></div>;
 }
 
 async function loadProductHistoryPage(productId: string, cursor: string | null): Promise<ProductHistoryPage> {

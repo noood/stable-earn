@@ -38,6 +38,7 @@ export type PrivateProductsPayload = {
   holdingUpdates: Record<string, number>;
   holdingSourceIds: string[];
   holdingFallbacks: Record<string, string>;
+  holdingFetchedAt?: Record<string, string>;
   holdingSyncStates: Record<string, HoldingSyncState>;
   holdingPositions: HoldingPosition[];
   apiFieldNotices?: ApiFieldNotice[];

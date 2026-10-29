@@ -2,6 +2,11 @@ import { expect, test } from "@playwright/test";
 
 const visualPreviewAt = "2026-10-06T10:00:00.000Z";
 
+test.beforeEach(async ({ page }) => {
+  // Wallet settings are independent of local DB contents in these exchange/dashboard scenarios.
+  await page.route("**/private/api/wallet", (route) => route.fulfill({ json: { address: null } }));
+});
+
 async function waitForVisualAssets(page) {
   await page.evaluate(() => Promise.all([
     document.fonts.ready,
@@ -77,7 +82,7 @@ test("BTC logo falls back to a text symbol if the local asset cannot load", asyn
 test("header menu action labels align vertically within their rows", async ({ page }) => {
   await page.goto("/private");
   await page.locator(".action-menu-trigger").click();
-  const apiSettings = page.locator(".action-menu-popover .menu-item").filter({ hasText: "API 设置" });
+  const apiSettings = page.locator(".action-menu-popover .menu-item").filter({ hasText: "数据源设置" });
   await expect(apiSettings).toBeVisible();
   await expect(apiSettings).toHaveCSS("display", "flex");
   await expect(apiSettings).toHaveCSS("align-items", "center");
@@ -87,7 +92,7 @@ test("public menu has equal space above and below its only action", async ({ pag
   await page.goto("/");
   await page.locator(".action-menu-trigger").click();
   const menu = page.locator(".action-menu-popover");
-  const action = menu.getByRole("button", { name: "API 设置" });
+  const action = menu.getByRole("button", { name: "数据源设置" });
   await expect(action).toBeVisible();
   const gaps = await menu.evaluate((popover) => {
     const item = popover.querySelector(".menu-item");
@@ -581,7 +586,7 @@ test("top notice keeps success, partial failure, total failure, read failure and
   await expect(notice.getByRole("button", { name: "手动刷新" })).toHaveCount(0);
 });
 
-test("API settings modal keeps its three sections, truthful account copy, and report feedback", async ({ page }) => {
+test("API settings modal keeps its four sections, truthful account copy, and report feedback", async ({ page }) => {
   await page.route("**/private/api/credentials", async (route) => {
     await route.fulfill({
       status: 200,
@@ -628,10 +633,10 @@ test("API settings modal keeps its three sections, truthful account copy, and re
 
   try {
     await page.goto("/private?settings=api");
-    const dialog = page.getByRole("dialog", { name: "API 设置" });
+    const dialog = page.getByRole("dialog", { name: "数据源设置" });
     await expect(dialog).toBeVisible();
     const sectionHeadings = await dialog.locator(".api-settings-body h3").allTextContents();
-    expect(sectionHeadings.slice(0, 3)).toEqual(["配置 API", "手动刷新频率", "API 检测"]);
+    expect(sectionHeadings.slice(0, 4)).toEqual(["配置 API", "钱包地址", "手动刷新频率", "API 检测"]);
     const modalBody = dialog.locator(".api-settings-body");
     const modalBodyBox = await modalBody.boundingBox();
     expect(modalBodyBox).not.toBeNull();
@@ -656,12 +661,12 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(noCooldown).toHaveCSS("font-size", "14px");
     await expect(noCooldown).toHaveCSS("line-height", "20px");
     await expect(dialog.getByRole("radio", { name: "30 分钟" })).toHaveAttribute("aria-checked", "true");
-    await expect(dialog.getByText("仅限制手动刷新；当天首次打开页面时仍会自动更新。设置同步至此邮箱所有设备。")).toBeVisible();
+    await expect(dialog.getByText("仅限制账号维度手动刷新的间隔，不影响每日首次打开页面的自动刷新。")).toBeVisible();
 
     await expect(dialog.getByRole("heading", { name: "配置 API" })).toBeVisible();
     await expect(dialog.locator(".api-settings-body > section").first()).toHaveCSS("margin-block-end", "32px");
     await expect(dialog.getByText("Key 和 Secret 由服务器加密保存；完整密钥不会返回浏览器。")).toBeVisible();
-    const connectionList = dialog.locator(".api-connection-list");
+    const connectionList = dialog.locator(".api-connection-list").first();
     await expect(connectionList).toBeVisible();
     await expect(connectionList.locator(":scope > .api-connection-row")).toHaveCount(8);
     await expect(connectionList.locator(".api-connection-row").first().locator(":scope > div")).toHaveCSS("column-gap", "24px");
@@ -693,7 +698,7 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(checkButton).toHaveCSS("border-radius", await editHoldingsButton.evaluate((button) => getComputedStyle(button).borderRadius));
     await expect(cooldownOptions).toHaveCSS("height", checkButtonHeight);
     await expect(checkButton).toHaveText("检测 API");
-    await expect(dialog.getByText("只读检查已知接口，不写入产品、持仓或历史；报告不含持仓金额或密钥。")).toBeVisible();
+    await expect(dialog.getByText("检查交易所接口是否可用、能获取哪些数据，并生成检测报告。")).toBeVisible();
     await checkButton.click();
     await expect.poll(() => checkStarted).toBe(true);
     const loadingButton = dialog.getByRole("button", { name: "正在检测 API" });
@@ -739,8 +744,8 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await dialog.getByRole("button", { name: "关闭" }).click();
     await expect(dialog).toHaveCount(0);
     await page.locator(".action-menu-trigger").click();
-    await page.getByRole("button", { name: "API 设置" }).click();
-    const reopenedDialog = page.getByRole("dialog", { name: "API 设置" });
+    await page.getByRole("button", { name: "数据源设置" }).click();
+    const reopenedDialog = page.getByRole("dialog", { name: "数据源设置" });
     await expect(reopenedDialog.getByRole("button", { name: /下载 JSON · \d{4}\/\d{1,2}\/\d{1,2}/ })).toBeVisible();
     await reopenedDialog.getByRole("button", { name: "关闭" }).click();
     await page.getByRole("button", { name: "编辑持仓" }).click();
@@ -862,7 +867,7 @@ test("rate-limited API report explains partial results and shows a retry countdo
   });
 
   await page.goto("/private?settings=api");
-  const dialog = page.getByRole("dialog", { name: "API 设置" });
+  const dialog = page.getByRole("dialog", { name: "数据源设置" });
   const checkButton = dialog.getByRole("button", { name: "检测 API" });
   await checkButton.click();
 
@@ -913,7 +918,7 @@ test("a rate-limited check removes a JSON download from the previous complete re
   });
 
   await page.goto("/private?settings=api");
-  const dialog = page.getByRole("dialog", { name: "API 设置" });
+  const dialog = page.getByRole("dialog", { name: "数据源设置" });
   await dialog.getByRole("button", { name: "检测 API" }).click();
   const downloadButton = dialog.getByRole("button", { name: /下载 JSON/ });
   await expect(downloadButton).toBeVisible();
@@ -931,7 +936,7 @@ test("localhost rate-limit demo uses mock data without calling the diagnostics A
   });
 
   await page.goto("/private?settings=api&apiCheckScenario=rate-limited");
-  const dialog = page.getByRole("dialog", { name: "API 设置" });
+  const dialog = page.getByRole("dialog", { name: "数据源设置" });
   await expect(dialog.getByText("本地演示模式：点击后显示模拟限流结果，不会连接交易所或修改数据。")).toHaveCount(0);
   await dialog.getByRole("button", { name: "检测 API" }).click();
   await expect(dialog.getByRole("status")).toContainText("请等冷却时间结束后再次检测");
@@ -1362,7 +1367,7 @@ for (const viewport of [
     await page.getByRole("button", { name: "编辑持仓" }).click();
     const btcSubtitle = page.locator(".table-toolbar-subtitle");
     await expect(btcSubtitle).toContainText("仅展示已有持仓，或 APR ≥ 6% 的活期或 7 天内定期产品，去");
-    await expect(btcSubtitle.getByRole("button", { name: "配置 API" })).toBeVisible();
+    await expect(btcSubtitle.getByRole("button", { name: "配置数据源" })).toBeVisible();
   });
 
   test(`private empty and sync-status pages match the ${viewport.name} full-page baselines`, async ({ page }) => {
@@ -1386,9 +1391,9 @@ for (const viewport of [
     }));
     await openFixedPrivatePreview(page, viewport);
     await page.locator(".action-menu-trigger").click();
-    await page.getByRole("button", { name: "API 设置" }).click();
-    const dialog = page.getByRole("dialog", { name: "API 设置" });
-    await expect(dialog.locator(".api-connection-row")).toHaveCount(8);
+    await page.getByRole("button", { name: "数据源设置" }).click();
+    const dialog = page.getByRole("dialog", { name: "数据源设置" });
+    await expect(dialog.locator(".api-connection-list").first().locator(".api-connection-row")).toHaveCount(8);
     await waitForVisualAssets(page);
     await expect(page).toHaveScreenshot(`private-settings-top-${viewport.name}.png`, {
       animations: "disabled", caret: "hide",
