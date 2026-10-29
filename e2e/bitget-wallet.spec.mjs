@@ -128,27 +128,14 @@ for (const width of [1280, 375]) {
     await expect(row).not.toContainText("含奖励的整体 APR，按日复利折算预估收益。");
     await expect(row.locator(".product-meta-danger").filter({ hasText: "额度" })).toHaveCount(0);
     await expect(row).not.toContainText("不参与收益计算");
-    await expect(row).toContainText("不限额");
+    await expect(row.locator(".holding-summary")).toContainText("持仓 123.45 / 不限额");
     await expect(row.getByRole("progressbar")).toHaveCount(0);
     await expect(row.locator("td").nth(3)).toHaveText(`${referenceApr.toFixed(2)}%`);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page).toHaveScreenshot(`bgw-reference-${width}.png`, { fullPage: true, animations: "disabled" });
 
-    const info = row.getByRole("button", { name: "APR说明", exact: true });
-    await expect(page.getByRole("tooltip")).toHaveCount(0);
-    await info.click();
-    const tooltip = page.getByRole("tooltip");
-    await expect(tooltip).toContainText("包含基础收益和奖励利率");
-    await expect(tooltip).toContainText("奖励每 8 小时结算一次，赎回时空投到钱包余额");
-    await expect(tooltip).not.toContainText("每日预估收益");
-    await expect(tooltip).not.toContainText("复投");
-    const bounds = await tooltip.boundingBox();
-    expect(bounds.x).toBeGreaterThanOrEqual(0);
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-    await expect(tooltip).toHaveScreenshot(`bgw-apr-info-${width}.png`, { animations: "disabled" });
-    await info.press("Escape");
-    await expect(tooltip).toHaveCount(0);
+    await expect(row.getByRole("button", { name: "APR说明", exact: true })).toHaveCount(0);
 
     await page.getByRole("button", { name: "编辑持仓" }).click();
     await expect(row.locator(".holding-editor-readonly")).toContainText("123.45");
@@ -156,7 +143,8 @@ for (const width of [1280, 375]) {
     await expect(row.getByRole("textbox", { name: "APY", exact: true })).toHaveCount(0);
     await expect(row.getByRole("textbox", { name: "APR", exact: true })).toHaveValue("6.73");
     await expect(row.locator(".product-rate-headline").getByRole("button")).toHaveCount(0);
-    await expect(row.locator(".manual-field-label").getByRole("button", { name: "APR说明", exact: true })).toHaveCount(1);
+    const info = row.locator(".manual-field-label").getByRole("button", { name: "APR说明", exact: true });
+    await expect(info).toHaveCount(1);
     await expect(row).not.toContainText("填写 BGW 显示的整体 APR");
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page).toHaveScreenshot(`bgw-manual-edit-${width}.png`, { fullPage: true, animations: "disabled" });
@@ -165,56 +153,18 @@ for (const width of [1280, 375]) {
       await expect(row.locator("td").nth(1)).toHaveScreenshot("bgw-manual-field-375.png", { animations: "disabled" });
     }
     await expect(row.getByRole("textbox", { name: "首档额度", exact: true })).toHaveCount(0);
+    await expect(info).toBeVisible();
+    await info.click();
+    const tooltip = page.getByRole("tooltip");
+    await expect(tooltip).toContainText("整体 APR 包含基础收益和奖励利率");
+    await expect(tooltip).toContainText("奖励每 8 小时结算一次，赎回时空投到钱包余额");
+    await expect(tooltip).toHaveScreenshot(`bgw-apr-info-${width}.png`, { animations: "disabled" });
+    await info.press("Escape");
+    await expect(tooltip).toHaveCount(0);
+    await page.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(row.getByRole("button", { name: "APR说明", exact: true })).toHaveCount(0);
   });
 }
-
-test("BGW APR explanation supports hover, keyboard and outside dismissal without changing rate or holding", async ({ page }) => {
-  const requests = await installLocalBgwPreview(page);
-  const row = await openBgwPreview(page);
-  const info = row.getByRole("button", { name: "APR说明", exact: true });
-  const tooltip = page.getByRole("tooltip");
-  await info.hover();
-  await expect(tooltip).toBeVisible();
-  await tooltip.hover();
-  await expect(tooltip).toBeVisible();
-  await page.getByRole("heading", { name: "USDC 持仓", exact: true }).click();
-  await expect(tooltip).toHaveCount(0);
-  await info.focus();
-  await expect(tooltip).toBeVisible();
-  await expect(info).toHaveAttribute("aria-describedby", await tooltip.getAttribute("id"));
-  await info.press("Escape");
-  await expect(tooltip).toHaveCount(0);
-  await info.press("Enter");
-  await expect(tooltip).toBeVisible();
-  await page.getByRole("heading", { name: "USDC 持仓", exact: true }).click();
-  await expect(tooltip).toHaveCount(0);
-  await expect(row.locator(".product-rate-headline")).toContainText("6.73%");
-  await expect(row.locator(".holding-summary")).toContainText("123.45");
-  await expect(page.locator("tr.product-row").filter({ hasText: "Bybit Global" })).toContainText("阶梯额度未获取");
-  expect(requests.saves).toHaveLength(0);
-});
-
-test("BGW APR explanation opens on a touch screen and closes when its icon leaves the table viewport", async ({ browser }) => {
-  const context = await browser.newContext({ viewport: { width: 375, height: 900 }, hasTouch: true, isMobile: true });
-  try {
-    const page = await context.newPage();
-    await installLocalBgwPreview(page);
-    const row = await openBgwPreview(page);
-    const info = row.getByRole("button", { name: "APR说明", exact: true });
-    await info.tap();
-    const tooltip = page.getByRole("tooltip");
-    await expect(tooltip).toContainText("奖励每 8 小时结算一次");
-    const bounds = await tooltip.boundingBox();
-    expect(bounds.x).toBeGreaterThanOrEqual(0);
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(375);
-    // The product table is wider than the touch viewport. Moving to its far
-    // right must dismiss an explanation whose icon has become fully clipped.
-    await page.locator(".overflow-x-auto").evaluate((element) => { element.scrollLeft = element.scrollWidth; });
-    await expect(tooltip).toHaveCount(0);
-  } finally {
-    await context.close();
-  }
-});
 
 test("BGW direct APR is consistent in the row, portfolio and daily estimate", async ({ page }) => {
   await installLocalBgwPreview(page, { manualApr: 6.72, holdingAmount: () => 10000, onlyWallet: true });
@@ -375,7 +325,7 @@ test("wallet settings validate the address, save locally and confirm removal bef
   await expect.poll(() => reads.holdings).toBeGreaterThan(beforeSaveReads);
   expect(mutations).toEqual([{ method: "PUT", body: { address } }]);
   await expect(dialog.getByLabel("Bitget Wallet 更多操作")).toHaveAttribute("aria-disabled", "false");
-  await expect(dialog).toContainText(address);
+  await expect(dialog).not.toContainText(address);
   expect(walletReads).toBeGreaterThanOrEqual(1);
 
   await dialog.getByLabel("Bitget Wallet 更多操作").click();
@@ -430,6 +380,44 @@ for (const width of [1280, 375]) {
     await expect(walletRow).toHaveScreenshot(`bgw-wallet-editor-${width}.png`, { animations: "disabled" });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
+
+  test(`configured source menus stay clickable outside their cards at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await installLocalBgwPreview(page);
+    await page.route("**/private/api/wallet", (route) => route.fulfill({ json: { address } }));
+    await page.route("**/private/api/credentials", (route) => route.fulfill({ json: {
+      sources: [{ id: "bitget-global", label: "Bitget", configured: true, requiresPassphrase: true, syncDescription: "产品、APR 与持仓自动同步" }], manualSources: [],
+    } }));
+    await page.route("**/private/api/preferences", (route) => route.fulfill({ json: { manualRefreshCooldownMinutes: 30 } }));
+    await openBgwPreview(page);
+    await page.locator(".action-menu-trigger").click();
+    await page.getByRole("button", { name: "数据源设置", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "数据源设置", exact: true });
+    const walletRow = dialog.locator(".api-connection-row").filter({ hasText: "Bitget Wallet" });
+    await expect(walletRow.getByText("已配置", { exact: true })).toBeVisible();
+    await expect(walletRow).not.toContainText(address);
+
+    await dialog.getByLabel("Bitget 更多操作", { exact: true }).click();
+    await dialog.getByRole("button", { name: "移除 API 配置", exact: true }).click();
+    const apiRemoval = page.getByRole("dialog", { name: "移除 API 配置及产品", exact: true });
+    await expect(apiRemoval).toBeVisible();
+    await apiRemoval.getByRole("button", { name: "取消", exact: true }).click();
+    await dialog.getByLabel("Bitget 更多操作", { exact: true }).click();
+    await dialog.getByRole("button", { name: "更新 API 配置", exact: true }).click();
+    await expect(dialog.getByLabel("API Key", { exact: true })).toBeVisible();
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+
+    await dialog.getByLabel("Bitget Wallet 更多操作", { exact: true }).click();
+    await expect(dialog).toHaveScreenshot(`bgw-configured-source-menu-${width}.png`, { animations: "disabled" });
+    await dialog.getByRole("button", { name: "移除钱包", exact: true }).click();
+    const walletRemoval = page.getByRole("dialog", { name: "移除钱包地址", exact: true });
+    await expect(walletRemoval).toBeVisible();
+    await walletRemoval.getByRole("button", { name: "取消", exact: true }).click();
+    await dialog.getByLabel("Bitget Wallet 更多操作", { exact: true }).click();
+    await dialog.getByRole("button", { name: "修改钱包", exact: true }).click();
+    await expect(walletRow.getByRole("textbox", { name: "钱包地址", exact: true })).toHaveValue(address);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
 }
 
 test("a delayed settings read cannot restore the previous wallet after a save", async ({ page }) => {
@@ -465,16 +453,18 @@ test("a delayed settings read cannot restore the previous wallet after a save", 
   }
   const dialog = page.getByRole("dialog", { name: "数据源设置", exact: true });
   await openSettings();
-  await expect(dialog).toContainText(address);
+  await expect(dialog.getByLabel("Bitget Wallet 更多操作")).toBeVisible();
+  await expect(dialog).not.toContainText(address);
   await dialog.getByRole("button", { name: "关闭", exact: true }).click();
   await openSettings();
   await expect.poll(() => reads).toBe(2);
   await dialog.getByLabel("Bitget Wallet 更多操作").click();
   await dialog.getByRole("button", { name: "修改钱包", exact: true }).click();
+  await expect(dialog.getByRole("textbox", { name: "钱包地址", exact: true })).toHaveValue(address);
   await dialog.getByRole("textbox", { name: "钱包地址", exact: true }).fill(replacementAddress);
   await dialog.getByRole("button", { name: "保存", exact: true }).click();
   await expect(dialog.getByLabel("Bitget Wallet 更多操作")).toHaveAttribute("aria-disabled", "false");
-  await expect(dialog).toContainText(replacementAddress);
+  await expect(dialog.getByRole("textbox", { name: "钱包地址", exact: true })).toHaveCount(0);
   const oldResponse = page.waitForResponse((response) => response.url().endsWith("/private/api/wallet") && response.request().method() === "GET");
   releaseOldRead();
   await (await oldResponse).finished();
@@ -482,7 +472,9 @@ test("a delayed settings read cannot restore the previous wallet after a save", 
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   // A response captured before the save must not restore its old address.
   await expect(dialog).not.toContainText(address);
-  await expect(dialog).toContainText(replacementAddress);
+  await dialog.getByLabel("Bitget Wallet 更多操作").click();
+  await dialog.getByRole("button", { name: "修改钱包", exact: true }).click();
+  await expect(dialog.getByRole("textbox", { name: "钱包地址", exact: true })).toHaveValue(replacementAddress);
 });
 
 test("an old cache response cannot overwrite a replacement wallet or cancel its pending daily refresh", async ({ page }) => {
