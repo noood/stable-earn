@@ -212,11 +212,13 @@ test("startup diagnostics are visible only when explicitly requested", async ({ 
   await expect(page.getByLabel("页面启动诊断")).toHaveCount(0);
 });
 
-test("diagnostics show same-request D1 timings and safe resource labels without changing product loading", async ({ page }) => {
+test("diagnostics show same-request D1 timings and safe stylesheet labels without changing product loading", async ({ page }) => {
   await page.addInitScript(() => {
     const original = performance.getEntriesByType.bind(performance);
     performance.getEntriesByType = (type) => type !== "resource" ? original(type) : [{
-      name: `${location.origin}/_next/static/chunks/framework-synthetic.js?private=must-not-appear`,
+      // Development has no generated script map; real hashed script coverage is
+      // checked against the production bundle in history-summary.production.mjs.
+      name: `${location.origin}/_next/static/css/site-synthetic.css?private=must-not-appear`,
       startTime: 1, requestStart: 2, responseStart: 3, responseEnd: 4, transferSize: 1024, encodedBodySize: 800,
     }];
   });
@@ -232,7 +234,7 @@ test("diagnostics show same-request D1 timings and safe resource labels without 
   await expect(diagnostics).toContainText("最近历史调用总耗时 340ms");
   await expect(diagnostics).toContainText("最近历史 SQL 执行（末次尝试） 3.9ms");
   await expect(diagnostics).toContainText("最近历史返回 760条");
-  await expect(diagnostics).toContainText("框架脚本");
+  await expect(diagnostics).toContainText("页面样式");
   await expect(diagnostics).toContainText("导航后 1→4ms");
   await expect(diagnostics).not.toContainText("must-not-appear");
   await expect(page.locator(".metrics-panel .skeleton-block")).toHaveCount(0);

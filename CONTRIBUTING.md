@@ -62,6 +62,7 @@ npx playwright test --config=playwright.production.config.mjs
 ## 代码组织
 
 - `app/page.tsx` 与 `app/private/private-dashboard-client.tsx` 负责页面入口；共用 `app/components/dashboard/dashboard.tsx`。私人页面保留静态外壳及客户端延迟加载，不从公共页面入口反向导入。
+- `scripts/startup-assets.mjs` 根据客户端模块图生成启动资源映射；私人页预加载、资源诊断和生产浏览器测试共用。产物位于 `dist/`，不提交到 Git；服务端嵌入的是本次构建数据，不在请求时读取本地文件。
 - `app/components/dashboard/` 内的产品行、输入和日期控件负责展示及交互；Dashboard 统一协调加载、刷新、草稿和保存。子控件通过回调交接修改，不自行保存数据。
 - `lib/private-sync/types.ts` 与 `status.ts` 维护同步内部类型、状态及文案；`snapshots.ts` 聚合平台读取，`payload.ts` 合并缓存与目录并准备保存方案，`service.ts` 统一执行刷新及提交。
 - 产品 HTTP 接口保留鉴权、同源校验、请求参数、刷新门控和响应；`lib/scheduled-sync.ts` 负责队列调度，直接调用同步服务。读取和候选合并层不提交数据，保存顺序与运行锁由服务协调。

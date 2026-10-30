@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { DashboardModuleFailure, DashboardModuleSkeleton } from "@/app/components/dashboard/dashboard-skeleton";
 import type { Asset } from "@/lib/domain";
+import type { StartupAssetManifest } from "@/lib/startup-assets";
 import { reportStartupDiagnostic, StartupDiagnostics } from "@/app/components/startup-diagnostics";
 import { DashboardModulePreload } from "./dashboard-module-preload";
 
@@ -40,7 +41,7 @@ const dashboardLoad: Promise<DashboardLoadResult> | null = typeof window === "un
     }).catch((): DashboardLoadResult => ({ failed: true }));
   })();
 
-export default function PrivateDashboardClient() {
+export default function PrivateDashboardClient({ assetManifest }: { assetManifest?: StartupAssetManifest }) {
   const [LoadedDashboard, setLoadedDashboard] = useState<DashboardComponent | null>(null);
   const [moduleError, setModuleError] = useState(false);
   const [shellAsset, setShellAsset] = useState<Asset | null>(null);
@@ -76,8 +77,8 @@ export default function PrivateDashboardClient() {
   }
 
   return <>
-    <DashboardModulePreload />
-    <StartupDiagnostics />
+    <DashboardModulePreload assetManifest={assetManifest} />
+    <StartupDiagnostics assetManifest={assetManifest} />
     {moduleError
       ? <DashboardModuleFailure asset={shellAsset} onAssetChange={changeShellAsset} />
       : LoadedDashboard

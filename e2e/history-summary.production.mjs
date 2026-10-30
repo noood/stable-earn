@@ -1,9 +1,14 @@
 import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { moduleLoader } from "../tests/helpers/load-ts.mjs";
 
 const { localPrivateProductsPreview, localPrivateHoldingsPreview } = moduleLoader()("@/lib/local-preview");
 const productId = "bn-g-usdt";
 const at = new Date("2026-10-20T10:00:00Z");
+const startupAssets = JSON.parse(readFileSync(new URL("../dist/client/startup-assets.json", import.meta.url), "utf8"));
+const assetPath = (file) => new URL(file, "http://127.0.0.1:3001").pathname;
+const dashboardPaths = new Set(startupAssets.scripts.dashboard.map(assetPath));
+const shellPaths = new Set(startupAssets.scripts["private-dashboard-client"].map(assetPath));
 
 async function fixture(page, { failFirst = false, failRead = false, delayHistory = false, failModule = false } = {}) {
   const products = localPrivateProductsPreview(at);
@@ -56,7 +61,7 @@ async function fixture(page, { failFirst = false, failRead = false, delayHistory
     }
     return route.fulfill({ status: 403, json: { error: "unexpected account request blocked" } });
   });
-  if (failModule) await page.route(/\/chunks\/dashboard-[^/]+\.js$/, (route) => route.abort());
+  if (failModule) await page.route((url) => dashboardPaths.has(url.pathname), (route) => route.abort());
   await page.goto("/private?diagnostics=1");
   if (!failModule) await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
   const row = page.locator("tr.product-row").filter({ hasText: "Binance Global" }).filter({ hasText: "活期理财" }).first();
@@ -78,17 +83,42 @@ async function fixture(page, { failFirst = false, failRead = false, delayHistory
 test("production HTML preloads dashboard resources before the shell finishes, without duplicate downloads", async ({ page }) => {
   await fixture(page);
   const html = await (await page.request.get("/private")).text();
-  expect(html).toMatch(/rel="modulepreload"[^>]*href="[^\"]*\/dashboard-[^\"]+\.js"/);
+  const preloadPaths = new Set([...html.matchAll(/<link\b[^>]*>/g)]
+    .map(([tag]) => /\brel="modulepreload"/.test(tag) ? tag.match(/\bhref="([^"]+)"/)?.[1] : undefined)
+    .filter(Boolean).map(assetPath));
+  expect(dashboardPaths.size).toBeGreaterThan(0);
+  for (const file of startupAssets.dashboardPreloads) expect(preloadPaths.has(assetPath(file))).toBe(true);
+  for (const path of dashboardPaths) expect(preloadPaths.has(path)).toBe(true);
   const resources = await page.evaluate(() => performance.getEntriesByType("resource").map((entry) => ({
     name: entry.name, start: entry.startTime, end: entry.responseEnd, initiator: entry.initiatorType,
   })));
-  const dashboard = resources.filter((entry) => /\/chunks\/dashboard-[^/]+\.js$/.test(entry.name));
-  const shell = resources.find((entry) => /\/chunks\/private-dashboard-client-[^/]+\.js$/.test(entry.name));
-  expect(dashboard).toHaveLength(1);
-  console.info("production resource timing", { dashboard: { start: dashboard[0].start, end: dashboard[0].end, initiator: dashboard[0].initiator }, shell: { start: shell.start, end: shell.end } });
+  const dashboard = resources.filter((entry) => dashboardPaths.has(assetPath(entry.name)));
+  const shell = resources.filter((entry) => shellPaths.has(assetPath(entry.name)));
+  expect(shell.length).toBeGreaterThan(0);
   // Chromium may classify modulepreload as "other"; request ordering and
   // a single resource entry, not that label, prove early fetching and reuse.
-  expect(dashboard[0].start).toBeLessThanOrEqual(shell.end);
+  for (const path of dashboardPaths) {
+    const downloads = dashboard.filter((entry) => assetPath(entry.name) === path);
+    expect(downloads).toHaveLength(1);
+    expect(downloads[0].start).toBeLessThanOrEqual(Math.max(...shell.map((entry) => entry.end)));
+  }
+});
+
+test("production diagnostics label generated scripts without exposing their URLs or fetching another map", async ({ page }) => {
+  const publishedMap = await page.request.get("/startup-assets.json");
+  expect(publishedMap.status()).toBe(200);
+  expect(await publishedMap.json()).toEqual(startupAssets);
+  const mappingRequests = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/startup-assets.json")) mappingRequests.push(request.url());
+  });
+  await fixture(page);
+  const diagnostics = page.getByRole("complementary", { name: "页面启动诊断" });
+  await expect(diagnostics).toContainText("仪表盘脚本");
+  await expect(diagnostics).toContainText("私人页外框脚本");
+  await expect(diagnostics).not.toContainText("/_next/");
+  await expect(diagnostics).not.toContainText("test@example.invalid");
+  expect(mappingRequests).toEqual([]);
 });
 
 test("a production modulepreload/import failure retains the shell and never starts account reads", async ({ page }) => {

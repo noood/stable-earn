@@ -18,6 +18,11 @@ updates:
         patterns:
           - "vinext"
           - "@vinext/*"
+      next:
+        patterns:
+          - "next"
+          - "eslint-config-next"
+          - "@next/*"
   - package-ecosystem: github-actions
     directory: /
     schedule:

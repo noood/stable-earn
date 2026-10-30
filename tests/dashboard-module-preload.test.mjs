@@ -4,22 +4,25 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
-function renderHints(assets = {}, browser = false) {
+function renderHints(assets = {}, browser = false, assetManifest) {
   let registryReads = 0;
   const { DashboardModulePreload } = moduleLoader({
     "vinext/server/pages-client-assets": { getPagesClientAssets() { registryReads++; return assets; } },
   }, { window: browser ? {} : undefined })("@/app/private/dashboard-module-preload.tsx");
-  return { html: renderToStaticMarkup(React.createElement(DashboardModulePreload)), registryReads };
+  return { html: renderToStaticMarkup(React.createElement(DashboardModulePreload, { assetManifest })), registryReads };
 }
 
-test("SSR emits deduplicated manifest script hints without hardcoded build names or dashboard execution", () => {
-  const { html, registryReads } = renderHints({
-    dynamicPreloads: { "app/components/dashboard/dashboard.tsx": [
+test("SSR emits deduplicated server-provided script hints without executing the dashboard", () => {
+  const { html, registryReads } = renderHints({ crossOrigin: "" }, false, {
+    version: 1,
+    scripts: {},
+    dashboardPreloads: [
       "_next/static/chunks/dashboard-build-a.js",
       "_next/static/chunks/shared-build-b.js",
       "_next/static/chunks/dashboard-build-a.js",
       "_next/static/css/site-build-c.css",
-    ], "unrelated.tsx": ["must-not-appear.js"] },
+      "unrelated.tsx",
+    ],
   });
   assert.equal(registryReads, 1);
   assert.equal((html.match(/rel="modulepreload"/g) ?? []).length, 2);
@@ -30,9 +33,11 @@ test("SSR emits deduplicated manifest script hints without hardcoded build names
 });
 
 test("SSR keeps prefixed/CDN paths and the framework's configured crossorigin", () => {
-  const { html } = renderHints({ crossOrigin: "use-credentials", dynamicPreloads: {
-    "app/components/dashboard/dashboard.tsx": ["/base/_next/dashboard.js", "https://cdn.example.test/dashboard.js", "//cdn.example.test/shared.js"],
-  } });
+  const { html } = renderHints({ crossOrigin: "use-credentials" }, false, {
+    version: 1,
+    scripts: {},
+    dashboardPreloads: ["/base/_next/dashboard.js", "https://cdn.example.test/dashboard.js", "//cdn.example.test/shared.js"],
+  });
   assert.match(html, /href="\/base\/_next\/dashboard.js"/);
   assert.match(html, /href="https:\/\/cdn.example.test\/dashboard.js"/);
   assert.match(html, /href="\/\/cdn.example.test\/shared.js"/);
@@ -41,13 +46,11 @@ test("SSR keeps prefixed/CDN paths and the framework's configured crossorigin", 
 
 test("development/missing manifest produces no hint or fallback guessed URL", () => {
   assert.equal(renderHints().html, "");
-  assert.equal(renderHints({ dynamicPreloads: {} }).html, "");
+  assert.equal(renderHints({}, false, { version: 1, scripts: {}, dashboardPreloads: [] }).html, "");
 });
 
 test("browser renders nothing and does not read the server asset registry", () => {
-  const result = renderHints({ dynamicPreloads: {
-    "app/components/dashboard/dashboard.tsx": ["_next/static/chunks/dashboard.js"],
-  } }, true);
+  const result = renderHints({}, true, { version: 1, scripts: {}, dashboardPreloads: ["/_next/static/chunks/dashboard.js"] });
   assert.equal(result.html, "");
   assert.equal(result.registryReads, 0);
 });

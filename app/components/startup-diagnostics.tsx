@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { StartupAssetManifest } from "@/lib/startup-assets";
 import { summarizeStartupLongTasks, summarizeStartupResources } from "@/lib/startup-resource-timing";
 
 type DiagnosticEntry = { key: string; label: string; value: string; at: number };
@@ -27,7 +28,7 @@ export function startupDiagnosticTime(key: string) {
   return entries.get(key)?.at;
 }
 
-export function StartupDiagnostics() {
+export function StartupDiagnostics({ assetManifest }: { assetManifest?: StartupAssetManifest }) {
   const [enabled, setEnabled] = useState(false);
   const [items, setItems] = useState<DiagnosticEntry[]>([]);
 
@@ -62,9 +63,9 @@ export function StartupDiagnostics() {
     } catch { observer?.disconnect(); }
     const captureResources = (until: number) => {
       try {
-        const lines = summarizeStartupResources(performance.getEntriesByType("resource") as PerformanceResourceTiming[], window.location.origin, until);
+        const lines = summarizeStartupResources(performance.getEntriesByType("resource") as PerformanceResourceTiming[], window.location.origin, until, assetManifest);
         for (const line of lines) reportStartupDiagnostic(line.key, line.label, line.value, until, false);
-        reportStartupDiagnostic("resource-coverage", "资源计时范围", lines.length ? "仅同源关键脚本/样式；请求区间不等于 JS 执行时间" : "尚无已完成的生产关键脚本记录（开发模式文件名不同）", until, false);
+        reportStartupDiagnostic("resource-coverage", "资源计时范围", lines.length ? "仅同源关键脚本/样式；请求区间不等于 JS 执行时间" : "尚无已完成的关键脚本/样式记录", until, false);
       } catch {
         reportStartupDiagnostic("resource-coverage", "资源计时范围", "浏览器未提供可用资源计时", until, false);
       }
@@ -112,7 +113,7 @@ export function StartupDiagnostics() {
       window.removeEventListener("error", handleError);
       window.removeEventListener("unhandledrejection", handleRejection);
     };
-  }, []);
+  }, [assetManifest]);
 
   if (!enabled) return null;
 

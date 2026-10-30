@@ -110,8 +110,10 @@ test("private route serves a static shell and keeps account data client-loaded",
   const apiSettings = readFileSync(new URL("../app/components/api-settings.tsx", import.meta.url), "utf8");
   const styles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(privatePage, /dynamic = "force-static"/);
-  assert.match(privatePage, /<PrivateDashboardClient \/>/);
+  assert.match(privatePage, /import startupAssetManifest from "virtual:stable-earn\/startup-assets"/);
+  assert.match(privatePage, /<PrivateDashboardClient assetManifest=\{startupAssetManifest\} \/>/);
   assert.doesNotMatch(privatePage, /searchParams|<Dashboard/);
+  assert.doesNotMatch(privateClient, /virtual:stable-earn\/startup-assets/);
   assert.doesNotMatch(privateClient, /from ["']next\/dynamic["']/);
   assert.ok(privateClient.indexOf('const loading = import("@/app/components/dashboard/dashboard")') < privateClient.indexOf("export default function PrivateDashboardClient"));
   assert.match(privateClient, /typeof window === "undefined" \|\| simulateModuleFailure/);
