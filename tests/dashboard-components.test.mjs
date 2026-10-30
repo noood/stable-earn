@@ -126,7 +126,7 @@ test("extracted product row preserves cache timestamps and known capacity when A
   assert.ok(cached.includes(`持仓沿用 ${formatSyncDateTime("2026-10-04T01:02:00.000Z")} 的缓存数据`));
   const missingApr = renderRow({ rateCoverage: "unavailable", aprStatus: "unavailable" });
   assert.match(missingApr, /APR 未获取/);
-  assert.match(missingApr, /首档 · 0\.00–100\.00/);
+  assert.match(missingApr, /首档 0\.00–100\.00/);
   assert.match(missingApr, /首档 100\.00/);
   assert.doesNotMatch(missingApr, /8\.00%|0\.00%/);
 });

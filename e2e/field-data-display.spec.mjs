@@ -37,13 +37,13 @@ for (const width of [1280, 375]) {
       tierStructureStatus: "complete",
       tiers: [{ id: "preview-apr-six-tier-0", min: 0, max: 200, apr: 0 }],
     });
-    await expect(row.locator(".product-rate-headline")).toContainText("申购额度 · 0.00–200.00");
+    await expect(row.locator(".product-rate-headline")).toContainText("申购额度 0.00–200.00");
     await expect(row.locator(".product-rate-headline")).toContainText("APR 未获取");
     await expect(row).not.toContainText("额度未获取");
     await expect(row.locator(".holding-summary")).toContainText("还可申购 200.00 USDT");
     await expect(row.locator("td").nth(3)).toHaveText("—");
     await page.getByRole("button", { name: "编辑持仓" }).click();
-    await expect(row.locator(".product-rate-headline")).toContainText("申购额度 · 0.00–200.00");
+    await expect(row.locator(".product-rate-headline")).toContainText("申购额度 0.00–200.00");
     await expect(row).not.toContainText("0.00%");
     await expect(row.locator(".manual-fields:empty")).toHaveCount(0);
   });
@@ -54,7 +54,7 @@ test("unknown tier bounds do not claim an open range, while confirmed unlimited 
     rateCoverage: "partial", aprStatus: "available", capacityStatus: "unavailable",
     tiers: [{ id: "preview-apr-six-tier-0", min: 0, max: null, apr: 6 }],
   });
-  await expect(row.locator(".product-rate-headline")).toContainText("申购额度 · 上限未获取");
+  await expect(row.locator(".product-rate-headline")).toContainText("申购额度 上限未获取");
   await expect(row.locator(".product-rate-headline")).toContainText("6.00%");
   await expect(row).not.toContainText("0.00 以上");
   await expect(row).not.toContainText("不限额");

@@ -4,6 +4,16 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      cloudflare-toolchain:
+        patterns:
+          - "@cloudflare/vite-plugin"
+          - "@cloudflare/workers-types"
+          - "wrangler"
+      tailwindcss:
+        patterns:
+          - "tailwindcss"
+          - "@tailwindcss/*"
   - package-ecosystem: github-actions
     directory: /
     schedule:

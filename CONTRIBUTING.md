@@ -9,11 +9,11 @@
 | 场景 | 本地地址 |
 | --- | --- |
 | 普通私人页 | <http://localhost:3000/private> |
-| BGW USDC 产品与 APR 编辑 | <http://localhost:3000/private?asset=USDC&syncScenario=bgw> |
+| USDC 持仓（含 BGW 产品与 APR 编辑） | <http://localhost:3000/private?asset=USDC> |
 | 页面模块加载失败 | <http://localhost:3000/private?moduleScenario=error> |
 | 产品与持仓读取失败 | <http://localhost:3000/private?syncScenario=both-read-error> |
 
-BGW 场景会显式注入合成产品，未配置钱包也可测试；普通预览不会默认加入该产品。保存只影响预览，不访问主网或生产 D1。测试使用虚构地址、交易与金额，不复制真实账户资料或截图。
+普通 USDC 预览包含 BGW 合成产品、123.45 USDC 持仓及可编辑的 6.72% APR，未配置钱包也可测试。保存只影响预览，不访问主网或生产 D1。测试使用虚构地址、交易与金额，不复制真实账户资料或截图。
 
 若配置真实交易所凭证并主动运行 API 检查，仍会请求交易所接口；默认 UI 测试与这类真实接口核验分开。诊断和专项探针的选择见[诊断说明](docs/DIAGNOSTICS.md)。远程分支预览尚未实施，见[待办计划](docs/PREVIEW-ENVIRONMENT-PLAN.md)。
 

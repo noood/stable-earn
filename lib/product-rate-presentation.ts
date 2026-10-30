@@ -19,8 +19,8 @@ export function rateHeadlineFor(product: Product, apiManaged = product.productDa
       : firstTier.maxStatus === "unlimited" && product.tierStructureStatus !== "incomplete"
         && (apiManaged || product.source.kind === "demo" || product.capacityStatus === "available"));
   const capacityLabel = hasCapacity
-    ? product.tiers.length === 1 && firstTier.min === 0 && firstTier.max === null ? "不限额" : `${capacityName} · ${productTierLabel(firstTier)}`
-    : apiManaged ? `${capacityName} · 上限未获取` : `${capacityName}额度待填写`;
+    ? `${capacityName} ${product.tiers.length === 1 && firstTier.min === 0 && firstTier.max === null ? "不限额" : productTierLabel(firstTier)}`
+    : apiManaged ? `${capacityName} 上限未获取` : `${capacityName}额度待填写`;
 
   if (product.rateCoverage === "unavailable") {
     return { label: capacityLabel, value: apiManaged ? "APR 未获取" : "APR 待填写", muted: true };

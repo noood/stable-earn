@@ -13,7 +13,7 @@ export default defineConfig(async () => {
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= 'false';
   process.env.WRANGLER_LOG_PATH ??= '.wrangler/logs';
-  process.env.MINIFLARE_REGISTRY_PATH ??= '.wrangler/registry';
+  process.env.CLOUDFLARE_DEV_REGISTRY_PATH ??= '.wrangler/registry';
 
   const localWranglerConfig = new URL('./wrangler.local.jsonc', import.meta.url);
   const wranglerConfigPath = process.env.CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH

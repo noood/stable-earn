@@ -30,12 +30,20 @@ test("private preview still contains the long-history and manual-field scenarios
   const previewIds = new Set(preview.products.map((product) => product.id));
   assert.ok(previewIds.has("okx-usdt"));
   assert.ok(previewIds.has("mexc-ph-usdt"));
+  const bgw = preview.products.filter((product) => product.id === "preview-bgw-morph-usdc");
+  assert.equal(bgw.length, 1);
+  assert.equal(bgw[0].productDataMode, "manual");
+  assert.equal(bgw[0].holdingDataMode, "api");
+  assert.equal(preview.holdingUpdates[bgw[0].id], 123.45);
+  assert.ok(preview.holdingSourceIds.includes(bgw[0].id));
   const okxProducts = preview.products.filter((product) => product.accountId === "okx-global");
   assert.deepEqual(okxProducts.map((product) => product.asset), ["USDT", "USDC", "BTC"]);
   assert.ok(okxProducts.every((product) => product.holdingDataMode === "api" && product.productTypeStatus === "missing"));
   assert.ok(preview.changeEvents.length >= 25);
   const holdingsPreview = localPrivateHoldingsPreview(new Date("2026-10-03T00:00:00.000Z"));
   assert.equal(holdingsPreview.found, true);
+  assert.equal(holdingsPreview.overrides[bgw[0].id].apr, 6.72);
+  assert.equal(holdingsPreview.overrides[bgw[0].id].firstTierUnlimited, true);
   assert.ok(holdingsPreview.manualProducts.some((product) => product.id === "manual-preview-fixed"));
 });
 

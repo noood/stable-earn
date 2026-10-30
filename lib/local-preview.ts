@@ -6,6 +6,9 @@ import { nextScheduledRefreshAt } from "./sync-cache";
 import { isLocalDevelopmentRequest } from "./request-security";
 import { bitgetWalletRate } from "./bitget-wallet-product";
 
+const bgwPreviewId = "preview-bgw-morph-usdc";
+const localSyncStateScenarios = new Set(["empty", "partial", "error", "success", "syncing", "initial-syncing", "initial-error"]);
+
 /** Pin local-only preview fixtures for repeatable browser screenshots. */
 export function localPreviewTime(requestUrl: string) {
   const value = new URL(requestUrl).searchParams.get("previewAt");
@@ -120,6 +123,7 @@ export function localPrivateProductsPreview(now = new Date(), apiDatesPreview = 
     expiredBinanceEmpty,
     previewProduct("bn-bh-usdc", undefined, { rateCoverage: "unavailable" }),
     previewProduct("bg-usdgo"),
+    previewBitgetWalletProduct(),
     previewProduct("mexc-ph-usdt"),
     previewProduct("mexc-ph-usdc"),
     previewProduct("okx-usdt"),
@@ -150,6 +154,7 @@ export function localPrivateProductsPreview(now = new Date(), apiDatesPreview = 
     // from the product-rate cache above.
     "by-g-btc-3d": 0.2,
     "bg-usdc": 200,
+    [bgwPreviewId]: 123.45,
     "bg-usdt-simple": 300,
     "bg-usdt-promo": 0,
     "preview-bybit-fixed-api": 0,
@@ -288,6 +293,7 @@ export function localPrivateProductsPreview(now = new Date(), apiDatesPreview = 
       "preview-binance-fixed-expired-zero": "synced",
       "bg-usdt-simple": "synced",
       "bg-usdt-promo": "synced",
+      [bgwPreviewId]: "synced",
       "okx-usdt": "synced",
       "okx-usdc": "synced",
       "okx-btc": "synced",
@@ -353,6 +359,7 @@ export function localPrivateHoldingsPreview(now = new Date(), apiDatesPreview = 
     "okx-usdt": { apr: 10, firstTierLimit: 500, termDays: null, purchaseDate: null, updatedAt },
     "okx-usdc": { apr: 10, firstTierLimit: 500, termDays: null, purchaseDate: null, updatedAt },
     "okx-btc": { apr: 5, firstTierLimit: 0.01, termDays: null, purchaseDate: null, updatedAt },
+    [bgwPreviewId]: { apr: 6.72, firstTierLimit: null, firstTierUnlimited: true, termDays: null, purchaseDate: null, updatedAt },
     "preview-apr-six": { apr: null, firstTierLimit: null, termDays: null, purchaseDate: dateOnlyOffset(now, -1), updatedAt },
     "preview-below-threshold-held": { apr: null, firstTierLimit: null, termDays: null, purchaseDate: dateOnlyOffset(now, -2), updatedAt },
     "preview-long-term-held": { apr: null, firstTierLimit: null, termDays: null, purchaseDate: dateOnlyOffset(now, -4), updatedAt },
@@ -390,28 +397,12 @@ export function localPrivateHoldingsPreview(now = new Date(), apiDatesPreview = 
 
 // Fixed source time makes repeated page reloads useful for timestamp regression
 // checks. These scenarios are available only behind the development preview.
+export function isLocalSyncStateScenario(scenario: string | null): scenario is string {
+  return scenario !== null && localSyncStateScenarios.has(scenario);
+}
+
 export function localSyncScenarioPreview(scenario: string | null, now = new Date()) {
-  if (scenario === "bgw") {
-    const preview = localPrivateProductsPreview(now);
-    const rate = bitgetWalletRate();
-    const id = "preview-bgw-morph-usdc";
-    // Deliberate legacy unlimited fixture: real new connections leave quota pending.
-    const product: Product = {
-      id, accountId: "bitget-wallet-morph", exchange: "bitget-wallet", region: "morph", asset: "USDC",
-      name: "Gauntlet USDC", identityKey: rate.identityKey!, externalProductId: rate.externalProductId,
-      productDataMode: "manual", holdingDataMode: "api", productType: "flexible", productTypeStatus: "known",
-      rateCoverage: "unavailable", capacityStatus: "available", tierStructureStatus: "complete",
-      tiers: [{ id: `${id}-tier-0`, min: 0, max: null, maxStatus: "unlimited", apr: 0 }], source: { kind: "manual", label: "手动填写整体 APR" },
-    };
-    return {
-      ...preview,
-      products: [...preview.products, product],
-      holdingUpdates: { ...preview.holdingUpdates, [id]: 123.45 },
-      holdingSourceIds: [...preview.holdingSourceIds, id],
-      holdingSyncStates: { ...preview.holdingSyncStates, [id]: "synced" },
-    };
-  }
-  if (!scenario || !["empty", "partial", "error", "success", "syncing", "initial-syncing", "initial-error"].includes(scenario)) return null;
+  if (!isLocalSyncStateScenario(scenario)) return null;
   const initial = scenario.startsWith("initial-");
   const empty = scenario === "empty";
   const sourceAt = "2026-09-05T00:56:15.064Z";
@@ -439,6 +430,18 @@ export function localSyncScenarioPreview(scenario: string | null, now = new Date
       scheduledAt: nextScheduledRefreshAt(now.getTime()),
       scheduledState: scenario.endsWith("syncing") ? "syncing" as const : "scheduled" as const,
     },
+  };
+}
+
+function previewBitgetWalletProduct(): Product {
+  const rate = bitgetWalletRate();
+  return {
+    id: bgwPreviewId, accountId: "bitget-wallet-morph", exchange: "bitget-wallet", region: "morph", asset: "USDC",
+    name: "Gauntlet USDC", identityKey: rate.identityKey!, externalProductId: rate.externalProductId,
+    productDataMode: "manual", holdingDataMode: "api", productType: "flexible", productTypeStatus: "known",
+    rateCoverage: "unavailable", capacityStatus: "available", tierStructureStatus: "complete",
+    tiers: [{ id: `${bgwPreviewId}-tier-0`, min: 0, max: null, maxStatus: "unlimited", apr: 0 }],
+    source: { kind: "manual", label: rate.sourceLabel },
   };
 }
 

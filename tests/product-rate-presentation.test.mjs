@@ -14,17 +14,17 @@ const product = (overrides = {}) => ({
 test("an unreadable quota is never presented as an open-ended tier", () => {
   for (const rateCoverage of ["complete", "base_only", "partial", "unavailable"]) {
     const headline = rateHeadlineFor(product({ rateCoverage }));
-    assert.equal(headline.label, "首档 · 上限未获取");
+    assert.equal(headline.label, "首档 上限未获取");
     assert.equal(headline.label.includes("以上"), false);
   }
-  assert.equal(rateHeadlineFor(product({ rateCoverage: "complete", tiers: [{ id: "tier", min: 0, max: null, apr: 7, maxStatus: "unlimited" }] })).label, "不限额");
+  assert.equal(rateHeadlineFor(product({ rateCoverage: "complete", tiers: [{ id: "tier", min: 0, max: null, apr: 7, maxStatus: "unlimited" }] })).label, "首档 不限额");
 });
 
 test("missing APR does not hide a confirmed quota in either source mode", () => {
   for (const productDataMode of ["api", "manual"]) {
     const incomplete = product({ productDataMode, rateCoverage: "unavailable", aprStatus: "unavailable", capacityStatus: "available",
       tiers: [{ id: "tier", min: 0, max: 300, apr: 0 }] });
-    assert.equal(rateHeadlineFor(incomplete).label, "首档 · 0.00–300.00");
+    assert.equal(rateHeadlineFor(incomplete).label, "首档 0.00–300.00");
     assert.equal(rateHeadlineFor(incomplete).value, productDataMode === "api" ? "APR 未获取" : "APR 待填写");
     assert.equal(productParticipatesInInterest(incomplete, 20), false);
   }
@@ -40,7 +40,7 @@ test("both missing fields are named without converting either into zero or unlim
 test("an unknown product type does not replace known APR or quota information", () => {
   const unknown = product({ productTypeStatus: "missing", rateCoverage: "complete",
     tiers: [{ id: "tier", min: 0, max: 300, apr: 8 }] });
-  assert.deepEqual(rateHeadlineFor(unknown), { label: "首档 · 0.00–300.00", value: "8.00%" });
+  assert.deepEqual(rateHeadlineFor(unknown), { label: "首档 0.00–300.00", value: "8.00%" });
   assert.deepEqual(productInformationIssues(unknown), []);
   assert.equal(productParticipatesInInterest(unknown, 20), true);
 });
