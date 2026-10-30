@@ -17,7 +17,7 @@ type Tier = {
   min: number;
   max: number | null;
   apr: number;
-  /** Set only after the platform adapter confirms this final tier is open-ended; null alone is unknown. */
+  /** Set only after the adapter or a manual setting confirms this tier is open-ended; null alone is unknown. */
   maxStatus?: "unlimited";
 };
 

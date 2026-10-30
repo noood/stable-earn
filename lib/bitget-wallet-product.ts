@@ -1,7 +1,7 @@
 import type { LiveRate } from "./live-rates";
 import { BGW_ACCOUNT_ID, BGW_IDENTITY_KEY, BGW_CHAIN_ID, BGW_VAULT_ADDRESS } from "./integrations/bitget-wallet";
 
-/** Manual APR placeholder. Unlimited capacity is the user-selected product assumption. */
+/** Product terms are user-maintained; RPC supplies the holding independently. */
 export function bitgetWalletRate(): LiveRate {
   return {
     productId: BGW_IDENTITY_KEY,
@@ -12,11 +12,11 @@ export function bitgetWalletRate(): LiveRate {
     productTypeStatus: "known",
     productDataMode: "manual",
     apr: 0,
-    tiers: [{ min: 0, max: null, maxStatus: "unlimited", apr: 0 }],
+    tiers: [{ min: 0, max: null, apr: 0 }],
     rateCoverage: "unavailable",
     aprStatus: "unavailable",
     rateShape: "no_rate",
-    capacityStatus: "available",
+    capacityStatus: "unavailable",
     tierStructureStatus: "complete",
     availability: "unknown",
     fetchedAt: new Date().toISOString(),

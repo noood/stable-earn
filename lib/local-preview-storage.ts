@@ -21,6 +21,7 @@ export function readLocalPreviewOverrides(): ProductOverrideMap {
       return [[productId, {
         apr: numberField(raw.apr) as number | null,
         firstTierLimit: numberField(raw.firstTierLimit) as number | null,
+        ...(typeof raw.firstTierUnlimited === "boolean" ? { firstTierUnlimited: raw.firstTierUnlimited } : {}),
         termDays: numberField(raw.termDays) as number | null,
         purchaseDate: date,
         updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null,

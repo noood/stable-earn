@@ -75,7 +75,7 @@ test("save normalization clears hidden fields without mutating the editing draft
   assert.equal(draft.termDays, 7);
   assert.equal(draft.purchaseDate, "2026-10-01");
   for (const manualKind of ["fixed", "limited"]) {
-    assert.deepEqual(productOverrideForSave(okxUsdc, { ...draft, manualKind }), { ...draft, manualKind });
+    assert.deepEqual(productOverrideForSave(okxUsdc, { ...draft, manualKind }), { ...draft, manualKind, firstTierUnlimited: false });
   }
 });
 

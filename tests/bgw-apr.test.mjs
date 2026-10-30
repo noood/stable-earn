@@ -14,7 +14,7 @@ function product(apr = 6.73) {
   const rate = bitgetWalletRate();
   const base = { ...rate, id: "synthetic-bgw", accountId: rate.catalog.accountId, exchange: "bitget-wallet", region: "morph",
     asset: "USDC", holdingDataMode: "api", source: { kind: "manual", label: rate.sourceLabel } };
-  const override = parseProductOverride(base, { apr });
+  const override = parseProductOverride(base, { apr, firstTierUnlimited: true });
   return applyProductOverride(base, override);
 }
 
@@ -48,11 +48,11 @@ test("APR-tier calculations retain their existing weighted behavior", () => {
 });
 
 
-test("manual APR accepts zero, clears explicitly and never requires a subscription limit", () => {
+test("manual APR accepts zero, clears explicitly and reuses the selected unlimited quota", () => {
   const zero = product(0);
   assert.equal(zero.rateCoverage, "complete");
   assert.equal(zero.aprStatus, "available");
-  assert.equal(productNeedsManualLimit(zero), false);
+  assert.equal(productNeedsManualLimit(zero), true);
   assert.deepEqual(productInformationIssues(zero), []);
   assert.equal(productParticipatesInInterest(zero, 123), true);
   assert.equal(effectiveApr(zero, 123), 0);
@@ -63,14 +63,14 @@ test("manual APR accepts zero, clears explicitly and never requires a subscripti
   assert.equal(rateHeadlineFor(cleared).value, "APR 待填写");
 });
 
-test("manual APR parser rejects malformed rates and ignores hidden quota or lifecycle edits", () => {
+test("manual APR parser accepts manual quota and ignores hidden lifecycle edits", () => {
   const base = product(null);
   for (const apr of [-1, NaN, Infinity, true, [], "abc", 10001]) {
     assert.equal(parseProductOverride(base, { apr }), null);
   }
   const saved = parseProductOverride(base, { apr: "6.72", firstTierLimit: 500, termDays: 30, purchaseDate: "2026-10-01" });
   assert.equal(saved.apr, 6.72);
-  assert.equal(saved.firstTierLimit, null);
+  assert.equal(saved.firstTierLimit, 500);
   assert.equal(saved.termDays, null);
   assert.equal(saved.purchaseDate, null);
 });

@@ -22,7 +22,7 @@ export async function recordDueManualMaturities(db: D1Database, userId: string):
     // Only positive positions can produce maturity alerts. Join on both account
     // and product so one read replaces the four separate holding/override reads.
     db.prepare(`SELECT h.product_id, h.amount, o.confirmed_apr, o.purchase_date,
-        o.product_kind_override, o.updated_at, l.first_tier_limit, t.term_days
+        o.product_kind_override, o.updated_at, l.first_tier_limit, l.first_tier_unlimited, t.term_days
       FROM holdings h
       LEFT JOIN product_overrides o ON o.user_id = h.user_id AND o.product_id = h.product_id
       LEFT JOIN product_override_limits l ON l.user_id = h.user_id AND l.product_id = h.product_id
@@ -30,7 +30,7 @@ export async function recordDueManualMaturities(db: D1Database, userId: string):
       WHERE h.user_id = ? AND h.amount > 0`).bind(userId).all<{
         product_id: string; amount: number; confirmed_apr: number | null;
         purchase_date: string | null; product_kind_override: "flexible" | "fixed" | "limited" | null;
-        updated_at: string | null; first_tier_limit: number | null; term_days: number | null;
+        updated_at: string | null; first_tier_limit: number | null; first_tier_unlimited: number | null; term_days: number | null;
       }>(),
   ]);
   const products = [...catalogProducts, ...userProducts].filter((product) => product.productDataMode === "manual");
@@ -38,6 +38,7 @@ export async function recordDueManualMaturities(db: D1Database, userId: string):
   const overrides = Object.fromEntries(holdingRows.results.map((row) => [row.product_id, {
     apr: row.confirmed_apr,
     firstTierLimit: row.first_tier_limit,
+    ...(row.first_tier_unlimited == null ? {} : { firstTierUnlimited: row.first_tier_unlimited === 1 }),
     termDays: row.term_days,
     purchaseDate: row.purchase_date,
     updatedAt: row.updated_at,

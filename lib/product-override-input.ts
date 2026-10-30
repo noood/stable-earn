@@ -6,6 +6,7 @@ import { productTypeCanHaveTerm, resolveProductKind } from "./product-kind";
 type RawProductOverride = {
   apr?: unknown;
   firstTierLimit?: unknown;
+  firstTierUnlimited?: unknown;
   termDays?: unknown;
   purchaseDate?: unknown;
   manualKind?: unknown;
@@ -16,6 +17,10 @@ export function parseProductOverride(product: Product, input: unknown) {
   const raw = input as RawProductOverride;
   const apr = productNeedsManualApr(product) ? optionalApr(raw.apr) : null;
   const firstTierLimit = productNeedsManualLimit(product) ? optionalLimit(raw.firstTierLimit) : null;
+  if (productNeedsManualLimit(product) && raw.firstTierUnlimited !== undefined
+    && typeof raw.firstTierUnlimited !== "boolean") return null;
+  const firstTierUnlimited = productNeedsManualLimit(product) ? raw.firstTierUnlimited as boolean | undefined : undefined;
+  if (firstTierUnlimited && firstTierLimit !== null) return null;
   const manualKind = productNeedsManualType(product) ? optionalManualKind(raw.manualKind) : null;
   if (manualKind === undefined) return null;
   const selected = applyProductOverride(product, { apr: null, firstTierLimit: null, termDays: null, purchaseDate: null, updatedAt: null, manualKind });
@@ -25,7 +30,9 @@ export function parseProductOverride(product: Product, input: unknown) {
     ? optionalDate(raw.purchaseDate)
     : null;
   if (apr === undefined || firstTierLimit === undefined || manualKind === undefined || termDays === undefined || purchaseDate === undefined) return null;
-  return { productId: product.id, apr, firstTierLimit, termDays, purchaseDate, manualKind } satisfies Pick<ProductOverride, "apr" | "firstTierLimit" | "termDays" | "purchaseDate" | "manualKind"> & { productId: string };
+  return { productId: product.id, apr, firstTierLimit, termDays, purchaseDate, manualKind,
+    ...(firstTierUnlimited !== undefined ? { firstTierUnlimited } : {}),
+  } satisfies Pick<ProductOverride, "apr" | "firstTierLimit" | "firstTierUnlimited" | "termDays" | "purchaseDate" | "manualKind"> & { productId: string };
 }
 
 function optionalManualKind(value: unknown): ProductKind | null | undefined {

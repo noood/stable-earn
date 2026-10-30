@@ -14,7 +14,7 @@ import { formatStartupRequestTiming } from "@/lib/startup-timing-format";
 import { effectiveApr, formatAmount, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent, type ProductHistorySummary } from "@/lib/domain";
 import { mergeProductHistorySummaries } from "@/lib/product-history-state";
 import { startDashboardPolling } from "@/lib/dashboard-polling";
-import { applyProductOverride, productOverrideForSave, productTermDays, productTypeSelectionAvailable, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
+import { applyProductOverride, manualFirstTierIsUnlimited, productOverrideForSave, productTermDays, productTypeSelectionAvailable, type ProductOverride, type ProductOverrideMap } from "@/lib/product-overrides";
 import { productInformationIssues, productParticipatesInInterest, type ProductInformationIssue } from "@/lib/product-status";
 import { completedDataSummary, dashboardReadState, scheduledRefreshPending, serverReadFailureMessage, syncFailureSummary } from "@/lib/sync-notice";
 import { publicDemoChangeEvents, publicDemoHoldings, publicDemoOverrides, publicDemoProducts } from "@/lib/public-demo";
@@ -551,6 +551,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       const savedOverrideUpdates = Object.fromEntries(changes.overrideProductIds.map((productId) => [productId, {
         apr: nextOverrides[productId]?.apr ?? null,
         firstTierLimit: nextOverrides[productId]?.firstTierLimit ?? null,
+        ...(nextOverrides[productId]?.firstTierUnlimited !== undefined ? { firstTierUnlimited: nextOverrides[productId].firstTierUnlimited } : {}),
         termDays: nextOverrides[productId]?.termDays ?? null,
         purchaseDate: nextOverrides[productId]?.purchaseDate ?? null,
         manualKind: nextOverrides[productId]?.manualKind ?? null,
@@ -673,7 +674,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       (draftHoldings[product.id] ?? 0) !== (holdings[product.id] ?? 0) ? [product.id] : []
     ));
     const overrideProductIds = workingProducts.flatMap((product) => (
-      !sameOverride(savedOverrides[product.id], productOverrides[product.id]) ? [product.id] : []
+      !sameOverride(savedOverrides[product.id], productOverrides[product.id], product) ? [product.id] : []
     ));
     const manualProductIds = workingProducts.flatMap((product) => (
       product.id.startsWith("manual-") && !sameManualProduct(product, manualProducts.find((item) => item.id === product.id)) ? [product.id] : []
@@ -994,6 +995,8 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
 
 function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUntil, onManualRefresh, onApiSettings }: { userEmail: string | null; demo: boolean; loading: boolean; manualRefreshCooling: boolean; cooldownUntil: string | null; onManualRefresh: () => void; onApiSettings: () => void }) {
   const menuRef = useDismissibleDetails();
+  const [logoutPending, setLogoutPending] = useState(false);
+  const [logoutFailed, setLogoutFailed] = useState(false);
   const cooldownTime = cooldownUntil ? new Date(cooldownUntil).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : null;
   const refreshLabel = loading
     ? "正在刷新…"
@@ -1004,7 +1007,26 @@ function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUn
     action();
   }
 
-  return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><span aria-hidden="true">⋯</span></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}{!demo && <button type="button" disabled={loading || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-refresh">{refreshLabel}</button>}<button type="button" onClick={(event) => closeMenu(event, onApiSettings)} className="menu-item menu-item-leading">数据源设置</button>{!demo && <a href="/logout" className="menu-item menu-item-danger">退出登录</a>}</div></details></div>;
+  async function submitLogout(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (logoutPending) return;
+    setLogoutPending(true);
+    setLogoutFailed(false);
+    try {
+      const response = await fetch("/logout", { method: "POST", redirect: "manual", cache: "no-store" });
+      if (response.type === "opaqueredirect" || response.status === 303) {
+        // Discard the private document and its in-memory account state.
+        window.location.replace(new URL("/", window.location.href).href);
+        return;
+      }
+    } catch {
+      // Keep the menu available so the user can retry.
+    }
+    setLogoutPending(false);
+    setLogoutFailed(true);
+  }
+
+  return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><span aria-hidden="true">⋯</span></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}{!demo && <button type="button" disabled={loading || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-refresh">{refreshLabel}</button>}<button type="button" onClick={(event) => closeMenu(event, onApiSettings)} className="menu-item">数据源设置</button>{!demo && <form action="/logout" method="post" onSubmit={submitLogout}><button type="submit" disabled={logoutPending} className="menu-item menu-item-danger">{logoutPending ? "正在退出…" : "退出登录"}</button>{logoutFailed && <p className="px-3 pb-2 type-caption text-danger" role="status">退出失败，请重试。</p>}</form>}</div></details></div>;
 }
 
 async function loadProductHistoryPage(productId: string, cursor: string | null): Promise<ProductHistoryPage> {
@@ -1021,9 +1043,10 @@ function accountName(accountId: string) {
   return account.name;
 }
 
-function sameOverride(left?: ProductOverride, right?: ProductOverride) {
+function sameOverride(left: ProductOverride | undefined, right: ProductOverride | undefined, product: Product) {
   return (left?.apr ?? null) === (right?.apr ?? null)
     && (left?.firstTierLimit ?? null) === (right?.firstTierLimit ?? null)
+    && manualFirstTierIsUnlimited(product, left) === manualFirstTierIsUnlimited(product, right)
     && (left?.termDays ?? null) === (right?.termDays ?? null)
     && (left?.purchaseDate ?? null) === (right?.purchaseDate ?? null)
     && (left?.manualKind ?? null) === (right?.manualKind ?? null);

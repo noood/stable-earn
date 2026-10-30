@@ -46,6 +46,8 @@ export const schemaStatements = [
     user_id TEXT NOT NULL,
     product_id TEXT NOT NULL,
     first_tier_limit REAL CHECK (first_tier_limit IS NULL OR first_tier_limit > 0),
+    first_tier_unlimited INTEGER CHECK (first_tier_unlimited IN (0, 1))
+      CHECK (first_tier_unlimited IS NOT 1 OR first_tier_limit IS NULL),
     updated_at TEXT NOT NULL,
     PRIMARY KEY (user_id, product_id)
   )`,

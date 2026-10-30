@@ -4,15 +4,11 @@ Stable Earn 是一个基于 Cloudflare Workers 的稳定币与 BTC 理财监控�
 
 ## 主要功能
 
-- 支持 USDT、USDC、USDGO 和 BTC。
-- 对接 Binance、Bybit、Bitget 和 OKX 等平台。
-- 支持活期、定期和活动型产品。
-- 展示 APR、阶梯额度、持仓、到期信息和预估收益。
-- 支持 API 同步产品与持仓，也支持手动维护产品。
-- 支持多账号数据隔离和 API 产品隐藏。
-- 支持 Bitget Wallet 的 Morph USDC 链上理财：公开钱包地址同步持仓，收益率手动维护。配置与范围见[接入说明](docs/BITGET-WALLET-MORPH-USDC.md)。
+- 支持 USDT、USDC、USDGO、BTC，以及活期、定期和活动型产品。
+- 按平台能力使用交易所 API、钱包公开地址同步或手动维护数据。
+- 展示阶梯 APR、额度、持仓、到期信息、预估收益和变更记录，支持多账号隔离。
 
-数据仅用于监控和比较，不构成投资建议；最终结果以对应平台账户为准。
+平台和配置方式统一见[数据源设置](docs/DATA-SOURCES.md)。数据仅用于监控和比较，不构成投资建议；最终结果以对应平台账户为准。
 
 ## 本地运行
 
@@ -23,123 +19,24 @@ npm ci
 npm run dev
 ```
 
-打开 <http://localhost:3000> 查看本地预览。日常页面使用模拟产品与持仓数据，不访问生产数据库。若在本地配置真实交易所凭证并主动运行 API 检查，检查仍会请求交易所接口。
+打开 <http://localhost:3000>。默认使用模拟产品与持仓，不连接生产 D1；主动配置真实凭证并运行 API 检查时，仍会请求交易所接口。场景与验证命令见[开发指南](CONTRIBUTING.md)。
 
-常用检查：
+## 文档导航
 
-```bash
-# 本地开发：只跑与当前改动相关的测试，例如
-npm run test:file -- tests/data-states.test.mjs
-npx eslint lib/product-status.ts app/components/dashboard/product-row.tsx
+| 你要做什么 | 文档 |
+| --- | --- |
+| 配置交易所、钱包或手动产品 | [数据源设置与支持范围](docs/DATA-SOURCES.md) |
+| 开发、预览、测试与了解模块分工 | [开发与贡献](CONTRIBUTING.md) |
+| 自托管、升级或执行数据库迁移 | [部署与数据库迁移](docs/DEPLOYMENT.md) |
+| 理解缓存、刷新、收益和目录行为 | [数据规则](docs/DATA-STATES.md) |
+| 实现字段解析或产品身份 | [APR 与额度规则](docs/API-APR-CAPACITY-RULES.md)、[产品身份](docs/PRODUCT-IDENTITY.md) |
+| 修改界面或排查问题 | [设计规范](docs/DESIGN-SYSTEM.md)、[诊断说明](docs/DIAGNOSTICS.md) |
+| 核对交易所 API 或准备发布 | [平台能力与核验依据](docs/PLATFORM-CAPABILITIES.md)、[发布清单](docs/RELEASE-CHECKLIST.md) |
 
-# UI 或用户行为改动：在本地运行相关 Playwright E2E，例如
-npm run test:e2e -- --grep "known quota|known first tier"
+使用、开发与部署步骤各自在对应指南维护；业务规则、设计规则和接口证据分别维护。调研与待办用于保留依据和计划：[Morph USDC 收益率调研](docs/research/BITGET-WALLET-MORPH-USDC.md)、[Cloudflare 分支预览计划（尚未实施）](docs/PREVIEW-ENVIRONMENT-PLAN.md)。
 
-# 生产部署前：在最终候选代码上完整运行一次本地 E2E
-npm run test:e2e
+## 安全与许可证
 
-# PR 上的 GitHub Actions 统一运行 npm run check 和安全审计，不运行 E2E。
-# 本地不必重复这两项；修改 CI/测试基础设施或需要完整本地复核时再运行：
-npm run check
-npm run audit:security
+凭证权限、隐私边界及漏洞报告见 [SECURITY.md](SECURITY.md)。
 
-# 首次运行浏览器测试时安装 Chromium
-npx playwright install chromium
-```
-
-完整依赖审计（包含开发工具）会展示告警但不让审计检查失败；生产依赖审计失败会让检查失败。只有把相应检查设为 `main` 的必需 PR 检查后，GitHub 才会自动阻止未通过的 PR 合并。Playwright E2E 仅在本地运行，不交给 GitHub；也可用于开发时快速查看页面和定位问题。
-
-端到端测试默认复用已经运行的 <http://localhost:3000>；该服务未运行时，Playwright 会自行启动。需要只跑部分浏览器测试时，可传入文件名或筛选条件，例如 `npm run test:e2e -- --grep "known quota|known first tier"`。发布前核对范围见 [发布检查清单](docs/RELEASE-CHECKLIST.md)。浏览器测试只访问本地预览与模拟数据，不连接生产账号或 D1。
-
-生产构建的历史摘要与按需加载另用 `npm run build && npx playwright test --config=playwright.production.config.mjs` 验证。它在本机 3001 端口临时启动生产构建，账户接口全部由合成响应拦截，不使用凭证或生产 D1；不要同时占用该端口。常规开发预览的完整 E2E 仍用上面的命令。
-
-仓库目前只维护 macOS（`darwin`）截图基线；其他系统首次运行截图比较前，需要生成并审阅对应平台的基线。基线按系统分别保存，不跨系统比较；只有确认视觉变化符合预期后才更新。
-
-## 代码组织
-
-- `app/page.tsx` 与 `app/private/private-dashboard-client.tsx` 负责页面入口；共用 `app/components/dashboard/dashboard.tsx`。私人页面保留静态外壳及客户端延迟加载，不从公共页面入口反向导入。
-- `app/components/dashboard/` 内的产品行、输入和日期控件负责展示及交互；Dashboard 统一协调加载、刷新、草稿和保存。子控件通过回调交接修改，不自行保存数据。
-- `lib/private-sync/types.ts` 与 `status.ts` 维护同步内部类型、状态及文案；`snapshots.ts` 聚合平台读取，`payload.ts` 合并缓存与目录并准备保存方案，`service.ts` 统一执行刷新及提交。
-- 产品 HTTP 接口保留鉴权、同源校验、请求参数、刷新门控和响应；`lib/scheduled-sync.ts` 负责队列调度，直接调用同步服务。读取和候选合并层不提交数据，保存顺序与运行锁由服务协调。
-
-数据行为以 [数据规则](docs/DATA-STATES.md)为准，字段解析见 [APR 与额度规则](docs/API-APR-CAPACITY-RULES.md)，已核验接口见 [平台能力矩阵](docs/PLATFORM-CAPABILITIES.md)。模块整理不另定义业务规则。
-
-## 自托管部署
-
-### 需要准备
-
-- Cloudflare 账号，以及已登录的 Wrangler（`npx wrangler login`）。
-- 一个 D1 数据库，名称使用 `stablecoin-earn-monitor`。
-- 一个 Queue，名称使用 `stable-earn-sync`。
-- Cloudflare Access 应用，路径规则使用 `/private*`，覆盖 `/private` 页面入口及其子路径。如果新增其他以 `/private` 开头的公开路径，应重新检查匹配范围。
-- 按数据源准备交易所只读 API Key，或已支持链上产品的钱包公开地址。交易所 Key 须关闭交易、转账、申购、赎回和提现权限；钱包接入不需要私钥或助记词。
-
-### 第一次部署
-
-1. 在 Cloudflare 创建 D1 数据库和 Queue：
-
-```bash
-npx wrangler d1 create stablecoin-earn-monitor
-npx wrangler queues create stable-earn-sync
-```
-
-将 D1 返回的数据库 ID、Cloudflare 账号 ID、Access 团队域名和 Access 应用的 Audience 分别配置为私密环境变量：
-
-```text
-CLOUDFLARE_ACCOUNT_ID
-D1_DATABASE_ID
-TEAM_DOMAIN
-POLICY_AUD
-```
-
-这些值由 `npm run deploy` 生成部署配置时读取；生成的配置文件不会提交到 Git。
-
-2. 安装依赖并部署：
-
-```bash
-npm ci
-npm run deploy
-```
-
-3. 在 Cloudflare Worker 的 Settings → Variables and Secrets 中添加 `CREDENTIAL_ENCRYPTION_KEY` Secret。它必须是 **32 字节随机密钥的 Base64 编码**；例如可在本机用 `openssl rand -base64 32` 生成，再直接填入 Cloudflare Secret。不要把密钥写进代码、README、`.env.example` 或 GitHub Issue。之后确认 Access 已保护 `/private*`（包括 `/private` 页面入口及其子路径），再开始使用应用。
-
-### 数据库说明
-
-`drizzle/` 保留了历史 SQL 迁移文件，但当前部署命令不会自动执行它们；`CREATE TABLE IF NOT EXISTS` 也不会替已有表添加或修改列。生产首次安装应提前初始化数据库；升级已有部署前，应先备份 D1，核对 `db/schema.ts`、相关历史迁移与现有表结构，再执行适用的迁移、验证后部署新代码。不要盲目重跑全部历史迁移，也不要把生产数据库 ID 或数据提交到仓库。
-
-应用冷启动只读取一次 `product_history_meta` 版本标记；并发请求共享准备过程，已准备好的数据库不重复执行建表语句。空库的自动建表只是开发/容错路径，不替代生产迁移：完整初始化及同次业务查询可能超过 D1 Free 每次调用的查询数限制。
-
-#### 历史摘要迁移（0021）
-
-尚未完成 0021 的已有部署，须在合并触发自动部署**之前**，由单一操作者完成以下步骤：
-
-1. 备份当前数据库，确认历史事件表及 `attention`、`read_at` 列已经存在（对应 0013、0017），且此前适用的迁移已完成。
-2. 使用绑定到目标数据库的本机私密 Wrangler 配置，完整执行 `drizzle/0021_product_history_summaries.sql`。这是一次原子迁移，不要拆开回填、触发器和版本标记执行；部署脚本不会代做此步骤。
-3. 确认 `product_history_meta` 中 `singleton = 1` 的 `version = 1`，并核对各账号摘要的事件总数、未读数与原历史一致，再合并部署。原始历史及已读状态不变；迁移后旧代码的插入、已读操作也由触发器维护摘要。
-4. 部署成功后刷新页面，检查红点、历史分页、已读确认和后台暂停轮询；结合 D1 每日读/写行数验证消耗，不只看请求耗时。D1 Free 每日读行额度按 UTC 00:00（北京时间 08:00）重置。
-
-0021 可重复执行，版本标记已就绪时不再次扫描历史回填或重置版本。需要回退应用时，可保留新增摘要表、缓存和触发器，旧代码仍可运行；不要为回退应用删除原历史或重置摘要版本。数据库恢复需另按备份方案处理。
-
-部署环境变量和 Worker Secret 只保存在本机私密环境或 Cloudflare，不要提交真实值。
-
-#### 钱包配置迁移（0022）
-
-BGW 接入增加 `wallet_configs` 表。新版本的同步流程会读取该表，必须在合并触发自动部署**之前**，由单一操作者完成：
-
-1. 备份目标数据库并确认前序适用迁移（包括 0021）已经完成。
-2. 使用绑定到目标数据库的本机私密 Wrangler 配置，完整执行 `drizzle/0022_wallet_configs.sql`；部署脚本不会自动迁移。
-3. 只读核对 `wallet_configs` 包含 `user_id` 主键、`address`、`updated_at` 三列及 SQL 中的钱包地址约束，再合并部署。迁移只新增表，不回填钱包、不扫描持仓或历史。
-
-0022 使用 `CREATE TABLE IF NOT EXISTS`，可重复执行，但不会修正已存在的错误表结构。应用回退时保留新增表及钱包配置，旧代码不使用该表；不要为了回退应用删除钱包配置。数据库恢复需另按备份方案处理。
-
-`wrangler.jsonc` 默认将 `SCHEDULED_SYNC_ENABLED` 设为 `false`，因此不会启用每日队列同步；每日首次打开和手动刷新仍可使用。若要启用定时同步，应先确认 Cloudflare Queues 已创建并绑定，再按自己的请求额度评估后修改该设置并重新部署。
-
-## 安全
-
-安全要求和漏洞报告流程见 [SECURITY.md](SECURITY.md)。交易所 API Key 应使用只读权限，并关闭交易、转账、申购、赎回和提现权限。
-
-## 许可证
-
-本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)。允许个人及符合许可证定义的非商业组织学习、修改和分发；商业用途不在许可范围内。
-
-第三方依赖、字体及品牌素材不由本项目许可证覆盖，范围和待确认项见[第三方许可证盘点](docs/THIRD-PARTY-LICENSES.md)。构建会根据实际打包依赖生成 `third-party-notices.txt`，客户端文件通过部署后的站点路径 `/third-party-notices.txt` 提供；服务端产物也保留对应清单。已核对的补充许可全文位于 `licenses/`。更新依赖或更换字体时须复核；新增缺失许可材料会使构建失败，不能靠跳过声明解决。
+本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，允许许可证定义范围内的非商业使用；商业用途不在许可范围内。第三方依赖、字体及品牌素材的义务和待确认项见[第三方许可证盘点](docs/THIRD-PARTY-LICENSES.md)。

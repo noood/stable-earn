@@ -15,6 +15,8 @@
 
 ## Deployment responsibilities
 
+应用对账户写操作验证请求来源；退出登录通过同源 POST 发起。
+
 部署者需要：
 
 - 为 `/private*` 配置 Cloudflare Access，确保同时覆盖不带尾斜杠的 `/private` 页面入口和其子路径；新增相同前缀的公开路由时重新检查匹配范围；

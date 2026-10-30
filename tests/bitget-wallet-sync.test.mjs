@@ -53,12 +53,12 @@ test("a successful RPC holding with missing manual APR is complete and has no AP
     assert.equal(product.productDataMode, "manual");
     assert.equal(product.holdingDataMode, "api");
     assert.equal(product.source.kind, "manual");
-    assert.equal(product.capacityStatus, "available");
+    assert.equal(product.capacityStatus, "unavailable");
     assert.equal(product.tierStructureStatus, "complete");
     assert.equal(product.rateCoverage, "unavailable");
     assert.equal(product.aprStatus, "unavailable");
     assert.equal(product.tiers[0].max, null);
-    assert.equal(product.tiers[0].maxStatus, "unlimited");
+    assert.equal(product.tiers[0].maxStatus, undefined);
     assert.equal(payload.holdingUpdates[product.id], 123.456789);
     assert.equal(payload.holdingSyncStates[product.id], "synced");
     assert.equal(payload.holdingFetchedAt[product.id], holdingTime);

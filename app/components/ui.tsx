@@ -12,6 +12,10 @@ export function ActionButton({ variant = "primary", size = "default", className 
   return <button {...props} className={`button button-${variant} ${size === "small" ? "button-small" : ""} ${className}`} />;
 }
 
+export function CheckIcon({ className }: { className?: string }) {
+  return <svg className={className} viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="m2.5 7.25 2.8 2.8 6.2-6.1" /></svg>;
+}
+
 export function AccountBadge({ account }: { account: Account }) {
   return <span className="account-badge" title={account.name} style={{ backgroundColor: account.color, color: account.foreground }}>{account.mark}</span>;
 }

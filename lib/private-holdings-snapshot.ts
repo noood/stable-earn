@@ -11,6 +11,7 @@ type OverrideRow = {
   product_kind_override: "flexible" | "fixed" | "limited" | null;
   updated_at: string;
   first_tier_limit: number | null;
+  first_tier_unlimited: number | null;
   term_days: number | null;
 };
 
@@ -23,7 +24,7 @@ export async function loadPrivateHoldingsSnapshot(db: D1Database, userId: string
     db.prepare(`SELECT product_id, SUM(amount) AS amount FROM holding_positions
       WHERE user_id = ? GROUP BY product_id ORDER BY product_id`).bind(userId),
     db.prepare(`SELECT o.product_id, o.confirmed_apr, o.purchase_date, o.product_kind_override,
-        o.updated_at, l.first_tier_limit, t.term_days
+        o.updated_at, l.first_tier_limit, l.first_tier_unlimited, t.term_days
       FROM product_overrides o
       LEFT JOIN product_override_limits l ON l.user_id = o.user_id AND l.product_id = o.product_id
       LEFT JOIN product_override_terms t ON t.user_id = o.user_id AND t.product_id = o.product_id

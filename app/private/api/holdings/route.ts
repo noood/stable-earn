@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getDatabase, getUserId } from "@/lib/db";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
 import type { HoldingMap, HoldingSyncState } from "@/lib/domain";
-import { productNeedsManualType, productTypeSelectionAvailable, type ProductOverrideMap } from "@/lib/product-overrides";
+import { productNeedsManualLimit, productNeedsManualType, productTypeSelectionAvailable, type ProductOverrideMap } from "@/lib/product-overrides";
 import { parseProductOverride } from "@/lib/product-override-input";
 import { loadUserProducts, prepareUserProductStatements, productToUserProduct, sanitizeUserProducts, userProductInputToProduct } from "@/lib/user-products";
 import { delayLocalPreviewScenario, isLocalPreviewRequest, localPreviewTime, localPrivateHoldingsPreview } from "@/lib/local-preview";
@@ -20,7 +20,7 @@ import {
 export const dynamic = "force-dynamic";
 
 type HoldingRow = { product_id: string; amount: number };
-type LimitRow = { product_id: string; first_tier_limit: number | null };
+type LimitRow = { product_id: string; first_tier_limit: number | null; first_tier_unlimited: number | null };
 type TermRow = { product_id: string; term_days: number | null };
 type OverrideSnapshotRow = { product_id: string; confirmed_apr: number | null; purchase_date: string | null; product_kind_override: "flexible" | "fixed" | "limited" | null };
 type HiddenProductRow = { product_id: string };
@@ -71,6 +71,7 @@ async function getHoldings(request: Request, timing: StartupServerTiming) {
     .map((row) => [row.product_id, {
       apr: row.confirmed_apr === null ? null : Number(row.confirmed_apr),
       firstTierLimit: row.first_tier_limit === null ? null : Number(row.first_tier_limit),
+      ...(row.first_tier_unlimited == null ? {} : { firstTierUnlimited: row.first_tier_unlimited === 1 }),
       termDays: row.term_days === null ? null : Number(row.term_days),
       purchaseDate: row.purchase_date,
       updatedAt: row.updated_at,
@@ -103,7 +104,7 @@ export async function PUT(request: Request) {
     db.prepare("SELECT product_id, amount FROM holding_positions WHERE user_id = ? ORDER BY product_id").bind(userId).all<HoldingRow>(),
     db.prepare(`SELECT product_id, confirmed_apr, purchase_date, product_kind_override
       FROM product_overrides WHERE user_id = ? ORDER BY product_id`).bind(userId).all<OverrideSnapshotRow>(),
-    db.prepare(`SELECT product_id, first_tier_limit
+    db.prepare(`SELECT product_id, first_tier_limit, first_tier_unlimited
       FROM product_override_limits WHERE user_id = ? ORDER BY product_id`).bind(userId).all<LimitRow>(),
     db.prepare(`SELECT product_id, term_days
       FROM product_override_terms WHERE user_id = ? ORDER BY product_id`).bind(userId).all<TermRow>(),
@@ -195,12 +196,28 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "产品类型数据暂不可用，需等待对应 API 同步成功后再修改。" }, { status: 409, headers: privateResponseHeaders });
     }
   }
-  const overrideEntries = changedOverrideProductIds.map((productId) => {
+  const previousOverrides = buildOverrideMap(overrideResult.results, limitResult.results, termResult.results);
+  const overrideEntries: NonNullable<ReturnType<typeof parseProductOverride>>[] = [];
+  const legacyLimitStates = new Map<string, LimitRow | null>();
+  for (const productId of changedOverrideProductIds) {
     const product = allProducts.find((item) => item.id === productId)!;
-    return parseProductOverride(product, overrideCandidate[productId]);
-  });
-  if (overrideEntries.some((entry) => entry === null)) {
-    return NextResponse.json({ error: "人工额度、收益率、期限或买入日格式不正确。" }, { status: 400, headers: privateResponseHeaders });
+    const parsed = parseProductOverride(product, overrideCandidate[productId]);
+    if (!parsed) {
+      return NextResponse.json({ error: "人工额度、收益率、期限或买入日格式不正确。" }, { status: 400, headers: privateResponseHeaders });
+    }
+    if (!Object.hasOwn(parsed, "firstTierUnlimited")) {
+      if (productNeedsManualLimit(product)) {
+        legacyLimitStates.set(productId, limitResult.results.find((row) => row.product_id === productId) ?? null);
+      }
+      const previous = previousOverrides[productId]?.firstTierUnlimited;
+      if (previous === true && parsed.firstTierLimit !== null) {
+        return NextResponse.json({ error: "额度设置已更新，请刷新页面后再修改。" }, { status: 409, headers: privateResponseHeaders });
+      }
+      if (previous !== undefined || parsed.firstTierLimit !== null) {
+        parsed.firstTierUnlimited = previous ?? false;
+      }
+    }
+    overrideEntries.push(parsed);
   }
   if (entries.length === 0 && overrideEntries.length === 0 && manualProductUpdates.length === 0 && deletedManualProductIds.length === 0 && !hiddenProductsProvided) {
     return NextResponse.json({ error: "没有需要保存的变更。" }, { status: 400, headers: privateResponseHeaders });
@@ -210,12 +227,12 @@ export async function PUT(request: Request) {
   const source = parseChangeSource(payload?.source);
   const previousHoldings = Object.fromEntries(holdingResult.results.map((row) => [row.product_id, Number(row.amount)])) as HoldingMap;
   const nextHoldings = { ...previousHoldings, ...Object.fromEntries(entries) } as HoldingMap;
-  const previousOverrides = buildOverrideMap(overrideResult.results, limitResult.results, termResult.results);
   const nextOverrides = { ...previousOverrides } as ProductOverrideMap;
   for (const entry of overrideEntries) {
-    if (entry) nextOverrides[entry.productId] = {
+    nextOverrides[entry.productId] = {
       apr: entry.apr,
       firstTierLimit: entry.firstTierLimit,
+      ...(entry.firstTierUnlimited === undefined ? {} : { firstTierUnlimited: entry.firstTierUnlimited }),
       termDays: entry.termDays,
       purchaseDate: entry.purchaseDate,
       updatedAt,
@@ -241,6 +258,17 @@ export async function PUT(request: Request) {
     )
     : [];
   const statements = [
+    // A legacy payload cannot express the quota mode. Abort the entire batch
+    // if another save changed that quota after the compatibility read.
+    ...[...legacyLimitStates].map(([productId, previous]) => previous
+      ? db.prepare(`SELECT CASE WHEN EXISTS (
+          SELECT 1 FROM product_override_limits WHERE user_id = ? AND product_id = ?
+            AND first_tier_limit IS ? AND first_tier_unlimited IS ?
+        ) THEN 1 ELSE json('manual_limit_changed') END`)
+        .bind(userId, productId, previous.first_tier_limit ?? null, previous.first_tier_unlimited ?? null)
+      : db.prepare(`SELECT CASE WHEN NOT EXISTS (
+          SELECT 1 FROM product_override_limits WHERE user_id = ? AND product_id = ?
+        ) THEN 1 ELSE json('manual_limit_changed') END`).bind(userId, productId)),
     ...prepareUserProductStatements(db, userId, manualProductUpdates, deletedManualProductIds, updatedAt),
     ...(hiddenProductsProvided ? [
       db.prepare("DELETE FROM hidden_products WHERE user_id = ?").bind(userId),
@@ -254,7 +282,7 @@ export async function PUT(request: Request) {
       ON CONFLICT(user_id, product_id)
       DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at`)
       .bind(userId, productId, amount, updatedAt)),
-    ...overrideEntries.flatMap((entry) => entry ? [db.prepare(`INSERT INTO product_overrides
+    ...overrideEntries.map((entry) => db.prepare(`INSERT INTO product_overrides
         (user_id, product_id, confirmed_apr, purchase_date, product_kind_override, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, product_id)
@@ -262,24 +290,44 @@ export async function PUT(request: Request) {
           purchase_date = excluded.purchase_date,
           product_kind_override = excluded.product_kind_override,
           updated_at = excluded.updated_at`)
-      .bind(userId, entry.productId, entry.apr, entry.purchaseDate, entry.manualKind, updatedAt)] : []),
-    ...overrideEntries.flatMap((entry) => entry ? [db.prepare(`INSERT INTO product_override_limits
-        (user_id, product_id, first_tier_limit, updated_at)
-        VALUES (?, ?, ?, ?)
+      .bind(userId, entry.productId, entry.apr, entry.purchaseDate, entry.manualKind, updatedAt)),
+    ...overrideEntries.map((entry) => db.prepare(`INSERT INTO product_override_limits
+        (user_id, product_id, first_tier_limit, first_tier_unlimited, updated_at)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(user_id, product_id)
         DO UPDATE SET first_tier_limit = excluded.first_tier_limit,
+          first_tier_unlimited = excluded.first_tier_unlimited,
           updated_at = excluded.updated_at`)
-      .bind(userId, entry.productId, entry.firstTierLimit, updatedAt)] : []),
-    ...overrideEntries.flatMap((entry) => entry ? [db.prepare(`INSERT INTO product_override_terms
+      .bind(userId, entry.productId, entry.firstTierLimit,
+        entry.firstTierUnlimited === undefined ? null : entry.firstTierUnlimited ? 1 : 0, updatedAt)),
+    ...overrideEntries.map((entry) => db.prepare(`INSERT INTO product_override_terms
         (user_id, product_id, term_days, updated_at)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(user_id, product_id)
         DO UPDATE SET term_days = excluded.term_days,
           updated_at = excluded.updated_at`)
-      .bind(userId, entry.productId, entry.termDays, updatedAt)] : []),
+      .bind(userId, entry.productId, entry.termDays, updatedAt)),
     ...prepareProductChangeEventStatements(db, userId, changeEvents),
   ];
-  if (statements.length > 0) await db.batch(statements);
+  if (statements.length > 0) {
+    try {
+      await db.batch(statements);
+    } catch (error) {
+      // Recheck the guarded state rather than translating an arbitrary SQL or
+      // network failure into a conflict. The failed batch leaves no writes.
+      for (const [productId, previous] of legacyLimitStates) {
+        const current = await db.prepare(`SELECT product_id, first_tier_limit, first_tier_unlimited
+          FROM product_override_limits WHERE user_id = ? AND product_id = ?`)
+          .bind(userId, productId).first<LimitRow>();
+        if ((current == null) !== (previous === null)
+          || (current?.first_tier_limit ?? null) !== (previous?.first_tier_limit ?? null)
+          || (current?.first_tier_unlimited ?? null) !== (previous?.first_tier_unlimited ?? null)) {
+          return NextResponse.json({ error: "额度设置已更新，请刷新页面后再修改。" }, { status: 409, headers: privateResponseHeaders });
+        }
+      }
+      throw error;
+    }
+  }
   const history = new URL(request.url).searchParams.get("history") === "summary"
     ? { historySummaries: await loadProductHistorySummaries(db, userId) }
     : { changeEvents: await loadProductChangeEvents(db, userId) };
@@ -293,11 +341,14 @@ function parseChangeSource(value: unknown): ProductChangeSource {
 }
 
 function buildOverrideMap(overrides: OverrideSnapshotRow[], limits: LimitRow[], terms: TermRow[]) {
-  const limitMap = new Map(limits.map((row) => [row.product_id, row.first_tier_limit]));
+  const limitMap = new Map(limits.map((row) => [row.product_id, row]));
   const termMap = new Map(terms.map((row) => [row.product_id, row.term_days]));
   return Object.fromEntries(overrides.map((row) => [row.product_id, {
     apr: row.confirmed_apr === null ? null : Number(row.confirmed_apr),
-    firstTierLimit: limitMap.get(row.product_id) ?? null,
+    firstTierLimit: limitMap.get(row.product_id)?.first_tier_limit ?? null,
+    ...(limitMap.get(row.product_id)?.first_tier_unlimited == null ? {} : {
+      firstTierUnlimited: limitMap.get(row.product_id)!.first_tier_unlimited === 1,
+    }),
     termDays: termMap.get(row.product_id) ?? null,
     purchaseDate: row.purchase_date,
     updatedAt: null,

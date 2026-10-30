@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode, type InputHTMLAttributes } from "react";
-import { AccountBadge, ActionButton, ModalFrame, SectionIntro } from "@/app/components/ui";
+import { AccountBadge, ActionButton, CheckIcon, ModalFrame, SectionIntro } from "@/app/components/ui";
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
 import type { Account } from "@/lib/domain";
 import { accounts } from "@/lib/seed-data";
@@ -424,7 +424,6 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
             : <ActionButton variant="secondary" disabled={modalBusy || editingWallet} onClick={() => { setWalletDraft(""); setEditingWallet(true); setWalletMessage(null); }}>添加</ActionButton>}>
             {editingWallet && <form className="api-credential-form mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void changeWallet(); }} autoComplete="off">
               <SettingsField label="钱包地址" value={walletDraft} onChange={setWalletDraft} disabled={modalBusy} maxLength={42} placeholder="0x…" />
-              {walletAddress && <p className="text-secondary type-caption">更换钱包会清除上一钱包的当前持仓和同步缓存，重新刷新后展示新钱包余额。</p>}
               {walletDraft && !normalizeWalletAddress(walletDraft) && <p className="text-danger type-caption">请填写 0x 开头、40 位十六进制字符的钱包地址。</p>}
               <div className="flex justify-end gap-2"><ActionButton type="button" variant="secondary" disabled={modalBusy} onClick={() => { setEditingWallet(false); setWalletDraft(""); setWalletMessage(null); }}>取消</ActionButton><ActionButton type="submit" disabled={modalBusy || !normalizeWalletAddress(walletDraft)}>{walletBusy ? "正在保存…" : "保存"}</ActionButton></div>
             </form>}
@@ -459,7 +458,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
                 : retryWaitSeconds > 0
                   ? retryWaitLabel
                 : apiCheckState.phase === "complete"
-                  ? <svg className="api-check-success-icon" viewBox="0 0 14 14" aria-hidden="true"><path d="m2.5 7.25 2.8 2.8 6.2-6.1" /></svg>
+                  ? <CheckIcon className="api-check-success-icon" />
                   : "检测 API"}
             </ActionButton>
             {capabilityReport

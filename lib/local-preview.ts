@@ -395,6 +395,7 @@ export function localSyncScenarioPreview(scenario: string | null, now = new Date
     const preview = localPrivateProductsPreview(now);
     const rate = bitgetWalletRate();
     const id = "preview-bgw-morph-usdc";
+    // Deliberate legacy unlimited fixture: real new connections leave quota pending.
     const product: Product = {
       id, accountId: "bitget-wallet-morph", exchange: "bitget-wallet", region: "morph", asset: "USDC",
       name: "Gauntlet USDC", identityKey: rate.identityKey!, externalProductId: rate.externalProductId,
