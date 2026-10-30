@@ -10,7 +10,7 @@
 | Bybit Global | 交易所只读 Key、Secret（用于持仓） | 已接入范围使用公开 API | API 同步 |
 | Bybit EU | 无需 API Key | 已接入范围使用公开 API | 手动维护 |
 | Bitget | 交易所只读 Key、Secret、Passphrase | API 同步 | API 同步 |
-| OKX | 交易所只读 Key、Secret、Passphrase | 手动维护 APR、首档额度 | API 同步 USDT、USDC、BTC 活期余额 |
+| OKX | 交易所只读 Key、Secret、Passphrase | 手动维护类型、APR、首档额度 | API 同步 USDT、USDC、BTC 活期余额 |
 | MEXC PH / UK | 无 | 手动维护 | 手动维护 |
 | Bitget Wallet | Morph 链钱包公开地址 | 手动维护类型、整体 APR、首档额度 | 链上同步已支持金库的 USDC 持仓 |
 

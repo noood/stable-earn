@@ -154,26 +154,25 @@ input:focus-visible,
 .asset-icon-image { display: block; overflow: hidden; border-radius: 50%; clip-path: circle(50% at 50% 50%); object-fit: cover; }
 .bitcoin-icon-fallback { display: grid; place-items: center; color: var(--text-secondary); font-size: var(--type-label); font-weight: 700; line-height: 1; }
 .icon-button { display: grid; flex: 0 0 auto; cursor: pointer; place-items: center; border: 0; background: transparent; }
-.action-menu summary::-webkit-details-marker { display: none; }
-.action-menu-trigger {
-  width: 2.5rem;
-  height: 2.5rem;
+.action-menu summary::-webkit-details-marker,
+.api-row-menu summary::-webkit-details-marker { display: none; }
+.action-menu-trigger,
+.api-row-menu-trigger {
   border-radius: var(--radius-control);
   color: var(--text-secondary);
   font-size: var(--type-title);
   line-height: 1;
+}
+.action-menu-trigger {
+  width: 2.5rem;
+  height: 2.5rem;
   transition: background-color 160ms ease, color 160ms ease;
 }
-.action-menu-trigger:hover { background: var(--surface-subtle); color: var(--text-primary); }
-.api-row-menu summary::-webkit-details-marker { display: none; }
 .api-row-menu-trigger {
   width: var(--compact-icon-size);
   height: var(--compact-icon-size);
-  border-radius: var(--radius-control);
-  color: var(--text-muted);
-  font-size: var(--type-title);
-  line-height: 1;
 }
+.action-menu-trigger:hover,
 .api-row-menu-trigger:hover { background: var(--surface-subtle); color: var(--text-primary); }
 .api-row-menu-trigger[aria-disabled="true"] { cursor: default; opacity: .35; }
 .api-row-menu-trigger[aria-disabled="true"]:hover { background: transparent; color: var(--text-muted); }
@@ -210,7 +209,8 @@ input:focus-visible,
 .menu-item-danger { color: var(--danger-text); }
 .menu-item-danger:hover:not(:disabled) { background: var(--danger-surface); }
 
-.card { border: var(--hairline) solid var(--border); border-radius: var(--radius-card); background: var(--surface); }
+.card,
+.api-connection-list { border: var(--hairline) solid var(--border); border-radius: var(--radius-card); background: var(--surface); }
 .metrics-panel { gap: 0; background: var(--surface); }
 .metric-item { position: relative; min-width: 0; padding: var(--space-5); background: var(--surface); }
 .metric-item-highlight { background: var(--surface-highlight); }
@@ -244,7 +244,7 @@ input:focus-visible,
   stroke-width: 1.7;
 }
 .sync-notice-message { overflow-wrap: anywhere; }
-.text-secondary { color: var(--text-secondary); }
+.text-secondary,
 .text-muted { color: var(--text-secondary); }
 .text-subtle { color: var(--text-subtle); }
 .text-danger { color: var(--danger-text); }
@@ -738,11 +738,6 @@ input:focus-visible,
   gap: var(--space-8);
 }
 .api-settings-split-row > :first-child { margin-bottom: 0; }
-.api-connection-list {
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
-}
 .api-connection-row { padding: var(--space-3) var(--space-4); }
 .api-connection-row-divided { border-top: var(--hairline) solid var(--border); }
 .api-check-actions { display: grid; justify-items: end; gap: var(--space-1); }

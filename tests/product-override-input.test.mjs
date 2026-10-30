@@ -134,9 +134,10 @@ test("manual products clear flexible terms in storage and require a new term on 
     assert.equal(productTermDays(reloadedFlexible), null);
   }
 
-  for (const invalidTerm of [0, "NaN", Number.NaN, 3651, Number.POSITIVE_INFINITY]) {
+  for (const invalidTerm of [0, "NaN", Number.NaN, 3651, Number.POSITIVE_INFINITY, true, [7], { value: 7 }, "0x7", "7days"]) {
     assert.equal(userProducts.sanitizeUserProducts([{ ...raw, manualKind: "fixed", termDays: invalidTerm }]), null);
   }
+  assert.equal(userProducts.sanitizeUserProducts([{ ...raw, manualKind: "fixed", termDays: "7" }])?.[0].termDays, 7);
   assert.equal(userProducts.sanitizeUserProducts([{ ...raw, termDays: null }])?.[0].termDays, null);
   assert.equal(userProducts.sanitizeUserProducts([{ ...raw, manualKind: "fixed", termDays: null }]), null);
 });

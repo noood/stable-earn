@@ -2,6 +2,7 @@ import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types"
 import type { Asset, Product } from "./domain";
 import { accounts } from "./seed-data";
 import { buildManualProductIdentity } from "./product-identity";
+import { parseExchangeNumber } from "./exchange-number";
 
 export type UserProductInput = {
   id: string;
@@ -51,7 +52,8 @@ export function sanitizeUserProducts(value: unknown): UserProductInput[] | null 
   for (const rawValue of value) {
     if (typeof rawValue !== "object" || rawValue === null) return null;
     const raw = rawValue as Partial<UserProductInput>;
-    const termDays = raw.manualKind === "flexible" || raw.termDays === null || raw.termDays === undefined ? null : Number(raw.termDays);
+    const termDays = raw.manualKind === "flexible" || raw.termDays === null || raw.termDays === undefined
+      ? null : parseExchangeNumber(raw.termDays) ?? Number.NaN;
     if (typeof raw.id !== "string" || !/^manual-[a-z0-9-]{8,80}$/i.test(raw.id) || seen.has(raw.id)) return null;
     if (typeof raw.accountId !== "string" || !validAccountIds.has(raw.accountId)) return null;
     if (typeof raw.asset !== "string" || !validAssets.has(raw.asset as Asset)) return null;

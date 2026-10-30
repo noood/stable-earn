@@ -33,8 +33,8 @@ test("Bybit EU has public product APR and manual holdings, without a useless Ear
   assert.match(credentialAccount("binance-global").syncDescription, /四种资产的活期、定期产品、APR 与持仓/);
   assert.match(credentialAccount("bitget-global").syncDescription, /四种资产的活期、定期产品、APR 与持仓/);
   assert.equal(credentialAccount("bybit-global").syncDescription, "产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓自动同步");
-  assert.match(credentialAccount("okx-global").syncDescription, /每币种对应一条跟踪产品，成功完整回包缺少币种行按 0/);
-  assert.match(credentialAccount("okx-global").syncDescription, /产品 APR 需手动维护/);
+  assert.match(credentialAccount("okx-global").syncDescription, /同步 USDT、USDC、BTC 活期持仓/);
+  assert.match(credentialAccount("okx-global").syncDescription, /产品类型、APR 与额度手动维护/);
   const sources = [...credentialAccounts, ...manualDataAccounts];
   assert.equal(new Set(sources.map((source) => source.id)).size, sources.length);
   assert.ok(sources.every((source) => accounts.some((account) => account.id === source.id)));
