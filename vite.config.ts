@@ -4,6 +4,7 @@ import vinext from 'vinext';
 import { existsSync } from 'node:fs';
 import { defineConfig } from 'vite';
 import { licenseReportFile, thirdPartyNoticesPlugin } from './scripts/third-party-notices.mjs';
+import { startupAssetsPlugin } from './scripts/startup-assets.mjs';
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
@@ -26,6 +27,7 @@ export default defineConfig(async () => {
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
+      startupAssetsPlugin(),
       thirdPartyNoticesPlugin(),
       vinext(),
       cloudflare({

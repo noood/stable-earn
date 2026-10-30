@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
-function shell({ browser = true, failurePreview = false, production = false, downloadFails = false } = {}) {
+function shell({ browser = true, failurePreview = false, production = false, downloadFails = false, assetManifest } = {}) {
   const effects = [], updates = [], diagnostics = [], timers = [];
   let imports = 0, stateIndex = 0;
   const Dashboard = () => null;
@@ -33,9 +33,9 @@ function shell({ browser = true, failurePreview = false, production = false, dow
     process: { env: { NODE_ENV: production ? "production" : "development" } },
   });
   const component = load("@/app/private/private-dashboard-client.tsx").default;
-  return { Dashboard, updates, diagnostics, timers, imports: () => imports, mount() {
+  return { Dashboard, updates, diagnostics, timers, imports: () => imports, render: () => component({ assetManifest }), mount() {
     stateIndex = 0;
-    component();
+    component({ assetManifest });
     return effects.at(-1)();
   } };
 }
@@ -43,7 +43,12 @@ function shell({ browser = true, failurePreview = false, production = false, dow
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 test("dashboard code loads before mounting but its component and account effects do not run", async () => {
-  const run = shell();
+  const assetManifest = { version: 1, scripts: {}, dashboardPreloads: ["/_next/static/chunks/dashboard-123.js"] };
+  const run = shell({ assetManifest });
+  const rendered = run.render();
+  const [preload, diagnostics] = rendered.props.children;
+  assert.equal(preload.props.assetManifest, assetManifest);
+  assert.equal(diagnostics.props.assetManifest, assetManifest);
   assert.ok(run.diagnostics.some(([key]) => key === "dashboard-import"));
   await settle();
   assert.equal(run.imports(), 1);

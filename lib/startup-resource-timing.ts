@@ -1,29 +1,21 @@
+import { STARTUP_SCRIPT_LABELS, startupScriptRoleForPath, type StartupAssetManifest } from "@/lib/startup-assets";
+
 type ResourceTiming = Pick<PerformanceResourceTiming, "name" | "startTime" | "requestStart" | "responseStart" | "responseEnd" | "transferSize" | "encodedBodySize">;
 export type BrowserTimingLine = { key: string; label: string; value: string };
 
-const scriptLabels: Record<string, string> = {
-  framework: "框架脚本",
-  vinext: "页面运行时脚本",
-  index: "启动入口脚本",
-  "private-dashboard-client": "私人页外框脚本",
-  "startup-diagnostics": "共享启动脚本（含诊断）",
-  dashboard: "仪表盘脚本",
-  "rolldown-runtime": "模块加载运行时",
-  "layout-segment-context": "页面上下文脚本",
-};
-
 /** Export fixed labels and numbers, never resource URLs, query strings or API paths. */
-export function summarizeStartupResources(resources: ResourceTiming[], origin: string, until: number): BrowserTimingLine[] {
+export function summarizeStartupResources(resources: ResourceTiming[], origin: string, until: number, manifest?: StartupAssetManifest): BrowserTimingLine[] {
   const selected = new Map<string, { entry: ResourceTiming; label: string }>();
   for (const entry of resources) {
     let url: URL;
     try { url = new URL(entry.name); } catch { continue; }
-    if (url.origin !== origin || !url.pathname.startsWith("/_next/static/") || entry.responseEnd <= 0 || entry.responseEnd > until) continue;
-    const file = url.pathname.split("/").pop() ?? "";
-    const group = file.endsWith(".css") ? "stylesheet" : Object.keys(scriptLabels).find((name) => file.startsWith(`${name}-`) && file.endsWith(".js"));
+    if (url.origin !== origin || entry.responseEnd <= 0 || entry.responseEnd > until) continue;
+    const stylesheet = url.pathname.endsWith(".css") && /(?:^|\/)_next\/static\//.test(url.pathname);
+    const scriptRole = startupScriptRoleForPath(url.pathname, manifest);
+    const group = stylesheet ? "stylesheet" : scriptRole;
     if (!group) continue;
     const previous = selected.get(group);
-    if (!previous || previous.entry.responseEnd < entry.responseEnd) selected.set(group, { entry, label: group === "stylesheet" ? "页面样式" : scriptLabels[group] });
+    if (!previous || previous.entry.responseEnd < entry.responseEnd) selected.set(group, { entry, label: group === "stylesheet" ? "页面样式" : STARTUP_SCRIPT_LABELS[group] });
   }
   return [...selected].sort((a, b) => a[1].entry.startTime - b[1].entry.startTime).map(([key, { entry, label }]) => ({
     key: `resource-${key}`,

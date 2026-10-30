@@ -15,7 +15,7 @@
 
 ## 实际打包的 JavaScript 与许可材料
 
-Vite 原生许可报告依据实际输出 chunk 的模块来源识别包，而非将 lockfile 的 635 个条目全部计为浏览器分发物。当前客户端报告含下表前 10 个包，SSR 报告含其中 9 个（不含 `scheduler`），RSC 服务端报告含 6 个包（其中 `jose` 不在客户端）；三者去重合计 11 个包。各包自身元数据均为 MIT；这不代表包内复制的第三方代码也可忽略其独立声明。
+Vite 原生许可报告依据实际输出 chunk 的模块来源识别包，而非将 lockfile 的 635 个条目全部计为浏览器分发物。当前客户端和 SSR 报告均含下表前 10 个包，RSC 服务端报告含 6 个包（其中 `jose` 不在客户端）；三者去重合计 11 个包。各包自身元数据均为 MIT；这不代表包内复制的第三方代码也可忽略其独立声明。
 
 | 实际打包的包 | 版本 | 已找到的许可全文/版权记录 |
 |---|---|---|
@@ -26,7 +26,7 @@ Vite 原生许可报告依据实际输出 chunk 的模块来源识别包，而�
 | `react`、`react-dom`、`react-server-dom-webpack` | 各 19.3.1 | 各包 `LICENSE`，Meta Platforms, Inc. and affiliates |
 | `scheduler` | 0.28.0 | 安装包 `LICENSE`，Meta Platforms, Inc. and affiliates |
 | `unpic` | 4.2.2 | 安装包及 npm `gitHead` 对应源码树未找到独立 LICENSE；元数据声明 MIT，完整版权文本仍待确认 |
-| `vinext` | 1.2.1 | 安装包 `LICENSE`，2026 Cloudflare, Inc.；另有 `THIRD_PARTY_LICENSES.md` |
+| `vinext` | 1.3.1 | 安装包 `LICENSE`，2026 Cloudflare, Inc.；另有 `THIRD_PARTY_LICENSES.md` |
 | `jose`（仅 RSC 服务端） | 6.2.14 | 安装包 `LICENSE.md`，2018 Filip Skokan |
 
 版本对应证据：[`@unpic/core` 包元数据](https://github.com/ascorbic/unpic-img/blob/%40unpic/core%401.0.3/packages/core/package.json)、[同标签项目 README 的许可声明](https://github.com/ascorbic/unpic-img/blob/%40unpic/core%401.0.3/README.md#license)、[同标签 MIT 全文](https://github.com/ascorbic/unpic-img/blob/%40unpic/core%401.0.3/packages/react/LICENSE)、[Vite 插件对应提交的 LICENSE](https://github.com/vitejs/vite-plugin-react/blob/2e8512f98a4fc1b302af760c9d41900c2fa66d0a/LICENSE)、[`unpic` 对应源码提交](https://github.com/ascorbic/unpic/tree/eefd6174338cc1377f8f238b84af94f48acd6da4)。
