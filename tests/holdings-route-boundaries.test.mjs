@@ -169,3 +169,27 @@ test("a missing product type is saved per user only after that product's API syn
   assert.equal(rejected.status, 409);
   assert.equal(blocked.db.sqlite.prepare("SELECT COUNT(*) AS count FROM product_overrides WHERE product_id = ?").get(blocked.product.id).count, 0);
 });
+
+test("BGW manual type saves round-trip during RPC failure without allowing holding changes", async () => {
+  const f = fixture({ productId: "preview-bgw-morph-usdc", savedAmount: 123.45 });
+  f.db.sqlite.prepare("UPDATE sync_snapshots SET payload = ?, last_error = ?")
+    .run(JSON.stringify({ holdingSyncStates: { [f.product.id]: "error" }, holdingFallbacks: { [f.product.id]: "2026-10-05T00:00:00Z" } }), "synthetic RPC failure");
+  for (const manualKind of ["fixed", "limited", "flexible"]) {
+    const saved = await f.route.PUT(f.request({
+      holdings: {}, changedHoldingProductIds: [], changedOverrideProductIds: [f.product.id],
+      overrides: { [f.product.id]: { manualKind, apr: 6.73, firstTierUnlimited: true, termDays: 7, purchaseDate: "2026-10-01" } },
+    }));
+    assert.equal(saved.status, 200);
+    const read = await f.route.GET(new Request("https://local.test/private/api/holdings"));
+    const settings = (await read.json()).overrides[f.product.id];
+    assert.equal(settings.manualKind, manualKind);
+    assert.equal(settings.termDays, manualKind === "flexible" ? null : 7);
+    assert.equal(settings.purchaseDate, manualKind === "flexible" ? null : "2026-10-01");
+    assert.equal(f.amount(), 123.45);
+  }
+  const rejected = await f.route.PUT(f.request({
+    holdings: { [f.product.id]: 777 }, changedHoldingProductIds: [f.product.id], changedOverrideProductIds: [],
+  }));
+  assert.equal(rejected.status, 400);
+  assert.equal(f.amount(), 123.45);
+});

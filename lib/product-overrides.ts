@@ -29,7 +29,8 @@ export function applyProductOverride(product: Product, override?: ProductOverrid
   const needsManualApr = productNeedsManualApr(product);
   const needsManualLimit = productNeedsManualLimit(product);
   const useUnlimitedLimit = needsManualLimit && manualFirstTierIsUnlimited(product, override);
-  const manualKindChanged = productNeedsManualType(product) && override?.manualKind !== undefined;
+  const manualKindChanged = productNeedsManualType(product) && override?.manualKind !== undefined
+    && (override.manualKind !== null || product.productTypeStatus === "missing");
   const manualKind = manualKindChanged ? override!.manualKind ?? undefined : product.manualKind;
   const productType = manualKindChanged && manualKind
     ? manualKind === "fixed" ? "fixed" as const : "flexible" as const
@@ -85,7 +86,13 @@ export function productNeedsManualTerm(product: Product) {
 }
 
 export function productNeedsManualType(product: Product) {
-  return product.productTypeStatus === "missing";
+  return product.productTypeStatus === "missing" || hasEditableDefaultType(product);
+}
+
+/** Mixed-source product details may replace a known default without changing API holdings. */
+function hasEditableDefaultType(product: Product) {
+  return product.productDataMode === "manual" && product.holdingDataMode === "api"
+    && product.source.kind !== "demo" && productTypeIsResolved(product);
 }
 
 export function productTypeSelectionAvailable(
@@ -94,6 +101,7 @@ export function productTypeSelectionAvailable(
   hasHoldingFallback = false,
   syncFailed = false,
 ) {
+  if (hasEditableDefaultType(product)) return true;
   return productNeedsManualType(product)
     && product.holdingDataMode === "api"
     && holdingSyncState === "synced"
