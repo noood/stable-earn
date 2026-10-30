@@ -18,10 +18,14 @@ export function isLocalDevelopmentRequest(request: Request) {
     || hostname === "::1";
 }
 
-export const privateResponseHeaders = {
-  "Cache-Control": "private, no-store",
+export const securityResponseHeaders = {
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+} as const;
+
+export const privateResponseHeaders = {
+  ...securityResponseHeaders,
+  "Cache-Control": "private, no-store",
 } as const;

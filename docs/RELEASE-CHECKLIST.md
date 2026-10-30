@@ -7,7 +7,7 @@
 ## 1. 代码与功能
 
 - [ ] 合并前对应 PR 的 GitHub Actions `check` 和 `security-audit` 检查均通过；`check` 包含 lint、类型检查、离线测试和生产构建。检查尚未运行或结果不可访问时标为“未验证”，不要用本地结果冒充 GitHub 结果。
-- [ ] 核实 GitHub `main` 规则要求 PR 及 `CI / check`、`CI / security-audit` 通过，并已移除旧的 `CI / e2e` 必需状态；工作流文件本身只报告状态，不会自动阻止合并。
+- [ ] 核实 GitHub `main` 规则要求 PR 及 `CI` 工作流的 `check`、`security-audit` 通过，并已移除旧的 `e2e` 必需状态；工作流文件本身只报告状态，不会自动阻止合并。
 - [ ] 本地先跑与本次改动直接相关的快速检查（如对应的单元/接口测试或必要的静态检查）。UI 或用户行为改动要在本地运行相关 Playwright E2E；纯文档或不影响页面的改动通常不需要跑 E2E。生产部署前，在最终候选代码上完整跑一次本地 Playwright E2E。视觉改动需审阅本机 `darwin` 截图差异；确认是有意变化后再更新相应本地基准图。需要确认页面呈现时可手动查看 localhost。
 - [ ] PR 上由 GitHub Actions 统一运行 `npm run check` 和安全审计，不运行 Playwright E2E；不要求把完整 E2E 套件再提交到 GitHub 运行。E2E 结果以本地针对改动执行并审阅的测试为准。
 - [ ] 检查本次差异和未提交工作区，确认没有误带用户改动、调试路由、测试凭证或生成文件。

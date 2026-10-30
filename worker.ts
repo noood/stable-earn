@@ -1,5 +1,6 @@
 import handler from "vinext/server/fetch-handler";
 import { enqueueScheduledRefresh, consumeScheduledRefresh, type ScheduledSyncJob } from "@/lib/scheduled-sync";
+import { securityResponseHeaders } from "@/lib/request-security";
 
 type WorkerEnv = Cloudflare.Env & { SYNC_QUEUE: Queue<ScheduledSyncJob>; SCHEDULED_SYNC_ENABLED?: string };
 
@@ -7,18 +8,11 @@ function scheduledSyncEnabled(env: WorkerEnv) {
   return env.SCHEDULED_SYNC_ENABLED?.trim().toLowerCase() !== "false";
 }
 
-const securityHeaders = {
-  "Referrer-Policy": "no-referrer",
-  "X-Content-Type-Options": "nosniff",
-  "X-Frame-Options": "DENY",
-  "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-} as const;
-
 export default {
   async fetch(request: Request, env: WorkerEnv, context: ExecutionContext) {
     const response = await handler.fetch(request, env, context);
     const headers = new Headers(response.headers);
-    for (const [name, value] of Object.entries(securityHeaders)) headers.set(name, value);
+    for (const [name, value] of Object.entries(securityResponseHeaders)) headers.set(name, value);
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   },
   scheduled(controller: ScheduledController, env: WorkerEnv, context: ExecutionContext) {

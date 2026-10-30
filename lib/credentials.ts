@@ -13,7 +13,7 @@ export const credentialAccounts = [
   { id: "binance-bahrain", label: accountDisplayNames["binance-bahrain"], requiresPassphrase: false, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
   { id: "bybit-global", label: accountDisplayNames["bybit-global"], requiresPassphrase: false, syncDescription: "产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）；持仓自动同步" },
   { id: "bitget-global", label: accountDisplayNames["bitget-global"], requiresPassphrase: true, syncDescription: "自动同步四种资产的活期、定期产品、APR 与持仓" },
-  { id: "okx-global", label: accountDisplayNames["okx-global"], requiresPassphrase: true, syncDescription: "同步 USDT、USDC、BTC 活期持仓；每币种对应一条跟踪产品，成功完整回包缺少币种行按 0；产品 APR 需手动维护" },
+  { id: "okx-global", label: accountDisplayNames["okx-global"], requiresPassphrase: true, syncDescription: "同步 USDT、USDC、BTC 活期持仓；产品类型、APR 与额度手动维护" },
 ] as const;
 
 export const manualDataAccounts = [
