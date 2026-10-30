@@ -18,7 +18,8 @@ async function openFixedPrivatePreview(page, viewport) {
   await page.clock.setFixedTime(new Date(visualPreviewAt));
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
   await page.goto(`/private?previewAt=${encodeURIComponent(visualPreviewAt)}`);
-  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+  // Dev compilation/bootstrap has a separate budget from short interaction assertions.
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false", { timeout: 10_000 });
   await expect(page.locator("tr.product-row").first()).toBeVisible();
   await waitForVisualAssets(page);
 }
@@ -143,7 +144,7 @@ test("an unknown API quota shows a red warning instead of unlimited capacity", a
   await expect(row).toBeVisible();
   await expect(row.locator(".product-meta-danger")).toContainText("首档额度未获取，不参与收益计算");
   await expect(page.locator(".sync-notice-message")).toContainText("Fixed Saving · 7 天 · APR 边界 · 首档额度未获取");
-  await expect(row).toContainText("申购额度 · 上限未获取");
+  await expect(row).toContainText("申购额度 上限未获取");
   await expect(row).not.toContainText("不限额");
 });
 
@@ -268,8 +269,7 @@ for (const fixture of [
       await route.fulfill({ response, json: payload });
     });
 
-    await page.goto("/private");
-    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    await openFixedPrivatePreview(page, { width: 1280, height: 900 });
     const row = page.locator("tr.product-row").filter({ hasText: fixture.account })
       .filter({ has: page.locator(".product-rate-headline").filter({ hasText: "9.87%" }) });
     const selectType = async (label) => {
@@ -1195,7 +1195,7 @@ test("mouse history remains transient when the pointer leaves during loading", a
 });
 
 test("three local Bybit USDT products separately preview history failure, pagination, and more-page failure", async ({ page }) => {
-  await page.goto("/private");
+  await openFixedPrivatePreview(page, { width: 1280, height: 900 });
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
 
   const initialFailureRow = page.getByRole("row").filter({ hasText: "Bybit Global" }).filter({ hasText: "8.80%" });
@@ -1233,23 +1233,28 @@ test("three local Bybit USDT products separately preview history failure, pagina
   await retry.click();
   const retryLoading = dialog.getByRole("button", { name: "加载中…" });
   await expect(retryLoading).toBeDisabled();
-  expect(await retryLoading.evaluate((button) => button.classList.contains("product-history-error"))).toBe(false);
-  expect(await retryLoading.evaluate((button) => button.classList.contains("product-history-loading-state"))).toBe(true);
-  const loadingColor = await retryLoading.evaluate((button) => getComputedStyle(button).color);
-  const dangerColor = await page.locator("html").evaluate((element) => {
-    const value = getComputedStyle(element).getPropertyValue("--danger-text").trim();
+  // Read the transient loading style atomically before the 450ms preview settles.
+  const retryStyle = await retryLoading.evaluate((button) => {
+    const value = getComputedStyle(document.documentElement).getPropertyValue("--danger-text").trim();
     const rgb = value.match(/^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i);
     if (!rgb) throw new Error("Unexpected danger color token");
-    return `rgb(${parseInt(rgb[1], 16)}, ${parseInt(rgb[2], 16)}, ${parseInt(rgb[3], 16)})`;
+    return {
+      error: button.classList.contains("product-history-error"),
+      loading: button.classList.contains("product-history-loading-state"),
+      color: getComputedStyle(button).color,
+      danger: `rgb(${parseInt(rgb[1], 16)}, ${parseInt(rgb[2], 16)}, ${parseInt(rgb[3], 16)})`,
+    };
   });
-  expect(loadingColor).not.toBe(dangerColor);
+  expect(retryStyle.error).toBe(false);
+  expect(retryStyle.loading).toBe(true);
+  expect(retryStyle.color).not.toBe(retryStyle.danger);
   await expect(dialog.locator(".product-history-loading")).toHaveCount(0);
   await expect(dialog.locator(".product-history-event")).toHaveCount(3);
   await expect(dialog.getByRole("button", { name: "加载更早记录" })).toHaveCount(0);
 
   // Keep each local fixture isolated: a hover bubble intentionally stays open
   // while the pointer is over its contents so its paging controls remain usable.
-  await page.goto("/private");
+  await openFixedPrivatePreview(page, { width: 1280, height: 900 });
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
   const paginationRow = page.getByRole("row").filter({ hasText: "Bybit Global" }).filter({ hasText: "6.00%" });
   await paginationRow.getByRole("button", { name: "查看变更记录" }).hover();
@@ -1268,7 +1273,7 @@ test("three local Bybit USDT products separately preview history failure, pagina
   await expect(paginationDialog.locator(".product-history-loading")).toHaveCount(0);
   await expect(paginationDialog.locator(".product-history-event")).toHaveCount(6);
 
-  await page.goto("/private");
+  await openFixedPrivatePreview(page, { width: 1280, height: 900 });
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
   const moreErrorRow = page.getByRole("row").filter({ hasText: "Bybit Global" }).filter({ hasText: "5.90%" });
   await moreErrorRow.getByRole("button", { name: "查看变更记录" }).hover();

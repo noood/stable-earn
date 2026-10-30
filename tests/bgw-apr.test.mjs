@@ -32,7 +32,7 @@ test("manual APR reuses an explicitly unlimited tier under the selected product 
   assert.equal(p.tiers[0].max, null);
   assert.equal(p.tiers[0].maxStatus, "unlimited");
   assert.equal(p.capacityStatus, "available");
-  assert.equal(rateHeadlineFor(p).label, "不限额");
+  assert.equal(rateHeadlineFor(p).label, "首档 不限额");
   assert.equal(rateHeadlineFor(p).value, "6.73%");
 });
 
@@ -79,5 +79,5 @@ test("manual APR parser accepts manual quota and ignores hidden lifecycle edits"
 test("an obsolete APY marker cannot reinstate compound conversion for the manual BGW rate", () => {
   const p = { ...product(6.72), rateBasis: "apy" };
   assert.equal(effectiveApr(p, 10000), 6.72);
-  assert.equal(rateHeadlineFor(p).label, "不限额");
+  assert.equal(rateHeadlineFor(p).label, "首档 不限额");
 });

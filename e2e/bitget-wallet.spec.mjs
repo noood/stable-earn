@@ -56,9 +56,9 @@ async function installLocalBgwPreview(page, { product = bgwProduct(), manualApr 
       payload.failures = [];
       payload.partial = false;
     }
-    payload.products.push(product);
+    payload.products = [...payload.products.filter((item) => item.id !== productId), product];
     payload.holdingUpdates[productId] = holdingAmount();
-    payload.holdingSourceIds.push(productId);
+    if (!payload.holdingSourceIds.includes(productId)) payload.holdingSourceIds.push(productId);
     payload.holdingSyncStates[productId] = cached ? "error" : "synced";
     if (cached) {
       payload.holdingFallbacks[productId] = sourceAt;
@@ -119,7 +119,7 @@ for (const width of [1280, 375]) {
     await expect(row.locator("td").first()).toContainText("活期理财");
     await expect(row.locator("td").first()).not.toContainText("Morph");
     await expect(row.locator("td").first()).not.toContainText("Gauntlet");
-    await expect(row.locator(".product-rate-headline")).toContainText("不限额");
+    await expect(row.locator(".product-rate-headline")).toContainText("首档 不限额");
     await expect(row.locator(".product-rate-headline")).toContainText("6.73%");
     await expect(row).not.toContainText("手动填写");
     await expect(row).not.toContainText("Dune");
@@ -253,23 +253,23 @@ test("failed manual APR save keeps the draft for retry and cancel restores the s
   await expect(row.locator(".holding-summary")).toContainText("持仓 123.45");
 });
 
-test("the actual local BGW preview supports manual APR editing without mocked product responses", async ({ page }) => {
-  await page.goto("/private?asset=USDC&syncScenario=bgw");
+test("the default local USDC preview includes BGW and saves manual APR without mocked product responses", async ({ page }) => {
+  await page.goto("/private?asset=USDC");
   await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
   const row = page.locator("tr.product-row").filter({ hasText: "Bitget Wallet" });
   await expect(row).toHaveCount(1);
   await expect(row.locator(".holding-summary")).toContainText("持仓 123.45");
-  await expect(row.locator(".product-rate-headline")).toContainText("APR 待填写");
+  await expect(row.locator(".product-rate-headline")).toContainText("6.72%");
   await page.getByRole("button", { name: "编辑持仓", exact: true }).click();
-  await row.getByRole("textbox", { name: "APR", exact: true }).fill("6.72");
+  await row.getByRole("textbox", { name: "APR", exact: true }).fill("7.25");
   await page.getByRole("button", { name: "保存持仓", exact: true }).click();
   await expect(page.getByRole("button", { name: "编辑持仓", exact: true })).toBeVisible();
-  await expect(row.locator(".product-rate-headline")).toContainText("6.72%");
+  await expect(row.locator(".product-rate-headline")).toContainText("7.25%");
   const manualNote = row.locator(".product-meta").filter({ hasText: "手动填写" });
   await expect(manualNote).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
-  await expect(row.locator(".product-rate-headline")).toContainText("6.72%");
+  await expect(row.locator(".product-rate-headline")).toContainText("7.25%");
   await expect(manualNote).toHaveCount(0);
   await expect(row.locator(".holding-summary")).toContainText("持仓 123.45");
 });
@@ -600,7 +600,7 @@ for (const width of [1280, 375]) {
     await expect(row).not.toContainText("首档额度待填写");
     await expect(field).toHaveScreenshot(`quota-limited-field-${width}.png`, { animations: "disabled" });
     await page.getByRole("button", { name: "取消", exact: true }).click();
-    await expect(row.locator(".product-rate-headline")).toContainText("不限额");
+    await expect(row.locator(".product-rate-headline")).toContainText("首档 不限额");
     expect(requests.saves).toHaveLength(0);
 
     await edit();

@@ -5,7 +5,7 @@ import type { HoldingMap, HoldingSyncState } from "@/lib/domain";
 import { productNeedsManualLimit, productNeedsManualType, productTypeSelectionAvailable, type ProductOverrideMap } from "@/lib/product-overrides";
 import { parseProductOverride } from "@/lib/product-override-input";
 import { loadUserProducts, prepareUserProductStatements, productToUserProduct, sanitizeUserProducts, userProductInputToProduct } from "@/lib/user-products";
-import { delayLocalPreviewScenario, isLocalPreviewRequest, localPreviewTime, localPrivateHoldingsPreview } from "@/lib/local-preview";
+import { delayLocalPreviewScenario, isLocalPreviewRequest, isLocalSyncStateScenario, localPreviewTime, localPrivateHoldingsPreview } from "@/lib/local-preview";
 import { loadCatalogProducts } from "@/lib/product-catalog";
 import { loadPrivateHoldingsSnapshot } from "@/lib/private-holdings-snapshot";
 import { withStartupServerTiming, type StartupServerTiming } from "@/lib/startup-timing";
@@ -38,7 +38,7 @@ async function getHoldings(request: Request, timing: StartupServerTiming) {
       if (scenario === "both-read-error") await delayLocalPreviewScenario(request, scenario);
       return NextResponse.json({ error: "本地模拟：个人数据读取失败" }, { status: 503, headers: privateResponseHeaders });
     }
-    return NextResponse.json(scenario && scenario !== "api-dates" && scenario !== "bgw"
+    return NextResponse.json(isLocalSyncStateScenario(scenario)
       ? { holdings: {}, overrides: {}, manualProducts: [], hiddenProductIds: [], found: false }
       : localPrivateHoldingsPreview(localPreviewTime(request.url), scenario === "api-dates"), { headers: privateResponseHeaders });
   }
