@@ -14,6 +14,10 @@ updates:
         patterns:
           - "tailwindcss"
           - "@tailwindcss/*"
+      vinext:
+        patterns:
+          - "vinext"
+          - "@vinext/*"
   - package-ecosystem: github-actions
     directory: /
     schedule:

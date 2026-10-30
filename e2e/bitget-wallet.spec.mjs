@@ -103,7 +103,8 @@ async function installLocalBgwPreview(page, { product = bgwProduct(), manualApr 
 
 async function openBgwPreview(page) {
   await page.goto(`/private?asset=USDC&previewAt=${encodeURIComponent(previewAt)}`);
-  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+  // Match the main preview helper's budget for local compilation and fixture reads.
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false", { timeout: 10_000 });
   const row = page.locator("tr.product-row").filter({ hasText: "Bitget Wallet" });
   await expect(row).toHaveCount(1);
   await expect(row.locator(".holding-summary")).toContainText("持仓 123.45");
@@ -127,7 +128,7 @@ for (const width of [1280, 375]) {
     await expect(row).not.toContainText("含奖励的整体 APR，按日复利折算预估收益。");
     await expect(row.locator(".product-meta-danger").filter({ hasText: "额度" })).toHaveCount(0);
     await expect(row).not.toContainText("不参与收益计算");
-    await expect(row.locator(".holding-summary")).toContainText("持仓 123.45 / 不限额");
+    await expect(row.locator(".holding-summary")).toContainText("持仓 123.45 / 首档 不限额");
     await expect(row.getByRole("progressbar")).toHaveCount(0);
     await expect(row.locator("td").nth(3)).toHaveText(`${referenceApr.toFixed(2)}%`);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -634,7 +635,7 @@ for (const width of [1280, 375]) {
     expect(requests.saves.at(-1).overrides[productId]).toMatchObject({ firstTierLimit: null, firstTierUnlimited: true });
     await page.reload();
     await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
-    await expect(row.locator(".holding-summary")).toContainText("持仓 123.45 / 不限额");
+    await expect(row.locator(".holding-summary")).toContainText("持仓 123.45 / 首档 不限额");
     await expect(row.getByRole("textbox", { name: "USDC 产品持仓" })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });

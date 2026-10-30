@@ -196,7 +196,7 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
       ? (holdingCacheNote ? <HoldingSummary muted compact cacheNote={holdingCacheNote} /> : null)
       : <HoldingSummary compact label={holdingLabel()} cacheNote={holdingCacheNote} />;
   } else if (firstTierCapacity === null) {
-    summary = <HoldingSummary compact label={holdingLabel("不限额")} cacheNote={holdingCacheNote} />;
+    summary = <HoldingSummary compact label={holdingLabel(`${capacityLabel} 不限额`)} cacheNote={holdingCacheNote} />;
   } else {
     const remainingLabel = !typeResolved ? "首档剩余" : isFixed ? "还可申购" : "还可放";
     const note = overflow > 0
