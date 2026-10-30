@@ -7,7 +7,7 @@ const { effectiveApr } = load("@/lib/domain");
 const { bitgetWalletRate } = load("@/lib/bitget-wallet-product");
 const { productInformationIssues, productParticipatesInInterest } = load("@/lib/product-status");
 const { rateHeadlineFor } = load("@/lib/product-rate-presentation");
-const { applyProductOverride, productNeedsManualLimit } = load("@/lib/product-overrides");
+const { applyProductOverride, productNeedsManualLimit, productNeedsManualType, productOverrideForSave, productTermDays, productTypeSelectionAvailable } = load("@/lib/product-overrides");
 const { parseProductOverride } = load("@/lib/product-override-input");
 
 function product(apr = 6.73) {
@@ -80,4 +80,42 @@ test("an obsolete APY marker cannot reinstate compound conversion for the manual
   const p = { ...product(6.72), rateBasis: "apy" };
   assert.equal(effectiveApr(p, 10000), 6.72);
   assert.equal(rateHeadlineFor(p).label, "首档 不限额");
+});
+
+test("BGW retains its flexible default for legacy settings and permits editing independently of RPC status", () => {
+  const base = product();
+  for (const manualKind of [undefined, null]) {
+    const resolved = applyProductOverride(base, { apr: 6.73, firstTierUnlimited: true, manualKind });
+    assert.equal(resolved.productType, "flexible");
+    assert.equal(resolved.productTypeStatus, "known");
+    assert.equal(productTermDays(resolved), null);
+  }
+  assert.equal(productNeedsManualType(base), true);
+  assert.equal(productTypeSelectionAvailable(base, "error", true, true), true);
+  // A type returned by a product API remains owned by that API.
+  const apiProduct = { ...base, productDataMode: "api" };
+  assert.equal(productNeedsManualType(apiProduct), false);
+  assert.equal(productTypeSelectionAvailable(apiProduct, "synced"), false);
+});
+
+test("BGW selected types reuse term validation and save cleanup and survive a fresh catalog default", () => {
+  const base = product();
+  for (const manualKind of ["fixed", "limited"]) {
+    const input = { manualKind, apr: 6.73, firstTierUnlimited: true, termDays: 7, purchaseDate: "2026-10-01" };
+    const parsed = parseProductOverride(base, input);
+    const resolved = applyProductOverride(product(), parsed);
+    assert.equal(resolved.manualKind, manualKind);
+    assert.equal(resolved.productType, manualKind === "fixed" ? "fixed" : "flexible");
+    assert.equal(resolved.productTypeStatus, "manual");
+    assert.equal(productTermDays(resolved), 7);
+    assert.equal(productParticipatesInInterest(resolved, 123, parsed), true);
+    assert.equal(parseProductOverride(base, { ...input, termDays: 0 }), null);
+    assert.equal(parseProductOverride(base, { ...input, purchaseDate: "2026-02-30" }), null);
+    const draft = { ...parsed, manualKind: "flexible" };
+    const saved = productOverrideForSave(base, draft);
+    assert.equal(saved.termDays, null);
+    assert.equal(saved.purchaseDate, null);
+    assert.equal(draft.termDays, 7);
+    assert.equal(draft.purchaseDate, "2026-10-01");
+  }
 });

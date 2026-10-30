@@ -22,13 +22,14 @@ export function ProductRow({ product, baseProduct, manualSettings, holdingTiming
   const account = accounts.find((item) => item.id === product.accountId)!;
   const hasApiTiming = hasCompletePurchaseTiming(holdingTiming, holding);
   const productInfoIssues = productInformationIssues(product, manualSettings, hasApiTiming, holdingAvailable && holding > 0);
+  const selectedKind = productTypeIsResolved(product) ? product.manualKind ?? product.productType : "";
   return (
     <tr className={`product-row ${!editing && holdingAvailable && holding <= 0 ? "product-row-empty" : ""}`}>
       <TableCell>
         {editing && manualProduct
           ? <ManualProductIdentityEditor product={baseProduct} account={account} disabled={saving} onChange={onManualProductChange} onDelete={onDelete} />
           : <div className="flex items-center gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div>{editing && productNeedsManualType(baseProduct) && typeSelectionAvailable
-            ? <InlineSelect className={`inline-select-trigger-secondary ${manualSettings?.manualKind ? "" : "text-danger font-semibold"}`} ariaLabel="产品类型" value={manualSettings?.manualKind ?? ""} emptyValueLabel="产品类型未知" options={productKindOptions} disabled={saving} onChange={(value) => onOverrideChange({ manualKind: value as ProductKind })} />
+            ? <InlineSelect className={`inline-select-trigger-secondary ${selectedKind ? "" : "text-danger font-semibold"}`} ariaLabel="产品类型" value={selectedKind} emptyValueLabel="产品类型未知" options={productKindOptions} disabled={saving} onChange={(value) => onOverrideChange({ manualKind: value as ProductKind })} />
             : <div className={`type-caption mt-0.5 max-w-[220px] whitespace-normal break-words ${productTypeIsResolved(product) ? "text-muted" : "text-danger font-semibold"}`}>{standardProductName(product)}</div>}{editing && !manualProduct && <button type="button" className="manual-product-delete text-danger type-caption" disabled={saving || apiDeleteDisabled} title={apiDeleteDisabledReason} onClick={onDelete}>移除产品</button>}</div></div>}
       </TableCell>
       <TableCell><ProductTierSummary product={product} baseProduct={baseProduct} manualSettings={manualSettings} holdingTiming={holdingTiming} holding={holding} editing={editing} saving={saving} manualProduct={manualProduct} rateFallbackAt={rateFallbackAt} onOverrideChange={onOverrideChange} onManualProductChange={onManualProductChange} /></TableCell>

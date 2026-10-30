@@ -138,6 +138,7 @@ for (const width of [1280, 375]) {
     await expect(row.getByRole("button", { name: "APR说明", exact: true })).toHaveCount(0);
 
     await page.getByRole("button", { name: "编辑持仓" }).click();
+    await expect(row.getByRole("combobox", { name: "产品类型", exact: true })).toHaveText("活期理财");
     await expect(row.locator(".holding-editor-readonly")).toContainText("123.45");
     await expect(row.getByRole("textbox", { name: "USDC 产品持仓" })).toHaveCount(0);
     await expect(row.getByRole("textbox", { name: "APY", exact: true })).toHaveCount(0);
@@ -640,6 +641,43 @@ for (const width of [1280, 375]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
 }
+
+test("BGW manual type choices save and reload while cached chain holdings stay read-only", async ({ page }) => {
+  const requests = await installLocalBgwPreview(page, { cached: true });
+  const row = await openBgwPreview(page);
+  const selectType = async (label) => {
+    const control = row.getByRole("combobox", { name: "产品类型", exact: true });
+    await control.scrollIntoViewIfNeeded();
+    await control.click();
+    const menu = page.getByRole("listbox", { name: "产品类型", exact: true });
+    await expect(menu.getByRole("option")).toHaveCount(3);
+    await menu.getByRole("option", { name: label, exact: true }).click();
+  };
+  for (const [manualKind, label, termLabel] of [["fixed", "定期理财", "锁定期限"], ["limited", "限时活期", "活动期限"], ["flexible", "活期理财", null]]) {
+    await page.getByRole("button", { name: "编辑持仓", exact: true }).click();
+    await selectType(label);
+    if (termLabel) {
+      await row.getByRole("textbox", { name: termLabel, exact: true }).fill("7");
+      await row.getByRole("button", { name: "买入日", exact: true }).click();
+      await page.getByRole("dialog", { name: "选择买入日", exact: true }).getByRole("button", { name: "今天", exact: true }).click();
+    } else {
+      await expect(row.getByRole("textbox", { name: /活动期限|锁定期限/ })).toHaveCount(0);
+      await expect(row.getByRole("button", { name: "买入日", exact: true })).toHaveCount(0);
+    }
+    await expect(row.locator(".holding-editor-readonly")).toContainText("123.45");
+    await expect(row.getByRole("textbox", { name: "USDC 产品持仓", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "保存持仓", exact: true }).click();
+    await expect(page.getByRole("button", { name: "编辑持仓", exact: true })).toBeVisible();
+    expect(requests.saves.at(-1).overrides[productId]).toMatchObject({
+      manualKind, termDays: termLabel ? 7 : null, purchaseDate: termLabel ? "2026-10-06" : null,
+    });
+    await page.reload();
+    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    await expect(row.locator("td").first()).toContainText(label);
+    await expect(row.locator(".holding-summary")).toContainText("持仓 123.45");
+    await expect(row).not.toContainText("不参与收益计算");
+  }
+});
 
 test("existing OKX manual quota uses the same menu without adding it to API-owned products", async ({ page }) => {
   await page.goto("/private?asset=USDC");

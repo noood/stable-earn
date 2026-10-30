@@ -123,7 +123,7 @@ test("zero BGW APR is a valid known value and clearing returns to APR pending", 
   } finally { f.close(); }
 });
 
-test("manual BGW quota can be edited while wallet balance and known product type stay API-owned", async () => {
+test("BGW quota and type are user-maintained while wallet balance stays API-owned", async () => {
   const f = await fixture();
   try {
     const accepted = await f.save(6.72, { firstTierLimit: 999999, firstTierUnlimited: false, termDays: 365, purchaseDate: "2026-01-01", manualKind: "fixed" });
@@ -133,9 +133,15 @@ test("manual BGW quota can be edited while wallet balance and known product type
     assert.equal(override.apr, 6.72);
     assert.equal(override.firstTierLimit, 999999);
     assert.equal(override.firstTierUnlimited, false);
-    assert.equal(override.termDays, null);
-    assert.equal(override.purchaseDate, null);
-    assert.equal(override.manualKind, null);
+    assert.equal(override.termDays, 365);
+    assert.equal(override.purchaseDate, "2026-01-01");
+    assert.equal(override.manualKind, "fixed");
+    const resolved = f.load("@/lib/product-overrides").applyProductOverride(read.products[0], override);
+    assert.equal(resolved.productType, "fixed");
+    assert.equal(resolved.productTypeStatus, "manual");
+    assert.equal(resolved.termDays, 365);
+    assert.equal(resolved.tiers[0].max, 999999);
+    // User settings override the catalog default without rewriting that default.
     assert.equal(read.products[0].productType, "flexible");
     assert.equal(read.products[0].tiers[0].max, null);
     assert.equal(read.products[0].tiers[0].maxStatus, undefined);
