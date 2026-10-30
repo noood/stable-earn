@@ -13,6 +13,24 @@
 - `public/GitHub_Lockup_Black_Clearspace.svg` 是页脚指向项目源码仓库的 GitHub 组合标识。使用时参考 [GitHub 官方品牌规范](https://brand.github.com/foundations/logo)和[GitHub Logo Policy](https://docs.github.com/en/site-policy/other-site-policies/github-logo-policy)；该标识用于指示 GitHub 仓库，不表示 GitHub 认可本项目，也不表示项目许可证覆盖 GitHub 的名称或商标。
 - `public/usdgo.svg` 是 USDGO 标识，页面将其用作资产图标。用户于 2026-10-21 确认来源为 [USDGO 官网](https://www.usdgo.com/)；具体原始素材 URL 尚未核实。已从官网页脚打开并读取 [Terms and Conditions](https://static.usdgo.com/static/assets/pdf/terms.pdf)（标注 January 2026）：第 4 条仅授予个人、信息用途的网站访问使用许可，未经同意不得修改、复制、抓取或制作网站衍生内容，相关标识权利属于 OSL Group 或其许可方。该条款不是对本项目再分发图标的明确授权；仅注明来源不能补足授权。公开分发前应取得适用许可，或经用户同意改用不复制官方标识的通用占位图形/资产文字；不能仅换个下载网站就认为权利问题已解决。这是发布风险处理建议，不是对具体使用是否构成侵权的法律定性。
 
+### 平台图标
+
+以下素材来源已于 2026-10-31 核对，文件存放在 `public/platforms/`。应用使用 132×132 WebP，供现有 44px 徽标在高像素密度屏幕显示；不重绘标识。Bitget 使用官方品牌包的平面黑色图形与包内青色底色（`#00F0FF`），Bybit EU 使用用户指定的 Google Play 方形图；均不带 App Store 的高光或圆角效果。外层圆角统一由页面样式控制。
+
+| 本地文件 | 标识 | 官方来源 |
+|---|---|---|
+| `binance.webp` | Binance（Global / Bahrain 共用） | [Binance GitHub](https://github.com/binance)组织头像 |
+| `bybit.webp` | Bybit Global | [Bybit GitHub](https://github.com/bybit-exchange)组织头像 |
+| `bybit-eu.webp` | Bybit EU | [用户指定的 Google Play 图片](https://play-lh.googleusercontent.com/DkPOKimrbh3RtDUj69dNGDtiAdXbw60SsZMwuEfIzKMaOT0Gq8uEqlZtrjVZXFIx_w2Cfme2uZY8qqHN4-aYng=w480-h960-rw) |
+| `bitget.webp` | Bitget | [官方品牌素材公告](https://www.bitget.com/support/articles/12560603882517)中的 [Bitget Brand Logos](https://www.bitget.com/cdnstatic/files/bg-logo-v1.zip)，`PNG/Icon/icon_black.png` |
+| `bitget-wallet.webp` | Bitget Wallet | [官方 Logo 素材仓库](https://github.com/bitgetwallet/download/blob/main/logo/png/Bitget%20Wallet-Logomark.png) |
+| `okx.webp` | OKX | [OKX GitHub](https://github.com/okx)组织头像 |
+| `mexc.webp` | MEXC（PH / UK 共用） | [官方品牌规范](https://www.mexc.com/brand-guidelines)的 [MEXC Blue 图形标识](https://static.mocortech.com/image-host/index/logo-mark-blue.be49f05b5908.webp)；保留比例，居中留白后在 44px 方框中显示约 28px 宽 |
+
+各图标仅用于平台身份识别，不表示合作或背书；版权及商标权归各自权利人，不适用本项目的 PolyForm 许可证。项目选择保留这些标识；适用于本项目再分发的授权条款仍**待确认**，作为已知许可风险维护，不将官方来源或可下载素材等同于获得授权。
+
+MEXC 品牌页另明确要求品牌素材不得改动，活动、宣传材料或公告等使用需事先批准，且限制品牌素材用于描述官方关系、不得暗示其背书；页面下载入口不构成对本项目的授权。
+
 ## 实际打包的 JavaScript 与许可材料
 
 Vite 原生许可报告依据实际输出 chunk 的模块来源识别包，而非将 lockfile 的 635 个条目全部计为浏览器分发物。当前客户端和 SSR 报告均含下表前 10 个包，RSC 服务端报告含 6 个包（其中 `jose` 不在客户端）；三者去重合计 11 个包。各包自身元数据均为 MIT；这不代表包内复制的第三方代码也可忽略其独立声明。

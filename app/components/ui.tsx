@@ -17,7 +17,9 @@ export function CheckIcon({ className }: { className?: string }) {
 }
 
 export function AccountBadge({ account }: { account: Account }) {
-  return <span className="account-badge" title={account.name} style={{ backgroundColor: account.color, color: account.foreground }}>{account.mark}</span>;
+  // Small local brand assets need no image optimizer; the adjacent text names the account.
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img className="account-badge" src={account.logo} alt="" aria-hidden="true" title={account.name} width={44} height={44} decoding="async" />;
 }
 
 export function Metric({ label, value, note, highlight = false, valueTone = "default" }: { label: string; value: string; note: string; highlight?: boolean; valueTone?: "default" | "danger" }) {

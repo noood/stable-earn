@@ -1401,6 +1401,13 @@ for (const viewport of [
     const dialog = page.getByRole("dialog", { name: "数据源设置" });
     await expect(dialog.locator(".api-connection-list").first().locator(".api-connection-row")).toHaveCount(8);
     await waitForVisualAssets(page);
+    const platformLogos = dialog.locator(".account-badge");
+    await expect(platformLogos).toHaveCount(9);
+    expect(await platformLogos.evaluateAll((images) => images.every((image) => image.complete
+      && image.naturalWidth === 132 && image.naturalHeight === 132
+      && new URL(image.currentSrc).origin === location.origin
+      && image.getBoundingClientRect().width === 44 && image.getBoundingClientRect().height === 44))).toBe(true);
+    await expect(dialog.locator(".api-connection-row").filter({ hasText: "Bybit EU" }).locator(".account-badge")).toHaveAttribute("src", "/platforms/bybit-eu.webp");
     await expect(page).toHaveScreenshot(`private-settings-top-${viewport.name}.png`, {
       animations: "disabled", caret: "hide",
     });

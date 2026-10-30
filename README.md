@@ -33,7 +33,7 @@ npm run dev
 | 修改界面或排查问题 | [设计规范](docs/DESIGN-SYSTEM.md)、[诊断说明](docs/DIAGNOSTICS.md) |
 | 核对交易所 API 或准备发布 | [平台能力与核验依据](docs/PLATFORM-CAPABILITIES.md)、[发布清单](docs/RELEASE-CHECKLIST.md) |
 
-使用、开发与部署步骤各自在对应指南维护；业务规则、设计规则和接口证据分别维护。调研与待办用于保留依据和计划：[Morph USDC 收益率调研](docs/research/BITGET-WALLET-MORPH-USDC.md)、[Cloudflare 分支预览计划（尚未实施）](docs/PREVIEW-ENVIRONMENT-PLAN.md)。
+使用、开发与部署步骤各自在对应指南维护；业务规则、设计规则和接口证据分别维护。
 
 ## 安全与许可证
 

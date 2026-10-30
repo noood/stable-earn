@@ -363,7 +363,7 @@ for (const width of [1280, 375]) {
     await page.getByRole("button", { name: "数据源设置", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "数据源设置", exact: true });
     const walletRow = dialog.locator(".api-connection-row").filter({ hasText: "Bitget Wallet" });
-    await expect(walletRow.locator(".account-badge")).toHaveText("BW");
+    await expect(walletRow.locator(".account-badge")).toHaveAttribute("src", "/platforms/bitget-wallet.webp");
     await expect(walletRow.getByText("Morph 链", { exact: true })).toBeVisible();
     await expect(walletRow.getByText("Morph 链", { exact: true })).toHaveCSS("margin-top", "4px");
     await expect(walletRow).not.toContainText("整体 APR");
