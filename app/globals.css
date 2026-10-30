@@ -202,7 +202,6 @@ input:focus-visible,
   text-align: left;
   text-decoration: none;
 }
-.menu-item + .menu-item-leading { margin-top: var(--space-1); }
 .menu-item-refresh { display: block; }
 .menu-item-refresh-note { display: block; margin-top: var(--space-1); color: var(--text-muted); font-size: var(--type-micro); font-weight: 400; line-height: var(--leading-micro); white-space: normal; }
 .menu-item-compact { padding-block: var(--space-2); font-size: var(--type-caption); line-height: var(--leading-caption); }
@@ -281,8 +280,7 @@ input:focus-visible,
 .muted-panel { background: var(--surface-muted); color: var(--text-secondary); }
 .error-panel { background: var(--danger-surface); color: var(--danger-text); }
 .api-feedback-panel { padding: var(--space-control) var(--space-3); }
-.surface-popover,
-.inline-select-menu { border: var(--hairline) solid var(--border-strong); border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow-dialog); }
+.surface-popover { border: var(--hairline) solid var(--border-strong); border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow-dialog); }
 .progress-track { height: var(--progress-height); overflow: hidden; border-radius: var(--radius-pill); background: var(--surface-muted); }
 .progress-fill { height: 100%; border-radius: inherit; background: var(--brand-muted); }
 .asset-switch { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; touch-action: pan-x; overscroll-behavior-x: contain; }
@@ -389,7 +387,7 @@ input:focus-visible,
   font-size: var(--type-caption);
   line-height: var(--leading-caption);
 }
-.manual-field-control { justify-content: flex-end; gap: var(--space-1); color: var(--text-muted); }
+.manual-field-control { position: relative; justify-content: flex-end; gap: var(--space-1); color: var(--text-muted); }
 .manual-field-control-disabled,
 .manual-date-trigger:disabled {
   cursor: not-allowed;
@@ -438,6 +436,9 @@ input:focus-visible,
 .inline-select-trigger:hover:not(:disabled) { color: var(--brand); }
 .inline-select-trigger:focus-visible { border-radius: var(--radius-sm); box-shadow: 0 0 0 var(--focus-ring-width) var(--focus); }
 .inline-select-trigger:disabled { cursor: not-allowed; opacity: .55; }
+.inline-select-trigger-icon { flex: 0 0 auto; align-self: stretch; padding: 0; color: var(--text-secondary); }
+.inline-select-trigger-icon::before { height: var(--space-3); flex: 0 0 auto; border-left: 1px solid var(--border-strong); content: ""; }
+.manual-field-control .inline-select-trigger:focus-visible { box-shadow: none; }
 .manual-identity-fields {
   display: grid;
   justify-items: start;
@@ -461,9 +462,11 @@ input:focus-visible,
   position: fixed;
   z-index: 80;
   display: grid;
-  min-width: 11rem;
+  width: max-content;
+  max-width: calc(100vw - var(--space-6));
   overflow-y: auto;
   padding: var(--button-small-padding-y);
+  max-height: calc(100vh - var(--space-6));
 }
 .inline-select-menu [role="option"] {
   display: flex;
@@ -476,7 +479,7 @@ input:focus-visible,
   border-radius: var(--button-small-radius);
   background: transparent;
   padding: var(--space-2) var(--space-3);
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font: inherit;
   font-size: var(--type-caption);
   line-height: var(--leading-caption);
@@ -486,6 +489,8 @@ input:focus-visible,
 .inline-select-menu [role="option"][data-active="true"],
 .inline-select-menu [role="option"][aria-selected="true"] { background: var(--surface-subtle); color: var(--text-primary); }
 .inline-select-menu [role="option"][aria-selected="true"] { font-weight: 600; }
+.inline-select-menu [role="option"] > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inline-select-check { display: inline-flex; width: 1rem; flex: 0 0 1rem; align-items: center; justify-content: center; }
 .manual-date-trigger {
   cursor: pointer;
   justify-content: space-between;
@@ -496,6 +501,8 @@ input:focus-visible,
 .manual-date-trigger:hover:not(:disabled) { border-color: var(--brand-line); color: var(--brand); }
 .manual-date-trigger:disabled { opacity: 1; }
 .manual-date-trigger-empty { color: var(--text-muted); font-weight: 400; }
+.inline-select-trigger-icon svg,
+.inline-select-check svg,
 .manual-date-trigger svg { width: 1rem; height: 1rem; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.4; }
 .calendar-popover {
   position: fixed;

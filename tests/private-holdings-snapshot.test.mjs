@@ -23,7 +23,7 @@ function seed(db, owner = "a") {
   db.sqlite.prepare(`INSERT INTO product_overrides
     (user_id,product_id,confirmed_apr,purchase_date,product_kind_override,updated_at)
     VALUES (?,'catalog',8,'2026-10-01','fixed','2026-10-01')`).run(owner);
-  db.sqlite.prepare("INSERT INTO product_override_limits VALUES (?,'catalog',300,'2026-10-01')").run(owner);
+  db.sqlite.prepare("INSERT INTO product_override_limits (user_id,product_id,first_tier_limit,updated_at) VALUES (?,'catalog',300,'2026-10-01')").run(owner);
   db.sqlite.prepare("INSERT INTO product_override_terms VALUES (?,'catalog',7,'2026-10-01')").run(owner);
   db.sqlite.prepare("INSERT INTO hidden_seed_products VALUES (?,'catalog','2026-10-01')").run(owner);
   db.sqlite.prepare("INSERT INTO hidden_products VALUES (?,'manual-test','2026-10-01')").run(owner);
@@ -54,7 +54,7 @@ test("holdings use one read-only batch with eight scoped statements and joined s
   assert.deepEqual(snapshot.positionRows.map((r) => ({ ...r })), [{ product_id: "catalog", amount: 30 }]);
   assert.deepEqual({ ...snapshot.overrideRows[0] }, {
     product_id: "catalog", confirmed_apr: 8, purchase_date: "2026-10-01", product_kind_override: "fixed",
-    updated_at: "2026-10-01", first_tier_limit: 300, term_days: 7,
+    updated_at: "2026-10-01", first_tier_limit: 300, first_tier_unlimited: null, term_days: 7,
   });
   assert.deepEqual(snapshot.hiddenSeedRows.map((r) => r.product_id), ["catalog"]);
   assert.deepEqual(snapshot.hiddenCatalogRows.map((r) => r.product_id), ["manual-test"]);

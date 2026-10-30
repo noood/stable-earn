@@ -23,10 +23,10 @@ async function fixture() {
     product = catalog.products[0];
     assert.equal(product.productDataMode, "manual");
     assert.equal(product.holdingDataMode, "api");
-    assert.equal(product.capacityStatus, "available");
+    assert.equal(product.capacityStatus, "unavailable");
     assert.equal(product.tierStructureStatus, "complete");
     assert.equal(product.tiers[0].max, null);
-    assert.equal(product.tiers[0].maxStatus, "unlimited");
+    assert.equal(product.tiers[0].maxStatus, undefined);
     db.sqlite.prepare("INSERT INTO holdings VALUES (?,?,?,?)").run(owner, product.id, amount, savedAt);
     db.sqlite.prepare(`INSERT INTO sync_snapshots (owner_id,cache_key,payload,updated_at)
       VALUES (?,'private-products',?,?)`).run(owner, JSON.stringify({
@@ -43,7 +43,7 @@ async function fixture() {
     user(value) { currentUser = value; },
     save(apr, extraOverride = {}, extraPayload = {}) {
       return route.PUT(request({ holdings: {}, changedHoldingProductIds: [], changedOverrideProductIds: [product.id],
-        overrides: { [product.id]: { apr, ...extraOverride } }, ...extraPayload }));
+        overrides: { [product.id]: { apr, firstTierLimit: null, firstTierUnlimited: true, ...extraOverride } }, ...extraPayload }));
     },
     async read() { return (await route.GET(new Request("https://test/private/api/holdings"))).json(); },
     savedApr(owner = currentUser) { return db.sqlite.prepare("SELECT confirmed_apr FROM product_overrides WHERE user_id=? AND product_id=?").get(owner, product.id)?.confirmed_apr; },
@@ -123,22 +123,23 @@ test("zero BGW APR is a valid known value and clearing returns to APR pending", 
   } finally { f.close(); }
 });
 
-test("a crafted APR override cannot alter the wallet balance, subscription capacity or product type", async () => {
+test("manual BGW quota can be edited while wallet balance and known product type stay API-owned", async () => {
   const f = await fixture();
   try {
-    const accepted = await f.save(6.72, { firstTierLimit: 999999, termDays: 365, purchaseDate: "2026-01-01", manualKind: "fixed" });
+    const accepted = await f.save(6.72, { firstTierLimit: 999999, firstTierUnlimited: false, termDays: 365, purchaseDate: "2026-01-01", manualKind: "fixed" });
     assert.equal(accepted.status, 200);
     const read = await f.read();
     const override = read.overrides[f.product.id];
     assert.equal(override.apr, 6.72);
-    assert.equal(override.firstTierLimit, null);
+    assert.equal(override.firstTierLimit, 999999);
+    assert.equal(override.firstTierUnlimited, false);
     assert.equal(override.termDays, null);
     assert.equal(override.purchaseDate, null);
     assert.equal(override.manualKind, null);
     assert.equal(read.products[0].productType, "flexible");
     assert.equal(read.products[0].tiers[0].max, null);
-    assert.equal(read.products[0].tiers[0].maxStatus, "unlimited");
-    assert.equal(read.products[0].capacityStatus, "available");
+    assert.equal(read.products[0].tiers[0].maxStatus, undefined);
+    assert.equal(read.products[0].capacityStatus, "unavailable");
     for (const badAmount of [0, 999, null]) {
       const rejected = await f.save(7.5, {}, { holdings: { [f.product.id]: badAmount }, changedHoldingProductIds: [f.product.id] });
       assert.equal(rejected.status, 400);

@@ -6,7 +6,7 @@ import { AccountBadge, HoldingSummary, TableCell } from "@/app/components/ui";
 import { HoldingInput, InlineSelect, ManualAprInput, ManualLimitInput, ManualTermInput } from "@/app/components/dashboard/product-inputs";
 import { PurchaseDateInput, parseCalendarDate } from "@/app/components/dashboard/purchase-date-input";
 import { effectiveApr, formatAmount, type Account, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent, type ProductHistorySummary, type ProductKind } from "@/lib/domain";
-import { dateOnlyFromTimestamp, formatShortDate, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsManualType, productNeedsManualPurchaseDate, productTermDays, productTermStatus, productTypeIsResolved, type ProductOverride } from "@/lib/product-overrides";
+import { dateOnlyFromTimestamp, formatShortDate, manualFirstTierIsUnlimited, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsManualType, productNeedsManualPurchaseDate, productTermDays, productTermStatus, productTypeIsResolved, type ProductOverride } from "@/lib/product-overrides";
 import { holdingSyncNote, productCapacityIsIncomplete, productInformationIssues, productInformationNote, type ProductInformationIssue } from "@/lib/product-status";
 import { apiFieldCapability } from "@/lib/api-capabilities";
 import { rateHeadlineFor } from "@/lib/product-rate-presentation";
@@ -27,7 +27,7 @@ export function ProductRow({ product, baseProduct, manualSettings, holdingTiming
       <TableCell>
         {editing && manualProduct
           ? <ManualProductIdentityEditor product={baseProduct} account={account} disabled={saving} onChange={onManualProductChange} onDelete={onDelete} />
-          : <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div>{editing && productNeedsManualType(baseProduct) && typeSelectionAvailable
+          : <div className="flex items-center gap-3"><AccountBadge account={account} /><div className="min-w-0"><div className="type-body font-semibold">{account.name}</div>{editing && productNeedsManualType(baseProduct) && typeSelectionAvailable
             ? <InlineSelect className={`inline-select-trigger-secondary ${manualSettings?.manualKind ? "" : "text-danger font-semibold"}`} ariaLabel="产品类型" value={manualSettings?.manualKind ?? ""} emptyValueLabel="产品类型未知" options={productKindOptions} disabled={saving} onChange={(value) => onOverrideChange({ manualKind: value as ProductKind })} />
             : <div className={`type-caption mt-0.5 max-w-[220px] whitespace-normal break-words ${productTypeIsResolved(product) ? "text-muted" : "text-danger font-semibold"}`}>{standardProductName(product)}</div>}{editing && !manualProduct && <button type="button" className="manual-product-delete text-danger type-caption" disabled={saving || apiDeleteDisabled} title={apiDeleteDisabledReason} onClick={onDelete}>移除产品</button>}</div></div>}
       </TableCell>
@@ -42,7 +42,7 @@ export function ProductRow({ product, baseProduct, manualSettings, holdingTiming
 }
 
 function ManualProductIdentityEditor({ product, account, disabled, onChange, onDelete }: { product: Product; account: Account; disabled: boolean; onChange: (patch: ManualProductPatch) => void; onDelete: () => void }) {
-  return <div className="flex items-start gap-3"><AccountBadge account={account} /><div className="manual-identity-fields min-w-0 flex-1"><InlineSelect className="inline-select-trigger-primary" ariaLabel="平台" value={product.accountId} options={accounts.filter((item) => item.exchange !== "bitget-wallet").map((item) => ({ value: item.id, label: item.name }))} disabled={disabled} onChange={(accountId) => onChange({ accountId })} /><InlineSelect className="inline-select-trigger-secondary" ariaLabel="产品类型" value={product.manualKind ?? "flexible"} options={productKindOptions} disabled={disabled} onChange={(manualKind) => onChange({ manualKind: manualKind as Product["manualKind"] })} /><button type="button" className="manual-product-delete text-danger type-caption" disabled={disabled} onClick={onDelete}>移除产品</button></div></div>;
+  return <div className="flex items-center gap-3"><AccountBadge account={account} /><div className="manual-identity-fields min-w-0 flex-1"><InlineSelect className="inline-select-trigger-primary" ariaLabel="平台" value={product.accountId} options={accounts.filter((item) => item.exchange !== "bitget-wallet").map((item) => ({ value: item.id, label: item.name }))} disabled={disabled} onChange={(accountId) => onChange({ accountId })} /><InlineSelect className="inline-select-trigger-secondary" ariaLabel="产品类型" value={product.manualKind ?? "flexible"} options={productKindOptions} disabled={disabled} onChange={(manualKind) => onChange({ manualKind: manualKind as Product["manualKind"] })} /><button type="button" className="manual-product-delete text-danger type-caption" disabled={disabled} onClick={onDelete}>移除产品</button></div></div>;
 }
 
 function ProductTierSummary({ product, baseProduct, manualSettings, holdingTiming, holding, editing, saving, manualProduct, rateFallbackAt, onOverrideChange, onManualProductChange }: { product: Product; baseProduct: Product; manualSettings?: ProductOverride; holdingTiming?: HoldingTiming; holding: number; editing: boolean; saving: boolean; manualProduct: boolean; rateFallbackAt?: string; onOverrideChange: (patch: Partial<ProductOverride>) => void; onManualProductChange: (patch: ManualProductPatch) => void }) {
@@ -120,7 +120,6 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
   const rateExplanation = product.exchange === "bitget-wallet" ? <p>整体 APR 包含基础收益和奖励利率。奖励每 8 小时结算一次，赎回时空投到钱包余额。</p> : undefined;
 
   return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
-    {manualApr && !manualLimit && product.rateCoverage !== "unavailable" && <ProductMeta text={`手动填写${manualSettings?.updatedAt ? ` · 更新于 ${formatSyncDateTime(manualSettings.updatedAt)}` : ""}`} />}
     {(!editing || !manualProduct) && fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
     {(!editing || !manualProduct) && qualificationFact && <ProductFact label="申购资格" value={qualificationFact} />}
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
@@ -128,7 +127,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
     {sourceText && <ProductMeta text={sourceText} danger={Boolean(rateFallbackAt || product.aprSource === "cache" || product.capacitySource === "cache")} />}
     {incompleteText && <ProductMeta text={incompleteText} danger={product.rateCoverage === "partial" || holding > 0 || productInfoIssues.some((issue) => issue.endsWith("未获取"))} />}
     {editing && showManualFields && <div className="manual-fields">
-      {manualLimit && <ManualLimitInput value={manualSettings?.firstTierLimit ?? null} asset={product.asset} disabled={saving} onChange={(firstTierLimitValue) => onOverrideChange({ firstTierLimit: firstTierLimitValue })} />}
+      {manualLimit && <ManualLimitInput value={manualSettings?.firstTierLimit ?? null} unlimited={manualFirstTierIsUnlimited(baseProduct, manualSettings)} asset={product.asset} disabled={saving} onChange={(firstTierLimit, firstTierUnlimited) => onOverrideChange({ firstTierLimit, firstTierUnlimited })} />}
       {manualApr && <ManualAprInput value={manualSettings?.apr ?? null} explanation={rateExplanation} disabled={saving} onChange={(apr) => onOverrideChange({ apr })} />}
       {manualTerm && <ManualTermInput label={manualTermLabel} value={manualSettings?.termDays ?? null} disabled={saving} onChange={(termDays) => onOverrideChange({ termDays })} />}
       {manualProductTerm && <ManualTermInput label={manualKind === "limited" ? "活动期限" : "锁定期限"} value={baseProduct.termDays ?? null} disabled={saving} onChange={(termDays) => onManualProductChange({ termDays: termDays ?? undefined })} />}

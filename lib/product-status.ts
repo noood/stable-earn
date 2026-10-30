@@ -2,6 +2,7 @@ import { productHasUnknownTierCapacity, type HoldingSyncState, type Product } fr
 import { apiFieldCapability } from "./api-capabilities";
 import {
   productNeedsManualLimit,
+  manualFirstTierIsUnlimited,
   productNeedsManualTerm,
   productNeedsManualPurchaseDate,
   productNeedsPurchaseDate,
@@ -63,7 +64,7 @@ export function productInformationIssues(
   if (apiManaged && productHasUnknownTierCapacity(product)) {
     issues.push(product.tiers[0]?.max == null && product.tiers[0].maxStatus !== "unlimited" ? "首档额度未获取" : "阶梯额度未获取");
   }
-  if (productNeedsManualLimit(product) && (override?.firstTierLimit === null || override?.firstTierLimit === undefined)) issues.push("首档额度待填写");
+  if (productNeedsManualLimit(product) && !manualFirstTierIsUnlimited(product, override) && (override?.firstTierLimit === null || override?.firstTierLimit === undefined)) issues.push("首档额度待填写");
 
   const durationRequired = productTypeIsResolved(product)
     && (product.productType === "fixed" || product.manualKind === "limited" || productNeedsManualTerm(product));

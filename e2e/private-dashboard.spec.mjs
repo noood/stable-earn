@@ -1357,6 +1357,7 @@ for (const viewport of [
     await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
     await page.getByRole("button", { name: "编辑持仓" }).click();
     await expect(page.getByRole("button", { name: "取消" }).first()).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page).toHaveScreenshot(`private-editing-${viewport.name}.png`, {
       fullPage: true, animations: "disabled", caret: "hide",
@@ -1463,4 +1464,34 @@ test("mobile layout does not create page-level horizontal overflow", async ({ pa
 
   expect(widths.document).toBeLessThanOrEqual(widths.viewport);
   expect(widths.body).toBeLessThanOrEqual(widths.viewport);
+});
+
+test("logout submits a same-origin POST from the menu and returns to the public page", async ({ page }) => {
+  await page.goto("/private");
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+  await page.locator(".action-menu-trigger").click();
+  const requestPromise = page.waitForRequest((request) => new URL(request.url()).pathname === "/logout"
+    && request.method() === "POST");
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
+  const request = await requestPromise;
+  const headers = await request.allHeaders();
+  expect(headers.origin).toBe("http://localhost:3000");
+  await expect(page).toHaveURL("http://localhost:3000/");
+  await expect(page.getByText("以下均为演示数据。", { exact: true })).toBeVisible();
+});
+
+test("a failed logout keeps the private page available and permits retry", async ({ page }) => {
+  await page.goto("/private");
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+  await page.route("**/logout", (route) => route.fulfill({ status: 503, body: "Synthetic logout failure" }));
+  await page.locator(".action-menu-trigger").click();
+  const logout = page.getByRole("button", { name: "退出登录", exact: true });
+  await logout.click();
+  await expect(page.getByRole("status").filter({ hasText: "退出失败，请重试。" })).toBeVisible();
+  await expect(logout).toBeEnabled();
+  await expect(page).toHaveURL("http://localhost:3000/private");
+  await page.unroute("**/logout");
+  await logout.click();
+  await expect(page).toHaveURL("http://localhost:3000/");
+  await expect(page.getByText("以下均为演示数据。", { exact: true })).toBeVisible();
 });

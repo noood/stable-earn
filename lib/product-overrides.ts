@@ -5,6 +5,7 @@ import { apiFieldCapability } from "./api-capabilities";
 export type ProductOverride = {
   apr: number | null;
   firstTierLimit: number | null;
+  firstTierUnlimited?: boolean;
   termDays: number | null;
   purchaseDate: string | null;
   updatedAt: string | null;
@@ -27,6 +28,7 @@ export function applyProductOverride(product: Product, override?: ProductOverrid
   const hasTerm = override?.termDays !== null && override?.termDays !== undefined && Number.isFinite(override.termDays) && override.termDays > 0;
   const needsManualApr = productNeedsManualApr(product);
   const needsManualLimit = productNeedsManualLimit(product);
+  const useUnlimitedLimit = needsManualLimit && manualFirstTierIsUnlimited(product, override);
   const manualKindChanged = productNeedsManualType(product) && override?.manualKind !== undefined;
   const manualKind = manualKindChanged ? override!.manualKind ?? undefined : product.manualKind;
   const productType = manualKindChanged && manualKind
@@ -38,7 +40,8 @@ export function applyProductOverride(product: Product, override?: ProductOverrid
   const nextProduct = { ...product, manualKind, productType, productTypeStatus };
   const needsManualTerm = productNeedsManualTerm(nextProduct);
   const useManualApr = hasApr && needsManualApr;
-  const useManualLimit = hasLimit && needsManualLimit;
+  const useManualLimit = hasLimit && needsManualLimit && !useUnlimitedLimit;
+  const hasManualCapacity = useUnlimitedLimit || useManualLimit;
   const useManualTerm = hasTerm && needsManualTerm;
   if (!manualKindChanged && !useManualApr && !useManualLimit && !useManualTerm && !needsManualApr && !needsManualLimit && !needsManualTerm) return product;
 
@@ -46,13 +49,16 @@ export function applyProductOverride(product: Product, override?: ProductOverrid
     ...nextProduct,
     termDays: useManualTerm ? override!.termDays! : needsManualTerm ? undefined : product.termDays,
     rateCoverage: needsManualApr
-      ? !useManualApr ? "unavailable" as const : needsManualLimit && !useManualLimit ? "base_only" as const : "complete" as const
+      ? !useManualApr ? "unavailable" as const : needsManualLimit && !hasManualCapacity ? "base_only" as const : "complete" as const
       : product.rateCoverage,
     ...(needsManualApr ? { aprStatus: useManualApr ? "available" as const : "unavailable" as const } : {}),
-    tiers: product.tiers.map((tier, index) => index === 0 ? {
+    ...(needsManualLimit ? { capacityStatus: hasManualCapacity ? "available" as const : "unavailable" as const } : {}),
+    ...(useUnlimitedLimit ? { tierStructureStatus: "complete" as const } : {}),
+    tiers: (useUnlimitedLimit ? product.tiers.slice(0, 1) : product.tiers).map((tier, index) => index === 0 ? {
       ...tier,
       apr: useManualApr ? override!.apr! : tier.apr,
-      max: useManualLimit ? tier.min + override!.firstTierLimit! : tier.max,
+      max: needsManualLimit ? useManualLimit ? tier.min + override!.firstTierLimit! : null : tier.max,
+      ...(needsManualLimit ? { maxStatus: useUnlimitedLimit ? "unlimited" as const : undefined } : {}),
     } : tier),
   };
 }
@@ -62,7 +68,15 @@ export function productNeedsManualApr(product: Product) {
 }
 
 export function productNeedsManualLimit(product: Product) {
-  return product.productDataMode === "manual" && product.source.kind !== "demo" && !(product.tiers.length === 1 && product.tiers[0].max === null && product.tiers[0].maxStatus === "unlimited" && product.capacityStatus === "available");
+  return product.productDataMode === "manual" && product.source.kind !== "demo";
+}
+
+/** Missing flags inherit a confirmed legacy bound; explicit false clears that inheritance. */
+export function manualFirstTierIsUnlimited(product: Product, override?: ProductOverride) {
+  if (override?.firstTierUnlimited !== undefined) return override.firstTierUnlimited;
+  if (override?.firstTierLimit != null) return false;
+  return product.tiers.length === 1 && product.tiers[0].max === null
+    && product.tiers[0].maxStatus === "unlimited" && product.capacityStatus === "available";
 }
 
 export function productNeedsManualTerm(product: Product) {
@@ -111,6 +125,10 @@ export function productOverrideForSave(product: Product, override: ProductOverri
   const resolved = applyProductOverride(product, override);
   return {
     ...override,
+    ...(productNeedsManualLimit(product) ? {
+      firstTierUnlimited: manualFirstTierIsUnlimited(product, override),
+      firstTierLimit: manualFirstTierIsUnlimited(product, override) ? null : override.firstTierLimit,
+    } : {}),
     termDays: productTypeCanHaveTerm(resolved) ? override.termDays : null,
     purchaseDate: productNeedsManualPurchaseDate(resolved) ? override.purchaseDate : null,
   };

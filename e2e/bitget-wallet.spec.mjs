@@ -32,9 +32,9 @@ function bgwProduct(patch = {}) {
   };
 }
 
-async function installLocalBgwPreview(page, { product = bgwProduct(), manualApr = 6.73, cached = false, holdingAmount = () => 123.45, onlyWallet = false, beforeProductFulfill } = {}) {
+async function installLocalBgwPreview(page, { product = bgwProduct(), manualApr = 6.73, manualLimit = null, manualUnlimited = true, cached = false, holdingAmount = () => 123.45, onlyWallet = false, beforeProductFulfill } = {}) {
   const requests = { products: 0, holdings: 0, productMethods: [], saves: [], failNextSave: false };
-  let storedOverride = { apr: manualApr, firstTierLimit: null, termDays: null, purchaseDate: null, updatedAt: sourceAt };
+  let storedOverride = { apr: manualApr, firstTierLimit: manualLimit, firstTierUnlimited: manualUnlimited, termDays: null, purchaseDate: null, updatedAt: sourceAt };
   await page.route("**/private/api/products**", async (route) => {
     const url = new URL(route.request().url());
     if (!["GET", "POST"].includes(route.request().method()) || url.searchParams.get("preview") !== "1") {
@@ -121,9 +121,8 @@ for (const width of [1280, 375]) {
     await expect(row.locator("td").first()).not.toContainText("Gauntlet");
     await expect(row.locator(".product-rate-headline")).toContainText("不限额");
     await expect(row.locator(".product-rate-headline")).toContainText("6.73%");
-    await expect(row).toContainText("手动填写");
+    await expect(row).not.toContainText("手动填写");
     await expect(row).not.toContainText("Dune");
-    await expect(row).toContainText(/10\/05.*12:34/);
     await expect(row).not.toContainText("申购额度未获取");
     await expect(row).not.toContainText("含奖励的整体 APR，按日复利折算预估收益。");
     await expect(row.locator(".product-meta-danger").filter({ hasText: "额度" })).toHaveCount(0);
@@ -152,7 +151,7 @@ for (const width of [1280, 375]) {
       await row.getByRole("textbox", { name: "APR", exact: true }).scrollIntoViewIfNeeded();
       await expect(row.locator("td").nth(1)).toHaveScreenshot("bgw-manual-field-375.png", { animations: "disabled" });
     }
-    await expect(row.getByRole("textbox", { name: "首档额度", exact: true })).toHaveCount(0);
+    await expect(row.getByRole("textbox", { name: "首档额度", exact: true })).toHaveValue("不限额");
     await expect(info).toBeVisible();
     await info.click();
     const tooltip = page.getByRole("tooltip");
@@ -197,13 +196,11 @@ test("failed RPC refresh retains the independent manual APR across page reloads"
     cached: true,
   });
   const row = await openBgwPreview(page);
-  const aprSourceNote = row.locator(".product-meta").filter({ hasText: "手动填写" });
-  await expect(aprSourceNote).toContainText(/10\/05.*12:34/);
-  const originalNote = await aprSourceNote.innerText();
+  await expect(row.locator(".product-meta").filter({ hasText: "手动填写" })).toHaveCount(0);
   await expect(row.locator("td").nth(3)).toHaveText(`${referenceApr.toFixed(2)}%`);
   await page.reload();
   await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
-  await expect(aprSourceNote).toHaveText(originalNote);
+  await expect(row.locator(".product-meta").filter({ hasText: "手动填写" })).toHaveCount(0);
   await expect(row).toContainText("持仓 123.45");
   await expect(row.locator(".product-meta").filter({ hasText: /APR.*沿用/ })).toHaveCount(0);
   await expect(row).toContainText("持仓沿用");
@@ -233,7 +230,7 @@ test("manual APR supports cancel, save, refresh persistence, zero and clearing w
   await page.reload();
   await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
   await expect(headline).toContainText("6.72%");
-  await expect(row).toContainText("手动填写");
+  await expect(row).not.toContainText("手动填写");
   await expect(row).not.toContainText("Dune");
   await saveApr("0", "0.00%");
   await expect(row.locator("td").nth(3)).toHaveText("0.00%");
@@ -269,11 +266,11 @@ test("the actual local BGW preview supports manual APR editing without mocked pr
   await expect(page.getByRole("button", { name: "编辑持仓", exact: true })).toBeVisible();
   await expect(row.locator(".product-rate-headline")).toContainText("6.72%");
   const manualNote = row.locator(".product-meta").filter({ hasText: "手动填写" });
-  const savedNote = await manualNote.innerText();
+  await expect(manualNote).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
   await expect(row.locator(".product-rate-headline")).toContainText("6.72%");
-  await expect(manualNote).toHaveText(savedNote);
+  await expect(manualNote).toHaveCount(0);
   await expect(row.locator(".holding-summary")).toContainText("持仓 123.45");
 });
 
@@ -552,3 +549,179 @@ test("an old cache response cannot overwrite a replacement wallet or cancel its 
   await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
   await expect(row.locator(".holding-summary")).toContainText("持仓 789.12");
 });
+
+for (const width of [1280, 375]) {
+  test(`shared quota menu keeps focus on the whole field and persists distinct modes at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const requests = await installLocalBgwPreview(page, { onlyWallet: true });
+    const row = await openBgwPreview(page);
+    const input = row.getByRole("textbox", { name: "首档额度", exact: true });
+    const mode = row.getByRole("combobox", { name: "首档额度类型", exact: true });
+    const field = row.locator(".manual-field").filter({ has: page.getByRole("textbox", { name: "首档额度", exact: true }) });
+    const control = field.locator(".manual-field-control");
+    const edit = () => page.getByRole("button", { name: "编辑持仓", exact: true }).click();
+    const save = async () => {
+      await page.getByRole("button", { name: "保存持仓", exact: true }).click();
+      await expect(page.getByRole("button", { name: "编辑持仓", exact: true })).toBeVisible();
+    };
+    const selectMode = async (label) => {
+      await mode.click();
+      await page.getByRole("option", { name: label, exact: true }).click();
+    };
+    await edit();
+    await input.scrollIntoViewIfNeeded();
+    await expect(input).toHaveValue("不限额");
+    await input.focus();
+    await expect(input).toHaveCSS("outline-style", "none");
+    await expect(input).toHaveCSS("box-shadow", "none");
+    await expect(control).not.toHaveCSS("box-shadow", "none");
+    const fieldFocus = await control.evaluate((element) => getComputedStyle(element).boxShadow);
+    await expect(field).toHaveScreenshot(`quota-whole-field-focus-${width}.png`, { animations: "disabled" });
+    await input.press("Tab");
+    await expect(mode).toBeFocused();
+    await expect(mode).toHaveCSS("box-shadow", "none");
+    await expect(control).toHaveCSS("box-shadow", fieldFocus);
+    await mode.press("Enter");
+    const menu = page.getByRole("listbox", { name: "首档额度类型", exact: true });
+    await expect(menu.getByRole("option")).toHaveCount(2);
+    await expect(menu.getByRole("option", { name: "限额", exact: true })).toBeVisible();
+    await expect(menu.getByRole("option", { name: "不限额", exact: true })).toBeVisible();
+    await expect(menu).toHaveScreenshot(`quota-mode-menu-${width}.png`, { animations: "disabled" });
+    await mode.press("Home");
+    await mode.press("Enter");
+    await expect(input).toHaveValue("");
+    await expect(mode).toBeFocused();
+    await expect(control).toHaveCSS("box-shadow", fieldFocus);
+    await expect(row).toContainText("首档额度待填写");
+    await expect(row.locator("td").nth(3)).toHaveText("—");
+    await input.fill("0.01");
+    await expect(input).toHaveValue("0.01");
+    await input.fill("500");
+    await expect(row).not.toContainText("首档额度待填写");
+    await expect(field).toHaveScreenshot(`quota-limited-field-${width}.png`, { animations: "disabled" });
+    await page.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(row.locator(".product-rate-headline")).toContainText("不限额");
+    expect(requests.saves).toHaveLength(0);
+
+    await edit();
+    await selectMode("限额");
+    await input.fill("500");
+    await save();
+    expect(requests.saves.at(-1).overrides[productId]).toMatchObject({ firstTierLimit: 500, firstTierUnlimited: false });
+    await page.reload();
+    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    await expect(row.locator(".product-rate-headline")).toContainText("500.00");
+    await edit();
+    await selectMode("不限额");
+    requests.failNextSave = true;
+    await page.getByRole("button", { name: "保存持仓", exact: true }).click();
+    await expect(page.locator(".table-error-panel")).toContainText("保存失败");
+    await expect(input).toHaveValue("不限额");
+    await page.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(row.locator(".product-rate-headline")).toContainText("500.00");
+
+    await edit();
+    await input.fill("");
+    await save();
+    expect(requests.saves.at(-1).overrides[productId]).toMatchObject({ firstTierLimit: null, firstTierUnlimited: false });
+    await page.reload();
+    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    await expect(row).toContainText("首档额度待填写");
+    await expect(row.locator(".product-rate-headline")).not.toContainText("不限额");
+    await edit();
+    await selectMode("不限额");
+    await save();
+    expect(requests.saves.at(-1).overrides[productId]).toMatchObject({ firstTierLimit: null, firstTierUnlimited: true });
+    await page.reload();
+    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    await expect(row.locator(".holding-summary")).toContainText("持仓 123.45 / 不限额");
+    await expect(row.getByRole("textbox", { name: "USDC 产品持仓" })).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+}
+
+test("existing OKX manual quota uses the same menu without adding it to API-owned products", async ({ page }) => {
+  await page.goto("/private?asset=USDC");
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+  await page.getByRole("button", { name: "编辑持仓", exact: true }).click();
+  const okx = page.locator("tr.product-row").filter({ hasText: "OKX" });
+  await expect(okx.getByRole("textbox", { name: "首档额度", exact: true })).toHaveValue("500");
+  await okx.getByRole("combobox", { name: "首档额度类型", exact: true }).click();
+  await page.getByRole("option", { name: "不限额", exact: true }).click();
+  await expect(okx.getByRole("textbox", { name: "首档额度", exact: true })).toHaveValue("不限额");
+  const binance = page.locator("tr.product-row").filter({ hasText: "Binance" }).first();
+  await expect(binance.getByRole("combobox", { name: "首档额度类型", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "保存持仓", exact: true }).click();
+  await expect(page.getByRole("button", { name: "编辑持仓", exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+  await expect(okx.locator(".product-rate-headline")).toContainText("不限额");
+});
+
+test("saving unchanged manual quotas does not rewrite legacy rows just to add a mode flag", async ({ page }) => {
+  const requests = await installLocalBgwPreview(page);
+  await openBgwPreview(page);
+  await page.getByRole("button", { name: "编辑持仓", exact: true }).click();
+  await page.getByRole("button", { name: "保存持仓", exact: true }).click();
+  await expect(page.getByRole("button", { name: "编辑持仓", exact: true })).toBeVisible();
+  expect(requests.saves).toHaveLength(0);
+});
+
+for (const width of [1280, 375]) {
+  test(`manual quota and calendar icons align and menu options use primary text at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.clock.setFixedTime(new Date(previewAt));
+    await page.goto(`/private?asset=USDC&previewAt=${encodeURIComponent(previewAt)}`);
+    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    await page.getByRole("button", { name: "编辑持仓", exact: true }).click();
+    const row = page.locator("tr.product-row").filter({ hasText: "OKX" });
+    await row.getByRole("combobox", { name: "产品类型", exact: true }).click();
+    const typeMenu = page.getByRole("listbox", { name: "产品类型", exact: true });
+    expect((await typeMenu.boundingBox()).width).toBeLessThan(150);
+    await expect(typeMenu.getByRole("option")).toHaveCount(3);
+    await page.getByRole("option", { name: "限时活期", exact: true }).click();
+    await row.getByRole("combobox", { name: "产品类型", exact: true }).click();
+    await expect(typeMenu.getByRole("option", { name: "限时活期", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(typeMenu).toHaveScreenshot(`product-kind-menu-${width}.png`, { animations: "disabled" });
+    await row.getByRole("combobox", { name: "产品类型", exact: true }).press("Escape");
+    await row.getByRole("textbox", { name: "活动期限", exact: true }).fill("180");
+    const quota = row.locator(".manual-field-control").filter({ has: page.getByRole("combobox", { name: "首档额度类型", exact: true }) });
+    const date = row.getByRole("button", { name: "买入日", exact: true });
+    await date.scrollIntoViewIfNeeded();
+    const geometry = async (control) => control.evaluate((element) => {
+      const frame = element.getBoundingClientRect();
+      const icon = element.querySelector("svg").getBoundingClientRect();
+      return { width: icon.width, height: icon.height, right: frame.right - icon.right,
+        center: (icon.top + icon.bottom - frame.top - frame.bottom) / 2 };
+    });
+    const dateIcon = await geometry(date);
+    const quotaIcon = await geometry(quota);
+    expect(quotaIcon.width).toBe(dateIcon.width);
+    expect(quotaIcon.height).toBe(dateIcon.height);
+    expect(quotaIcon.right).toBeCloseTo(dateIcon.right, 1);
+    expect(quotaIcon.center).toBeCloseTo(dateIcon.center, 1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const fields = row.locator(".manual-fields");
+    await expect(fields).toHaveScreenshot(`quota-calendar-alignment-${width}.png`, { animations: "disabled" });
+    await row.getByRole("combobox", { name: "首档额度类型", exact: true }).click();
+    const menu = page.getByRole("listbox", { name: "首档额度类型", exact: true });
+    const unselected = menu.getByRole("option", { name: "不限额", exact: true });
+    await expect(unselected).toHaveAttribute("aria-selected", "false");
+    await expect(unselected).toHaveCSS("color", "rgb(24, 32, 29)");
+    await expect(unselected).toHaveCSS("font-weight", "400");
+    await expect(menu.getByRole("option", { name: "限额", exact: true })).toHaveCSS("font-weight", "600");
+    await expect(menu).toHaveScreenshot(`quota-unselected-text-${width}.png`, { animations: "disabled" });
+    const separator = () => row.getByRole("combobox", { name: "首档额度类型", exact: true }).evaluate((element) => {
+      const style = getComputedStyle(element, "::before");
+      return { height: style.height, borderWidth: style.borderLeftWidth, borderStyle: style.borderLeftStyle };
+    });
+    const limitedSeparator = await separator();
+    expect(limitedSeparator).toEqual({ height: "12px", borderWidth: "1px", borderStyle: "solid" });
+    await unselected.click();
+    await expect(row.getByRole("textbox", { name: "首档额度", exact: true })).toHaveValue("不限额");
+    expect(await separator()).toEqual(limitedSeparator);
+    const unlimitedIcon = await geometry(quota);
+    expect(unlimitedIcon.right).toBeCloseTo(dateIcon.right, 1);
+    await expect(fields).toHaveScreenshot(`quota-unlimited-separator-${width}.png`, { animations: "disabled" });
+  });
+}

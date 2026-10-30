@@ -26,7 +26,7 @@ test("maturity input uses three scoped reads and does not join another owner's d
   position(db, "shared", { purchase: "2026-10-19" });
   position(db, "shared", { owner: "b", purchase: "2026-01-01" });
   db.sqlite.prepare(`INSERT INTO product_override_terms VALUES ('b','shared',1,'2026-10-01')`).run();
-  db.sqlite.prepare(`INSERT INTO product_override_limits VALUES ('b','shared',999,'2026-10-01')`).run();
+  db.sqlite.prepare(`INSERT INTO product_override_limits (user_id,product_id,first_tier_limit,updated_at) VALUES ('b','shared',999,'2026-10-01')`).run();
   const queries = [];
   const wrapped = { ...db, prepare(sql) { queries.push(sql); return db.prepare(sql); } };
   assert.equal(await recordDueManualMaturities(wrapped, "a"), false);

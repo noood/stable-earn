@@ -217,6 +217,7 @@ test("BGW manual APR never adopts an obsolete automatic cached rate or quota", (
   assert.equal(merged.aprSource, undefined);
   assert.equal(merged.aprFetchedAt, undefined);
   assert.equal(merged.capacitySource, undefined);
-  assert.equal(merged.tiers[0].maxStatus, "unlimited");
+  assert.equal(merged.tiers[0].maxStatus, undefined);
+  assert.equal(merged.capacityStatus, "unavailable");
   assert.doesNotMatch(merged.sourceLabel, /Dune/);
 });

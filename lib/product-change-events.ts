@@ -4,7 +4,7 @@ import type { HoldingMap, HoldingPosition, Product, ProductChangeEvent, ProductH
 import { formatAmount } from "./domain";
 import type { LiveRate } from "./live-rates";
 import { minimumOpportunityApr } from "./opportunity-policy";
-import { formatShortDate, productTermStatus, type ProductOverride, type ProductOverrideMap } from "./product-overrides";
+import { formatShortDate, manualFirstTierIsUnlimited, productNeedsManualLimit, productTermStatus, type ProductOverride, type ProductOverrideMap } from "./product-overrides";
 
 export type ProductChangeSource = ProductChangeEvent["source"];
 
@@ -239,11 +239,13 @@ export function buildManualChangeEvents(
       attention: beforeApr !== null && afterApr !== null
         && beforeApr >= minimumOpportunityApr && afterApr < minimumOpportunityApr,
     });
-    if ((before?.firstTierLimit ?? null) !== (after?.firstTierLimit ?? null)) add(productId, {
+    const beforeLimit = manualLimitValue(product, before);
+    const afterLimit = manualLimitValue(product, after);
+    if (beforeLimit !== afterLimit) add(productId, {
       type: "capacity",
       title: "首档额度修改",
-      before: formatManualLimit(before?.firstTierLimit, product?.asset ?? "USDT"),
-      after: formatManualLimit(after?.firstTierLimit, product?.asset ?? "USDT"),
+      before: formatManualLimit(product, before),
+      after: formatManualLimit(product, after),
       attention: false,
     });
     if ((before?.termDays ?? null) !== (after?.termDays ?? null)) add(productId, {
@@ -574,12 +576,14 @@ function overCapacityState(holding: number | undefined, capacity: number | null 
 }
 
 function manualCapacity(product: Product, override?: ProductOverride) {
+  if (productNeedsManualLimit(product) && manualFirstTierIsUnlimited(product, override)) return null;
   const limit = override?.firstTierLimit;
   if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) return limit;
+  if (productNeedsManualLimit(product)) return undefined;
   const firstTier = product.tiers[0];
   if (!firstTier || !Object.prototype.hasOwnProperty.call(firstTier, "max")) return undefined;
   const max = firstTier.max;
-  if (max === null) return null;
+  if (max === null) return firstTier.maxStatus === "unlimited" ? null : undefined;
   return typeof max === "number" && Number.isFinite(max) ? max : undefined;
 }
 
@@ -605,7 +609,14 @@ function formatTerm(value: number | null | undefined) {
 }
 
 function formatManualApr(value: number | null | undefined) { return value === null || value === undefined ? "待填写" : formatApr(value); }
-function formatManualLimit(value: number | null | undefined, asset: string) { return value === null || value === undefined ? "待填写" : `${formatAmount(value)} ${asset}`; }
+function manualLimitValue(product: Product | undefined, override?: ProductOverride) {
+  if (product && productNeedsManualLimit(product) && manualFirstTierIsUnlimited(product, override)) return null;
+  return override?.firstTierLimit ?? undefined;
+}
+function formatManualLimit(product: Product | undefined, override?: ProductOverride) {
+  const value = manualLimitValue(product, override);
+  return value === undefined ? "待填写" : value === null ? "不限额" : `${formatAmount(value)} ${product?.asset ?? "USDT"}`;
+}
 
 function availabilitySummary(rate: LiveRate) {
   if (rate.eligibilityStatus === "ineligible") return "账号不符合资格";
