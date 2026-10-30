@@ -7,9 +7,7 @@ export type Account = {
   exchange: Exchange;
   region: Region;
   name: string;
-  mark: string;
-  color: string;
-  foreground?: string;
+  logo: string;
 };
 
 type Tier = {
