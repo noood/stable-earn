@@ -51,13 +51,16 @@ npm run dev
 
 主动填写真实凭证并运行 API 检查会请求交易所。保存范围、启动问题和测试场景见[本地预览说明](CONTRIBUTING.md#本地预览)。
 
+## 部署到 Cloudflare
+
+首次部署、环境配置、版本升级和数据库迁移见[部署指南](docs/DEPLOYMENT.md)。
+
 ## 文档
 
 | 内容 | 文档 |
 | --- | --- |
 | 配置交易所、钱包或手动产品 | [数据源设置与支持范围](docs/DATA-SOURCES.md) |
 | 开发、预览、测试与了解模块分工 | [开发与贡献](CONTRIBUTING.md) |
-| 自托管、升级或执行数据库迁移 | [部署与数据库迁移](docs/DEPLOYMENT.md) |
 | 理解缓存、刷新、收益和目录行为 | [数据规则](docs/DATA-STATES.md) |
 | 实现字段解析或产品身份 | [APR 与额度规则](docs/API-APR-CAPACITY-RULES.md)、[产品身份](docs/PRODUCT-IDENTITY.md) |
 | 修改界面或排查问题 | [设计规范](docs/DESIGN-SYSTEM.md)、[诊断说明](docs/DIAGNOSTICS.md) |
