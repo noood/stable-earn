@@ -55,6 +55,10 @@ npm run dev
 
 首次部署、环境配置、版本升级和数据库迁移见[部署指南](docs/DEPLOYMENT.md)。
 
+也可以将以下内容交给有本机终端权限的 AI，按[部署 Skill](skills/stable-earn-deploy/SKILL.md)执行。登录和私密配置按提示完成。
+
+> 请将 https://github.com/noood/stable-earn 部署到我的 Cloudflare 账号。先阅读仓库中的 `skills/stable-earn-deploy/SKILL.md`，按部署指南操作，区分首次部署和已有项目升级，完成后验证访问。
+
 ## 文档
 
 | 内容 | 文档 |

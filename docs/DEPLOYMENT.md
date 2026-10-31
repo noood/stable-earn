@@ -2,6 +2,8 @@
 
 以下命令从仓库根目录执行。应用部署、数据库迁移和远程资源配置是独立步骤；发布前按[发布检查清单](RELEASE-CHECKLIST.md)核对。
 
+使用 AI 协助部署时，可让它先阅读[部署 Skill](../skills/stable-earn-deploy/SKILL.md)；具体命令和迁移步骤仍以本指南为准。
+
 ## 需要准备
 
 - Cloudflare 账号，以及已登录的 Wrangler（`npx wrangler login`）。
