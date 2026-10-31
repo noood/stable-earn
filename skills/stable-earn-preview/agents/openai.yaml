@@ -1,0 +1,4 @@
+interface:
+  display_name: "启动 Stable Earn 预览"
+  short_description: "在本机准备环境、启动 Stable Earn 模拟预览，并验证页面可访问。"
+  default_prompt: "请用 $stable-earn-preview 在我的电脑上启动 Stable Earn 模拟预览，打开并验证页面，保持服务运行并告诉我如何停止。"

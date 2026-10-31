@@ -1,6 +1,6 @@
 # Stable Earn
 
-Stable Earn 是一个基于 Cloudflare Workers 的稳定币与 BTC 理财监控台，用于集中查看交易所及已支持的链上理财产品、APR、额度、持仓和预估收益。
+Stable Earn 是运行在 Cloudflare Workers 上的稳定币与 BTC 理财监控台。
 
 ## 主要功能
 
@@ -8,22 +8,52 @@ Stable Earn 是一个基于 Cloudflare Workers 的稳定币与 BTC 理财监控�
 - 按平台能力使用交易所 API、钱包公开地址同步或手动维护数据。
 - 展示阶梯 APR、额度、持仓、到期信息、预估收益和变更记录，支持多账号隔离。
 
-平台和配置方式统一见[数据源设置](docs/DATA-SOURCES.md)。数据仅用于监控和比较，不构成投资建议；最终结果以对应平台账户为准。
+数据仅用于监控和比较，不构成投资建议；最终结果以对应平台账户为准。
+
+## 在线演示
+
+[打开演示](https://stable.noood.workers.dev/)。未登录时显示模拟数据。
 
 ## 本地运行
 
-需要 Node.js 22.13 或更高版本。
+本地使用模拟数据，无需配置 Cloudflare、交易所 API 或钱包地址。
+
+### 使用 AI 启动
+
+将以下内容交给有本机终端权限的 AI，按[启动 Skill](skills/stable-earn-preview/SKILL.md)运行：
+
+> 请在本机启动 https://github.com/noood/stable-earn 的模拟预览。先阅读仓库中的 `skills/stable-earn-preview/SKILL.md`，按 README 安装和启动。确认页面可用后保持服务运行，并说明停止和再次启动的方法。
+
+### 手动启动
+
+1. 安装 [Node.js LTS](https://nodejs.org/zh-cn/download)，版本至少为 **22.13**。安装后重新打开终端，可用 `node --version` 查看版本。
+2. 在 [GitHub 仓库](https://github.com/noood/stable-earn)点击 **Code → Download ZIP**，解压；也可以用 Git 克隆。
+3. 在项目文件夹（包含 `package.json`）打开终端。Windows：在文件资源管理器地址栏输入 `powershell` 后回车。macOS：打开“终端”，输入 `cd `（末尾有空格），将项目文件夹拖入窗口后回车。
+4. 依次运行以下命令，首次安装依赖需要联网：
 
 ```bash
 npm ci
 npm run dev
 ```
 
-打开 <http://localhost:3000>。默认使用模拟产品与持仓，不连接生产 D1；主动配置真实凭证并运行 API 检查时，仍会请求交易所接口。场景与验证命令见[开发指南](CONTRIBUTING.md)。
+看到 `Local: http://localhost:3000/` 后，在浏览器打开：
 
-## 文档导航
+| 页面 | 地址 |
+| --- | --- |
+| 公开演示页 | <http://localhost:3000> |
+| 私人页模拟，可编辑 | <http://localhost:3000/private> |
 
-| 你要做什么 | 文档 |
+保持终端运行，按 **Ctrl+C** 停止。下次在项目文件夹运行 `npm run dev` 重新启动。
+
+### 模拟数据
+
+持仓、新增产品和移除操作不会写入数据库，刷新后恢复样例；部分产品设置保存在当前浏览器。页面中的 API 失败、缓存和资料缺失包含预设的测试场景。
+
+主动填写真实凭证并运行 API 检查会请求交易所。保存范围、启动问题和测试场景见[本地预览说明](CONTRIBUTING.md#本地预览)。
+
+## 文档
+
+| 内容 | 文档 |
 | --- | --- |
 | 配置交易所、钱包或手动产品 | [数据源设置与支持范围](docs/DATA-SOURCES.md) |
 | 开发、预览、测试与了解模块分工 | [开发与贡献](CONTRIBUTING.md) |
@@ -32,8 +62,6 @@ npm run dev
 | 实现字段解析或产品身份 | [APR 与额度规则](docs/API-APR-CAPACITY-RULES.md)、[产品身份](docs/PRODUCT-IDENTITY.md) |
 | 修改界面或排查问题 | [设计规范](docs/DESIGN-SYSTEM.md)、[诊断说明](docs/DIAGNOSTICS.md) |
 | 核对交易所 API 或准备发布 | [平台能力与核验依据](docs/PLATFORM-CAPABILITIES.md)、[发布清单](docs/RELEASE-CHECKLIST.md) |
-
-使用、开发与部署步骤各自在对应指南维护；业务规则、设计规则和接口证据分别维护。
 
 ## 安全与许可证
 
