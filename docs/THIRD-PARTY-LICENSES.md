@@ -17,10 +17,10 @@
 
 以下素材来源已于 2026-10-31 核对，文件存放在 `public/platforms/`。应用使用 132×132 WebP，供现有 44px 徽标在高像素密度屏幕显示；不重绘标识。Bitget 使用官方品牌包的平面黑色图形与包内青色底色（`#00F0FF`），Bybit EU 使用用户指定的 Google Play 方形图；均不带 App Store 的高光或圆角效果。外层圆角统一由页面样式控制。
 
-| 本地文件 | 标识 | 官方来源 |
+| 本地文件 | 标识 | 来源 |
 |---|---|---|
 | `binance.webp` | Binance（Global / Bahrain 共用） | [Binance GitHub](https://github.com/binance)组织头像 |
-| `bybit.webp` | Bybit Global | [Bybit GitHub](https://github.com/bybit-exchange)组织头像 |
+| `bybit.webp` | Bybit Global | [用户指定的 Google Drive 素材](https://drive.google.com/file/d/1hZ0JStfERhW1XbNl_eb3vYaMnQ8eztHu/view)，`Bybit_Logotype_250x250_Darkmode-Duo.png` |
 | `bybit-eu.webp` | Bybit EU | [用户指定的 Google Play 图片](https://play-lh.googleusercontent.com/DkPOKimrbh3RtDUj69dNGDtiAdXbw60SsZMwuEfIzKMaOT0Gq8uEqlZtrjVZXFIx_w2Cfme2uZY8qqHN4-aYng=w480-h960-rw) |
 | `bitget.webp` | Bitget | [官方品牌素材公告](https://www.bitget.com/support/articles/12560603882517)中的 [Bitget Brand Logos](https://www.bitget.com/cdnstatic/files/bg-logo-v1.zip)，`PNG/Icon/icon_black.png` |
 | `bitget-wallet.webp` | Bitget Wallet | [官方 Logo 素材仓库](https://github.com/bitgetwallet/download/blob/main/logo/png/Bitget%20Wallet-Logomark.png) |
