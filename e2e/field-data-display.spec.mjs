@@ -39,6 +39,7 @@ for (const width of [1280, 375]) {
     });
     await expect(row.locator(".product-rate-headline")).toContainText("申购额度 0.00–200.00");
     await expect(row.locator(".product-rate-headline")).toContainText("APR 未获取");
+    await expect(row.locator(".product-rate-headline .status-chip")).toHaveClass(/status-chip-muted/);
     await expect(row).not.toContainText("额度未获取");
     await expect(row.locator(".holding-summary")).toContainText("还可申购 200.00 USDT");
     await expect(row.locator("td").nth(3)).toHaveText("—");
@@ -56,6 +57,7 @@ test("unknown tier bounds do not claim an open range, while confirmed unlimited 
   });
   await expect(row.locator(".product-rate-headline")).toContainText("申购额度 上限未获取");
   await expect(row.locator(".product-rate-headline")).toContainText("6.00%");
+  await expect(row.locator(".product-rate-headline .status-chip")).toHaveClass(/status-chip-highlight/);
   await expect(row).not.toContainText("0.00 以上");
   await expect(row).not.toContainText("不限额");
   await expect(row.getByRole("progressbar")).toHaveCount(0);

@@ -1,5 +1,16 @@
 import { formatAmount, type Product } from "./domain";
 import { productTypeIsResolved } from "./product-overrides";
+import { minimumOpportunityApr } from "./opportunity-policy";
+
+/** Color the displayed, rounded APR; missing values have their own state. */
+export function rateAprTone(apr: number | undefined) {
+  if (apr === undefined || !Number.isFinite(apr)) return "missing";
+  const displayedApr = Number(apr.toFixed(2));
+  if (displayedApr < minimumOpportunityApr) return "low";
+  if (displayedApr < 9) return "base";
+  if (displayedApr < 12) return "medium";
+  return "high";
+}
 
 /** A null bound is open-ended only when its explicit status confirms it. */
 export function productTierLabel(tier: Product["tiers"][number]) {
@@ -23,7 +34,7 @@ export function rateHeadlineFor(product: Product, apiManaged = product.productDa
     : apiManaged ? `${capacityName} 上限未获取` : `${capacityName}额度待填写`;
 
   if (product.rateCoverage === "unavailable") {
-    return { label: capacityLabel, value: apiManaged ? "APR 未获取" : "APR 待填写", muted: true };
+    return { label: capacityLabel, value: apiManaged ? "APR 未获取" : "APR 待填写" };
   }
   if (product.rateCoverage === "max_only") {
     return { label: "官网最高", value: `最高 ${firstTier?.apr.toFixed(2) ?? "0.00"}%` };
@@ -31,6 +42,5 @@ export function rateHeadlineFor(product: Product, apiManaged = product.productDa
   return {
     label: capacityLabel,
     value: firstTier && Number.isFinite(firstTier.apr) ? `${firstTier.apr.toFixed(2)}%` : apiManaged ? "APR 未获取" : "APR 待填写",
-    ...(product.rateCoverage === "partial" ? { muted: true } : {}),
   };
 }

@@ -8,6 +8,19 @@ export type StartupServerTiming = {
 };
 
 const context = new AsyncLocalStorage<StartupServerTiming | undefined>();
+const slowReadMetricNames = new Set<StartupTimingMetric>([
+  "snapshot_sql", "snapshot_d1", "snapshot_attempts",
+  "history_summary_sql", "history_summary_d1", "history_summary_attempts",
+]);
+type SlowReadErrorKind = "timeout" | "aborted" | "type_error" | "syntax_error" | "other";
+function slowReadErrorKind(error: unknown): SlowReadErrorKind {
+  if (!(error instanceof Error)) return "other";
+  if (error.name === "TimeoutError") return "timeout";
+  if (error.name === "AbortError") return "aborted";
+  if (error.name === "TypeError") return "type_error";
+  if (error.name === "SyntaxError") return "syntax_error";
+  return "other";
+}
 export function currentStartupTiming() { return context.getStore(); }
 
 /** Adds temporary server durations to authenticated page-data responses only
@@ -16,31 +29,72 @@ export function currentStartupTiming() { return context.getStore(); }
 export async function withStartupServerTiming(
   request: Request,
   handler: (timing: StartupServerTiming) => Promise<Response>,
+  options?: { watchSlowProductRead?: boolean },
 ): Promise<Response> {
-  if (new URL(request.url).searchParams.get("diagnostics") !== "1") {
+  const enabled = new URL(request.url).searchParams.get("diagnostics") === "1";
+  const watchSlowProductRead = options?.watchSlowProductRead === true;
+  if (!enabled && !watchSlowProductRead) {
     return context.run(undefined, () => handler({ enabled: false, measure: (_phase, operation) => operation(), record: () => {} }));
   }
 
   const startedAt = performance.now();
-  const spans: Array<{ phase: StartupTimingPhase; start: number; end: number }> = [];
+  const spans: Array<{ phase: StartupTimingPhase; start: number; end: number; outcome: "ok" | "error"; errorKind?: SlowReadErrorKind }> = [];
+  const active = new Map<number, { phase: StartupTimingPhase; start: number }>();
+  let sequence = 0;
+  let slowReported = false;
   const values = new Map<StartupTimingMetric, number>();
+  const requestId = watchSlowProductRead ? crypto.randomUUID() : undefined;
+  const slowTimer = watchSlowProductRead ? setTimeout(() => {
+    slowReported = true;
+    console.warn({
+      event: "product_cache_read_slow",
+      requestId,
+      elapsedMs: Math.round(performance.now() - startedAt),
+      active: [...active.values()].map(({ phase, start }) => ({ phase, startedMs: Math.round(start) })),
+      completed: spans.map(({ phase, start, end, outcome, errorKind }) => ({ phase, outcome, durationMs: Math.round(end - start), ...(errorKind ? { errorKind } : {}) })),
+      metrics: Object.fromEntries([...values].filter(([metric]) => slowReadMetricNames.has(metric))),
+    });
+  }, 5_000) : undefined;
   const timing: StartupServerTiming = {
-    enabled: true,
+    enabled,
     async measure(phase, operation) {
+      if (!Object.hasOwn(startupTimingPhases, phase)) return operation();
       const start = performance.now() - startedAt;
+      const id = sequence++;
+      active.set(id, { phase, start });
+      if (slowReported) console.info({ event: "product_cache_read_phase", requestId, phase, state: "started", elapsedMs: Math.round(start) });
+      let outcome: "ok" | "error" = "ok";
+      let errorKind: SlowReadErrorKind | undefined;
       try { return await operation(); }
+      catch (error) { outcome = "error"; errorKind = slowReadErrorKind(error); throw error; }
       finally {
-        if (Object.hasOwn(startupTimingPhases, phase)) spans.push({ phase, start, end: performance.now() - startedAt });
+        active.delete(id);
+        const end = performance.now() - startedAt;
+        spans.push({ phase, start, end, outcome, errorKind });
+        if (slowReported) console.info({ event: "product_cache_read_phase", requestId, phase, state: outcome, elapsedMs: Math.round(end), durationMs: Math.round(end - start), ...(errorKind ? { errorKind } : {}) });
       }
     },
     record(metric, value) {
       if (Object.hasOwn(startupTimingMetrics, metric) && typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1e12) {
         values.set(metric, value);
+        if (slowReported && slowReadMetricNames.has(metric)) {
+          console.info({ event: "product_cache_read_metric", requestId, metric, value });
+        }
       }
     },
   };
-  const response = await context.run(timing, () => handler(timing));
+  let response: Response;
+  try {
+    response = await context.run(timing, () => handler(timing));
+  } catch (error) {
+    if (slowReported) console.warn({ event: "product_cache_read_finished", requestId, outcome: "error", elapsedMs: Math.round(performance.now() - startedAt) });
+    throw error;
+  } finally {
+    if (slowTimer !== undefined) clearTimeout(slowTimer);
+  }
   const duration = Math.max(0, performance.now() - startedAt);
+  if (slowReported) console.info({ event: "product_cache_read_finished", requestId, outcome: "response", status: response.status, elapsedMs: Math.round(duration) });
+  if (!enabled) return response;
   // Response assembly and lock release can overlap. Subtract the union of
   // measured intervals, rather than adding overlapping durations twice.
   let covered = 0;

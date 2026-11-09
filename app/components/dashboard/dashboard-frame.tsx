@@ -60,7 +60,7 @@ function ProductTableColumns() {
 }
 
 function ProductTableHeader() {
-  return <thead><tr><th>平台 / 产品</th><th>产品与 APR</th><th>持仓 / 额度使用</th><th>有效 APR</th><th>变更</th></tr></thead>;
+  return <thead><tr><th>平台与产品类型</th><th>产品信息</th><th>持仓与额度使用</th><th>有效 APR</th><th>变更</th></tr></thead>;
 }
 
 export function DashboardProductTableSection({
@@ -99,7 +99,7 @@ export function ProductTableEmptyState({ message = "吸引人的稳定理财尚�
 }
 
 function AssetSwitch({ asset, onChange }: { asset: Asset | null; onChange?: (asset: Asset) => void }) {
-  return <div className="asset-switch inline-flex h-full w-fit max-w-full flex-nowrap items-stretch gap-1">{assets.map((item) => <button key={item} type="button" disabled={!onChange} onClick={() => onChange?.(item)} aria-current={asset === item ? "page" : undefined} className={`type-label flex shrink-0 items-center gap-2 border-b-[3px] px-3 font-semibold transition-colors ${asset === item ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"}`}><AssetIcon asset={item} /><span>{item}</span></button>)}</div>;
+  return <div className="asset-switch inline-flex h-full w-fit max-w-full flex-nowrap items-stretch gap-1">{assets.map((item) => <button key={item} type="button" disabled={!onChange} onClick={() => onChange?.(item)} aria-current={asset === item ? "page" : undefined} className={`type-label flex shrink-0 items-center gap-2 border-b-[3px] px-3 font-semibold transition-colors ${asset === item ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--text-secondary)]"}`}><AssetIcon asset={item} /><span>{item}</span></button>)}</div>;
 }
 
 function AssetIcon({ asset }: { asset: Asset }) {

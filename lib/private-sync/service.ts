@@ -11,17 +11,20 @@ import { loadSyncCache, prepareSyncCacheSave, prepareSyncFailureRecord, recordSy
 import type { PrivateProductsPayload, RefreshOptions } from "./types";
 import { refreshSource, safeCacheError } from "./status";
 import { buildPrivatePayload } from "./payload";
+import type { StartupServerTiming } from "@/lib/startup-timing";
+import type { StartupTimingPhase } from "@/lib/startup-timing-format";
 
 export const privateCacheKey = "private-products";
 
 /** True means due candidates were processed; a prefetched history may be stale. */
-export async function recordDueManualMaturities(db: D1Database, userId: string): Promise<boolean> {
+export async function recordDueManualMaturities(db: D1Database, userId: string, timing?: StartupServerTiming): Promise<boolean> {
+  const measure = <T,>(phase: StartupTimingPhase, operation: () => Promise<T>) => timing ? timing.measure(phase, operation) : operation();
   const [catalogProducts, userProducts, holdingRows] = await Promise.all([
-    loadCatalogProducts(db, userId),
-    loadUserProducts(db, userId),
+    measure("maturities_catalog", () => loadCatalogProducts(db, userId)),
+    measure("maturities_user_products", () => loadUserProducts(db, userId)),
     // Only positive positions can produce maturity alerts. Join on both account
     // and product so one read replaces the four separate holding/override reads.
-    db.prepare(`SELECT h.product_id, h.amount, o.confirmed_apr, o.purchase_date,
+    measure("maturities_holdings", () => db.prepare(`SELECT h.product_id, h.amount, o.confirmed_apr, o.purchase_date,
         o.product_kind_override, o.updated_at, l.first_tier_limit, l.first_tier_unlimited, t.term_days
       FROM holdings h
       LEFT JOIN product_overrides o ON o.user_id = h.user_id AND o.product_id = h.product_id
@@ -31,7 +34,7 @@ export async function recordDueManualMaturities(db: D1Database, userId: string):
         product_id: string; amount: number; confirmed_apr: number | null;
         purchase_date: string | null; product_kind_override: "flexible" | "fixed" | "limited" | null;
         updated_at: string | null; first_tier_limit: number | null; first_tier_unlimited: number | null; term_days: number | null;
-      }>(),
+      }>()),
   ]);
   const products = [...catalogProducts, ...userProducts].filter((product) => product.productDataMode === "manual");
   if (products.length === 0) return false;
@@ -48,7 +51,7 @@ export async function recordDueManualMaturities(db: D1Database, userId: string):
   const holdings = Object.fromEntries(holdingRows.results.map((row) => [row.product_id, Number(row.amount)])) as HoldingMap;
   const events = buildManualMaturityEvents(resolvedProducts, holdings, overrides);
   if (events.length === 0) return false;
-  await db.batch(prepareProductChangeEventStatements(db, userId, events));
+  await measure("maturities_commit", () => db.batch(prepareProductChangeEventStatements(db, userId, events)));
   // Even an ignored insert may have raced with another request that just wrote
   // this alert, after our history prefetch. Always reread when candidates exist.
   // INSERT OR IGNORE still preserves the existing event's read state.

@@ -22,8 +22,6 @@ type ManualDataSource = {
   syncDescription: string;
 };
 type ApiConfigResult = { sources: ApiCredentialSource[]; manualSources: ManualDataSource[] };
-type ManualRefreshCooldownMinutes = 0 | 30;
-type PreferencesResult = { manualRefreshCooldownMinutes: ManualRefreshCooldownMinutes };
 type CapabilityReport = {
   generatedAt: string;
   dataChangesCommitted: false;
@@ -43,7 +41,6 @@ type CapabilityReport = {
 };
 
 let apiConfigSessionCache: ApiConfigResult | null = null;
-let cooldownSessionCache: ManualRefreshCooldownMinutes | null = null;
 
 function isLocalRateLimitDemoUrl() {
   if (process.env.NODE_ENV === "production" || typeof window === "undefined") return false;
@@ -56,21 +53,14 @@ function rememberApiConfig(result: ApiConfigResult) {
   return result;
 }
 
-function rememberCooldown(minutes: ManualRefreshCooldownMinutes) {
-  cooldownSessionCache = minutes;
-  return minutes;
-}
-
-export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemoved }: { open: boolean; onClose: () => void; onCooldownChange: () => void; onCredentialsRemoved: () => Promise<void> }) {
+export function ApiSettings({ open, onClose, onCredentialsRemoved }: { open: boolean; onClose: () => void; onCredentialsRemoved: () => Promise<void> }) {
   const [status, setStatus] = useState<ApiConfigResult | null>(() => apiConfigSessionCache);
-  const [cooldownMinutes, setCooldownMinutes] = useState<ManualRefreshCooldownMinutes | null>(() => cooldownSessionCache);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pendingRemoval, setPendingRemoval] = useState<ApiCredentialSource | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [busy, setBusy] = useState(false);
-  const [savingCooldown, setSavingCooldown] = useState(false);
   const [apiCheckState, setApiCheckState] = useState(initialApiCheckUiState);
   const [capabilityReport, setCapabilityReport] = useState<CapabilityReport | null>(null);
   const [rateLimitDetected, setRateLimitDetected] = useState(false);
@@ -107,15 +97,6 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
 
   useEffect(() => {
     void loadStatus();
-    void fetch("/private/api/preferences", { cache: "no-store" })
-      .then((response) => {
-        if (!response.ok) throw new Error("preferences unavailable");
-        return response.json() as Promise<PreferencesResult>;
-      })
-      .then((result) => {
-        setCooldownMinutes(rememberCooldown(result.manualRefreshCooldownMinutes));
-      })
-      .catch(() => setCooldownMinutes(cooldownSessionCache ?? 30));
   }, []);
 
   useEffect(() => {
@@ -251,27 +232,6 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
     }
   }
 
-  async function updateCooldown(minutes: ManualRefreshCooldownMinutes) {
-    if (savingCooldown || cooldownMinutes === minutes) return;
-    setSavingCooldown(true);
-    setMessage(null);
-    try {
-      const response = await fetch("/private/api/preferences", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ manualRefreshCooldownMinutes: minutes }),
-      });
-      const result = await response.json() as PreferencesResult & { error?: string };
-      if (!response.ok) throw new Error(result.error || "保存失败");
-      setCooldownMinutes(rememberCooldown(result.manualRefreshCooldownMinutes));
-      onCooldownChange();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "设置保存失败，请稍后重试。");
-    } finally {
-      setSavingCooldown(false);
-    }
-  }
-
   async function probeCapabilities() {
     if (retryWaitSeconds > 0) return;
     if (capabilityCompletionTimer.current) clearTimeout(capabilityCompletionTimer.current);
@@ -354,7 +314,7 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
   }
 
   const probingCapabilities = apiCheckState.phase === "checking";
-  const modalBusy = busy || walletBusy || savingCooldown || probingCapabilities;
+  const modalBusy = busy || walletBusy || probingCapabilities;
   const retryWaitLabel = formatRetryWait(retryWaitSeconds);
 
   if (!open) return null;
@@ -429,18 +389,6 @@ export function ApiSettings({ open, onClose, onCooldownChange, onCredentialsRemo
             </form>}
           </SourceRow></div>}
         {walletMessage && <p className={`${walletMessageError ? "error-panel" : "muted-panel"} api-feedback-panel type-caption mt-3`} role={walletMessageError ? "alert" : "status"}>{walletMessage}</p>}
-      </section>
-      <section>
-        <div className="api-settings-split-row">
-          <SectionIntro title="手动刷新频率" description="仅限制账号维度手动刷新的间隔，不影响每日首次打开页面的自动刷新。" />
-          <div className="cooldown-options" role="radiogroup" aria-label="手动刷新冷却时间" aria-busy={cooldownMinutes === null || savingCooldown}>
-            {([{ value: 0, label: "无" }, { value: 30, label: "30 分钟" }] as const).map((option) => (
-              <button key={option.value} type="button" role="radio" aria-checked={cooldownMinutes === option.value} className="cooldown-option" disabled={cooldownMinutes === null || savingCooldown} onClick={() => void updateCooldown(option.value)}>
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </div>
       </section>
       <section>
         <div className="api-settings-split-row">

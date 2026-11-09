@@ -143,7 +143,7 @@ test("private route serves a static shell and keeps account data client-loaded",
   assert.match(history, /historyLoading \? "加载中…"/);
   assert.doesNotMatch(history, /product-history-loading-more/);
   assert.match(history, /暂无变更记录/);
-  assert.ok(apiSettings.indexOf('<SectionIntro title="配置 API"') < apiSettings.indexOf('<SectionIntro title="手动刷新频率"'));
+  assert.ok(apiSettings.indexOf('<SectionIntro title="配置 API"') < apiSettings.indexOf('<SectionIntro title="API 检测"'));
   assert.match(styles, /\.modal-body\s*\{[^}]*overscroll-behavior:\s*contain/s);
   assert.match(history, /className="product-history-popover surface-popover anchored-popover"/);
   assert.match(styles, /\.anchored-popover\s*\{[^}]*overscroll-behavior:\s*contain/s);

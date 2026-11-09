@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDatabase, getUserIdentity, isScheduledSyncEnabled } from "@/lib/db";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
-import { loadManualRefreshCooldown, manualRefreshCooldownMs } from "@/lib/user-settings";
 import { delayLocalPreviewScenario, isLocalPreviewRequest, localPreviewTime, localPrivateProductsPreview, localSyncScenarioPreview } from "@/lib/local-preview";
 import { cachedHoldingTimes } from "@/lib/holding-cache";
 import { loadProductChangeEvents, loadProductHistorySummaries } from "@/lib/product-change-events";
@@ -10,9 +9,7 @@ import { loadPrivateProductsSnapshot } from "@/lib/private-products-snapshot";
 import { syncDiagnostic, withSyncDiagnostics } from "@/lib/sync-diagnostics";
 import { sanitizeSyncFailure, scheduledRefreshPending } from "@/lib/sync-notice";
 import {
-  formatCacheTime,
   loadSyncCache,
-  manualCooldownUntil,
   syncAttemptInProgress,
   syncCacheMetadata,
   type SyncCacheRecord,
@@ -30,7 +27,7 @@ type DailyRefreshDiagnostic = {
 };
 
 export async function GET(request: Request) {
-  return withStartupServerTiming(request, (timing) => getProducts(request, timing));
+  return withStartupServerTiming(request, (timing) => getProducts(request, timing), { watchSlowProductRead: true });
 }
 
 async function getProducts(request: Request, timing: StartupServerTiming) {
@@ -90,15 +87,14 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
   const manual = refreshAllowed && params.get("refresh") === "1";
   const daily = refreshAllowed && !manual && params.get("visit") === "1";
   const diagnosticsEnabled = params.get("diagnostics") === "1";
-  let manualCooldownDuration: number;
   let pending = false;
   let dailyRefreshDiagnostic: DailyRefreshDiagnostic | undefined;
   function readHistory() {
     // Keep already-open older clients functional across a deployment. Only new
     // clients opt into summaries; they never download the legacy event payload.
     return timing.measure("history", async () => params.get("history") === "summary"
-      ? { historySummaries: await loadProductHistorySummaries(db, ownerId, timing.enabled ? timing : undefined) }
-      : { changeEvents: await loadProductChangeEvents(db, ownerId, 2000, timing.enabled ? timing : undefined) });
+      ? { historySummaries: await loadProductHistorySummaries(db, ownerId, timing) }
+      : { changeEvents: await loadProductChangeEvents(db, ownerId, 2000, timing) });
   }
   async function reply(response: Response, maturitiesRecorded = false, dailyRefresh?: { day: string; completed: boolean }, prefetchedHistory?: Awaited<ReturnType<typeof readHistory>>) {
     const body = await response.json() as Record<string, unknown>;
@@ -106,7 +102,7 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
     if (!scheduledSyncEnabled && cache && typeof cache === "object" && !Array.isArray(cache)) {
       body.cache = { ...(cache as Record<string, unknown>), scheduledAt: null, scheduledState: "disabled" };
     }
-    if (!maturitiesRecorded) await timing.measure("maturities", () => recordDueManualMaturities(db, ownerId));
+    if (!maturitiesRecorded) await timing.measure("maturities", () => recordDueManualMaturities(db, ownerId, timing));
     const history = prefetchedHistory ?? await readHistory();
     return NextResponse.json({
       ...body,
@@ -122,19 +118,18 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
     const now = Date.now();
     const state = busy || syncAttemptInProgress(record, now) ? "syncing" : record?.lastError ? "error" : "fresh";
     if (record?.payload) return cachedResponse(record, state,
-      state === "syncing" ? "正在更新数据中，请稍候。" : "已读取保存的数据。", now, manualCooldownDuration);
-    if (state === "error" && record) return initialErrorResponse(record, now, manualCooldownDuration);
-    return initialSyncingResponse(record, now, manualCooldownDuration, state);
+      state === "syncing" ? "正在更新数据中，请稍候。" : "已读取保存的数据。", now);
+    if (state === "error" && record) return initialErrorResponse(record, now);
+    return initialSyncingResponse(record, now, state);
   }
 
   // Ordinary polls never contact exchanges, including accounts without a cache.
   if (!manual && !daily) {
     const [saved, hasMaturityCandidates, history] = await Promise.all([
-      timing.measure("snapshot_read", () => loadPrivateProductsSnapshot<PrivateProductsPayload>(db, ownerId, privateCacheKey)),
-      timing.measure("maturities", () => recordDueManualMaturities(db, ownerId)),
+      timing.measure("snapshot_read", () => loadPrivateProductsSnapshot<PrivateProductsPayload>(db, ownerId, privateCacheKey, timing)),
+      timing.measure("maturities", () => recordDueManualMaturities(db, ownerId, timing)),
       params.get("history") === "summary" ? readHistory() : undefined,
     ]);
-    manualCooldownDuration = saved.cooldownMs;
     const day = refreshDay();
     // Counts are monotonic (events are append-only). A parallel summary may
     // predate a concurrent sync commit seen by the cache snapshot. Its count
@@ -147,7 +142,6 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
       completed: saved.dailyDay === day && Boolean(saved.record?.payload || saved.record?.lastError),
     }, currentHistory);
   }
-  manualCooldownDuration = manualRefreshCooldownMs(await timing.measure("settings", () => loadManualRefreshCooldown(db, identity.userId)));
   const dailyDay = daily ? refreshDay() : undefined;
   return withSyncDiagnostics(identity.userId, {
     trigger: daily ? "daily" : "manual",
@@ -176,12 +170,6 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
         dailyRefreshDiagnostic = { state: "skipped", reason: "already_attempted_today" };
         return reply(snapshot(cached));
       }
-      const cooldownUntil = manualCooldownUntil(cached, now, manualCooldownDuration);
-      if (manual && cooldownUntil) {
-        syncDiagnostic("refresh_skipped", { reason: "manual_cooldown" });
-        if (cached?.payload) return reply(cachedResponse(cached, "cooldown", `手动刷新冷却中，可在 ${formatCacheTime(cooldownUntil)} 后重试。`, now, manualCooldownDuration));
-        return reply(NextResponse.json({ error: `手动刷新冷却中，可在 ${formatCacheTime(cooldownUntil)} 后重试。` }, { status: 429 }));
-      }
       syncDiagnostic("refresh_dispatched");
       try {
         const saved = await timing.measure("sync", () => refreshPrivateProductsCache(db, identity.userId, {
@@ -191,7 +179,7 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
           dailyDay,
         }));
         if (daily) dailyRefreshDiagnostic = { state: "completed", result: saved.payload?.partial ? "partial" : "success" };
-        return reply(cachedResponse(saved, "updated", "已完成刷新。", Date.now(), manualCooldownDuration));
+        return reply(cachedResponse(saved, "updated", "已完成刷新。", Date.now()));
       } catch {
         const latest = await timing.measure("cache_read", () => loadSyncCache<PrivateProductsPayload>(db, identity.userId, privateCacheKey));
         if (daily) {
@@ -215,7 +203,6 @@ function cachedResponse(
   state: SyncCacheState,
   statusText: string,
   now: number,
-  manualCooldownDuration: number,
 ) {
   const payload = record.payload!;
   const failures = payload.failures ?? legacyFailures(payload.note);
@@ -235,7 +222,7 @@ function cachedResponse(
       : payload.holdingSyncStates,
     holdingPositions: payload.holdingPositions ?? [],
     fetchedAt: record.updatedAt ?? payload.fetchedAt,
-    cache: syncCacheMetadata(record, state, now, manualCooldownDuration),
+    cache: syncCacheMetadata(record, state, now),
     note: state === "syncing" ? statusText : `${statusText} ${normalizeLegacyNote(payload.note)}`.trim(),
     failures: responseFailures,
     fallbackUpdatedAt: state === "syncing" ? null : payload.fallbackUpdatedAt
@@ -246,7 +233,6 @@ function cachedResponse(
 function initialSyncingResponse(
   record: SyncCacheRecord<PrivateProductsPayload> | null,
   now: number,
-  manualCooldownDuration: number,
   state: SyncCacheState = "syncing",
 ) {
   return NextResponse.json({
@@ -262,17 +248,16 @@ function initialSyncingResponse(
     note: state === "syncing" ? "正在更新数据中，请稍候。" : "尚无成功数据。",
     failures: [],
     fallbackUpdatedAt: null,
-    cache: syncCacheMetadata(record, state, now, manualCooldownDuration),
+    cache: syncCacheMetadata(record, state, now),
   }, { headers: privateResponseHeaders });
 }
 
 function initialErrorResponse(
   record: SyncCacheRecord<PrivateProductsPayload>,
   now: number,
-  manualCooldownDuration: number,
 ) {
   return NextResponse.json({
     error: "交易所数据暂时无法获取，且当前账户尚无成功缓存。",
-    cache: syncCacheMetadata(record, "error", now, manualCooldownDuration),
+    cache: syncCacheMetadata(record, "error", now),
   }, { status: 502, headers: privateResponseHeaders });
 }
