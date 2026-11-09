@@ -54,6 +54,27 @@ function binance(account, amount, positionId, statuses = {}, dates = true) {
   };
 }
 
+test("sync preserves full-precision holdings while recording only visible changes", async () => {
+  const f = fixture();
+  try {
+    f.update({ binanceGlobalResult: binance("global", 300.781, "position") });
+    const first = await f.refresh();
+    const productId = first.products[0].id;
+    f.update({ binanceGlobalResult: binance("global", 300.784, "position") });
+    const unchangedDisplay = await f.refresh();
+    assert.equal(unchangedDisplay.holdingUpdates[productId], 300.784);
+    assert.equal(f.db.sqlite.prepare("SELECT amount FROM holdings WHERE user_id = ? AND product_id = ?").get("review-user", productId).amount, 300.784);
+    assert.equal(f.db.sqlite.prepare("SELECT COUNT(*) AS n FROM product_change_events WHERE product_id = ? AND change_type = 'holding'").get(productId).n, 0);
+
+    f.update({ binanceGlobalResult: binance("global", 300.786, "position") });
+    const changedDisplay = await f.refresh();
+    assert.equal(changedDisplay.holdingUpdates[productId], 300.786);
+    assert.equal(f.db.sqlite.prepare("SELECT amount FROM holdings WHERE user_id = ? AND product_id = ?").get("review-user", productId).amount, 300.786);
+    const history = f.db.sqlite.prepare("SELECT before_value, after_value FROM product_change_events WHERE product_id = ? AND change_type = 'holding'").all(productId);
+    assert.deepEqual(history.map(({ before_value, after_value }) => [before_value, after_value]), [["300.78", "300.79"]]);
+  } finally { f.close(); }
+});
+
 for (const [account, resultKey] of [["global", "binanceGlobalResult"], ["bahrain", "binanceBahrainResult"]]) {
   test(`${account}: complete locked holdings replace old positions despite flexible failure and persist their amount`, async () => {
     const f = fixture();

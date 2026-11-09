@@ -63,6 +63,40 @@ test("sync changes are classified and persisted in one shared event table", asyn
   assert.equal(stored.some((event) => event.type === "holding" && event.after === "120.00"), true);
 });
 
+test("holding history follows the displayed value in both sync and manual edits", () => {
+  const product = { id: "p", accountId: "binance-global", asset: "BTC", productType: "flexible", manualKind: "flexible", tiers: [] };
+  const cases = [
+    [300.781, 300.784, null],
+    [300.784, 300.786, ["300.78", "300.79"]],
+    [300.786, 300.784, ["300.79", "300.78"]],
+    [0, 0.000001, ["0.00", "<0.01"]],
+    [0.000001, 0.009, null],
+    [0.009, 0.01, ["<0.01", "0.01"]],
+    [0.000001, 0, ["<0.01", "0.00"]],
+  ];
+  for (const [before, after, expected] of cases) {
+    const sync = buildSyncChangeEvents(
+      { holdingUpdates: { p: before } }, { holdingUpdates: { p: after } }, "手动刷新", observedAt,
+    ).filter((event) => event.type === "holding");
+    const manual = buildManualChangeEvents(
+      { p: before }, { p: after }, {}, {}, [], [], [product],
+      { holdingProductIds: ["p"], overrideProductIds: [], manualProductIds: [], deletedManualProductIds: [] }, observedAt,
+    ).filter((event) => event.type === "holding");
+    assert.deepEqual(sync.map((event) => [event.before, event.after]), expected ? [expected] : [], `sync ${before} to ${after}`);
+    assert.deepEqual(manual.map((event) => [event.before, event.after]), expected ? [[`${expected[0]} BTC`, `${expected[1]} BTC`]] : [], `manual ${before} to ${after}`);
+  }
+});
+
+test("sub-cent changes still trigger a first-tier overflow alert", () => {
+  const rate = { productId: "p", apr: 8, tiers: [{ min: 0, max: 300, apr: 8 }], catalog: { asset: "USDT" } };
+  const events = buildSyncChangeEvents(
+    { rates: [rate], holdingUpdates: { p: 299.999 } },
+    { rates: [rate], holdingUpdates: { p: 300.001 } }, "手动刷新", observedAt,
+  );
+  assert.equal(events.some((event) => event.type === "holding"), false);
+  assert.equal(events.some((event) => event.title === "持仓超过首档额度" && event.attention), true);
+});
+
 test("a cached APR does not create a rate event, while a live quota change is still recorded", () => {
   const previous = {
     rates: [{

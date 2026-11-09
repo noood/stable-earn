@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
-function routeWithMocks({ identity = { userId: "owner" }, credential = { apiKey: "secret-key", apiSecret: "secret", passphrase: "pass" } } = {}) {
-  const calls = { credentials: [], probes: [], targetedProbes: [] };
+function routeWithMocks({ identity = { userId: "owner" }, credential = { apiKey: "secret-key", apiSecret: "secret", passphrase: "pass" }, traceProbe } = {}) {
+  const calls = { credentials: [], probes: [], targetedProbes: [], traces: [] };
   const probe = {
     scope: "Bitget Savings product APR and subscription capacity fields",
     dataChangesCommitted: false,
@@ -37,6 +37,10 @@ function routeWithMocks({ identity = { userId: "owner" }, credential = { apiKey:
       probeBitgetProductCapacity: async (...args) => {
         calls.targetedProbes.push(args);
         return { ...probe, scope: "Single Bitget product remaining amount evidence" };
+      },
+      probeBitgetUsdcProductTrace: async (...args) => {
+        calls.traces.push(args);
+        return traceProbe ? traceProbe(...args) : { status: "product_not_in_response" };
       },
     },
     "@/lib/request-security": {
@@ -76,6 +80,78 @@ test("Bitget product diagnostic is authenticated, same-origin, and does not expo
   assert.equal(JSON.stringify(body).includes("secret-key"), false);
   assert.equal(JSON.stringify(body).includes("secret"), false);
   assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+});
+
+test("product trace is restricted to one authenticated USDC product", async () => {
+  const invalid = routeWithMocks();
+  assert.equal((await invalid.get(request("GET", undefined, "?mode=trace&asset=USDT&productId=123"))).status, 400);
+  assert.equal(invalid.calls.credentials.length, 0);
+  const valid = routeWithMocks();
+  const response = await valid.get(request("GET", undefined, "?mode=trace&asset=USDC&productId=123"));
+  assert.equal(response.status, 200);
+  assert.deepEqual(valid.calls.traces[0].slice(1), ["123"]);
+  assert.equal(valid.calls.targetedProbes.length, 0);
+  assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+});
+
+test("concurrent diagnostics do not return another product's result", async () => {
+  let finish;
+  const pending = new Promise((resolve) => { finish = resolve; });
+  const route = routeWithMocks({ traceProbe: () => pending });
+  const first = route.get(request("GET", undefined, "?mode=trace&asset=USDC&productId=123"));
+  await new Promise((resolve) => setImmediate(resolve));
+  const other = await route.get(request("GET", undefined, "?mode=trace&asset=USDC&productId=456"));
+  assert.equal(other.status, 429);
+  finish({ status: "product_not_in_response", productId: "123" });
+  assert.equal((await (await first).json()).productId, "123");
+});
+
+test("USDC product trace distinguishes absent, filtered, available and failed responses without disclosing private data", async () => {
+  const target = "1489779095214833664";
+  let responseData = [];
+  let failure;
+  const calls = [];
+  const load = moduleLoader({
+    "@/lib/exchange-fetch": {
+      exchangeFetch: async (url, _init, options) => {
+        calls.push({ url: new URL(url), options });
+        if (failure) throw failure;
+        return new Response(JSON.stringify({ code: "00000", data: responseData }), { status: 200 });
+      },
+      readExchangeText: async (response) => response.text(),
+      logExchangePayload: () => {},
+    },
+    "@/lib/sync-diagnostics": { syncDiagnostic: () => {} },
+    "@/lib/platform-capabilities": { apiAssetsFor: () => [] },
+  });
+  const { probeBitgetUsdcProductTrace } = load("@/lib/integrations/bitget");
+  const probe = () => probeBitgetUsdcProductTrace({ apiKey: "key", apiSecret: "secret", passphrase: "pass" }, target);
+  assert.equal((await probe()).status, "product_not_in_response");
+  responseData = [{ productId: target, coin: "USDC", periodType: "flexible", status: "off_line", holdAmount: "private" }];
+  const filtered = await probe();
+  assert.equal(filtered.status, "product_in_response");
+  assert.equal(filtered.matchingOffline, true);
+  assert.equal(filtered.selectedWithoutHoldings, false);
+  responseData[0] = { ...responseData[0], status: "in_progress", apyType: "ladder", apyList: [{ minStepVal: "0", maxStepVal: "300000", currentApy: "11" }] };
+  const available = await probe();
+  assert.equal(available.selectedWithoutHoldings, true);
+  assert.equal(available.aprStatus, "available");
+  assert.equal(available.capacityStatus, "available");
+  assert.equal(JSON.stringify(available).includes("private"), false);
+  responseData = { unexpected: "shape" };
+  assert.equal((await probe()).status, "invalid_product_list");
+  failure = new Error("Bitget read-only API failed (429/40010)");
+  const limited = await probe();
+  assert.equal(limited.errorKind, "upstream_response");
+  assert.equal(limited.httpStatus, 429);
+  assert.equal(limited.apiCode, "40010");
+  failure = new TypeError("secret should not leak");
+  const failed = await probe();
+  assert.equal(failed.status, "request_failed");
+  assert.equal(failed.errorKind, "network_or_type_error");
+  assert.equal(JSON.stringify(failed).includes("secret"), false);
+  assert.equal(calls.every(({ url, options }) => url.pathname === "/api/v2/earn/savings/product"
+    && url.search === "?coin=USDC&filter=available_and_held" && options?.retry === false), true);
 });
 
 test("Bitget product diagnostic requires an existing complete read-only credential", async () => {

@@ -354,6 +354,64 @@ export async function probeBitgetProductCapacity(
   };
 }
 
+/** Compare a single USDC product in the upstream list with the product-only
+ * selection used by sync. No holdings or business data are read or written. */
+export async function probeBitgetUsdcProductTrace(credentials: BitgetCredentials, productId: string) {
+  const base = {
+    scope: "Bitget USDC product list trace",
+    asset: "USDC" as const,
+    productId,
+    includesHoldingAmounts: false,
+    dataChangesCommitted: false,
+    requestsStarted: 1,
+  };
+  let response: BitgetResponse<BitgetProductRow[]>;
+  try {
+    response = await signedGet<BitgetProductRow[]>(
+      "/api/v2/earn/savings/product",
+      new URLSearchParams({ coin: "USDC", filter: "available_and_held" }),
+      credentials,
+      { retry: false },
+    );
+  } catch (error) {
+    const match = error instanceof Error ? error.message.match(/^Bitget read-only API failed \((\d{3})\/(\d{1,10}|html|non_bitget_json)\)$/) : null;
+    return {
+      ...base,
+      status: "request_failed" as const,
+      errorKind: error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name) ? "timeout"
+        : match ? "upstream_response" : error instanceof TypeError ? "network_or_type_error" : "unknown",
+      ...(match ? { httpStatus: Number(match[1]), apiCode: match[2] } : {}),
+    };
+  }
+  if (!Array.isArray(response.data)) return { ...base, status: "invalid_product_list" as const };
+
+  // Compare before applying coin/type/status filters or normalizing the ID.
+  const matches = response.data.filter((row) => row && typeof row === "object"
+    && String(row.productId ?? "").trim() === productId);
+  if (!matches.length) return { ...base, status: "product_not_in_response" as const };
+
+  const productRows = matches.filter((row) => typeof row.productId === "string");
+  try {
+    // VIP selection depends on holdings; deliberately provide none and label
+    // the result accordingly rather than fetching private position data.
+    const selected = mergeBitgetRows("USDC", productRows, []).find((row) => row.externalProductId === productId);
+    return {
+      ...base,
+      status: "product_in_response" as const,
+      matchingRows: matches.length,
+      idIsString: productRows.length === matches.length,
+      matchingUsdc: matches.some((row) => row.coin === "USDC"),
+      matchingFlexible: matches.some((row) => row.periodType === "flexible"),
+      matchingOffline: matches.some((row) => row.status === "off_line"),
+      matchingVip: matches.some((row) => isBitgetVipLevel(typeof row.productLevel === "string" ? row.productLevel : undefined)),
+      selectedWithoutHoldings: Boolean(selected?.hasProductRow),
+      ...(selected ? { aprStatus: selected.aprStatus, capacityStatus: selected.capacityStatus, tierStructureStatus: selected.tierStructureStatus } : {}),
+    };
+  } catch {
+    return { ...base, status: "product_in_response" as const, matchingRows: matches.length, processingStatus: "error" as const };
+  }
+}
+
 type BitgetProductEvidenceRow = {
   asset: string;
   productId: string | null;
@@ -1140,7 +1198,7 @@ function strictBitgetNumber(value: string | number | null | undefined) {
   return parseExchangeNumber(value);
 }
 
-async function signedGet<Data>(path: string, query: URLSearchParams, credentials: BitgetCredentials) {
+async function signedGet<Data>(path: string, query: URLSearchParams, credentials: BitgetCredentials, options?: { retry?: boolean }) {
   const timestamp = String(Date.now());
   const queryString = query.toString();
   const requestPath = queryString ? `${path}?${queryString}` : path;
@@ -1161,7 +1219,7 @@ async function signedGet<Data>(path: string, query: URLSearchParams, credentials
         "ACCESS-PASSPHRASE": credentials.passphrase,
         locale: "en-US",
       },
-    });
+    }, options);
     const rawBody = await readExchangeText(response);
     let body: BitgetResponse<Data> = {};
     try {
