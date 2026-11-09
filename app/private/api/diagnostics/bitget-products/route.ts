@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { loadCredential } from "@/lib/credentials";
 import { getDatabase, getUserIdentity } from "@/lib/db";
-import { probeBitgetProductCapacity, probeBitgetProductEvidence } from "@/lib/integrations/bitget";
+import { probeBitgetProductCapacity, probeBitgetProductEvidence, probeBitgetUsdcProductTrace } from "@/lib/integrations/bitget";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
 
-const activeProbes = new Map<string, Promise<unknown>>();
+const activeProbes = new Map<string, { key: string; promise: Promise<unknown> }>();
 const lastProbeAt = new Map<string, number>();
 const cooldownMs = 30_000;
 const supportedAssets = new Set(["USDT", "USDC", "BTC", "USDGO"]);
@@ -32,6 +32,10 @@ async function handleDiagnostic(request: Request, requireMutationOrigin: boolean
   const url = new URL(request.url);
   const targetAsset = url.searchParams.get("asset");
   const targetProductId = url.searchParams.get("productId");
+  const trace = url.searchParams.get("mode");
+  if (trace && (trace !== "trace" || targetAsset !== "USDC" || !targetProductId || !/^\d{1,24}$/.test(targetProductId))) {
+    return NextResponse.json({ error: "产品追踪仅支持指定 USDC 和数字 productId。" }, { status: 400, headers: privateResponseHeaders });
+  }
   if ((targetAsset || targetProductId)
     && (!targetAsset || !supportedAssets.has(targetAsset) || !targetProductId || !/^\d{1,24}$/.test(targetProductId))) {
     return NextResponse.json(
@@ -41,8 +45,12 @@ async function handleDiagnostic(request: Request, requireMutationOrigin: boolean
   }
 
   try {
+    const probeKey = `${trace ?? "default"}:${targetAsset ?? ""}:${targetProductId ?? ""}`;
     const existing = activeProbes.get(identity.userId);
-    if (existing) return NextResponse.json(await existing, { headers: privateResponseHeaders });
+    if (existing) {
+      if (existing.key === probeKey) return NextResponse.json(await existing.promise, { headers: privateResponseHeaders });
+      return NextResponse.json({ error: "已有 Bitget 产品资料检查正在进行，请稍后再试。" }, { status: 429, headers: privateResponseHeaders });
+    }
 
     const remainingMs = (lastProbeAt.get(identity.userId) ?? 0) + cooldownMs - Date.now();
     if (remainingMs > 0) return cooldownResponse(Math.ceil(remainingMs / 1000));
@@ -59,14 +67,15 @@ async function handleDiagnostic(request: Request, requireMutationOrigin: boolean
         passphrase: credential.passphrase,
       };
       if (targetAsset && targetProductId) {
+        if (trace === "trace") return probeBitgetUsdcProductTrace(credentials, targetProductId);
         return probeBitgetProductCapacity(credentials, targetAsset as "USDT" | "USDC" | "BTC" | "USDGO", targetProductId);
       }
       return probeBitgetProductEvidence(credentials);
     })();
-    activeProbes.set(identity.userId, probe);
+    activeProbes.set(identity.userId, { key: probeKey, promise: probe });
     lastProbeAt.set(identity.userId, Date.now());
     void probe.finally(() => {
-      if (activeProbes.get(identity.userId) === probe) activeProbes.delete(identity.userId);
+      if (activeProbes.get(identity.userId)?.promise === probe) activeProbes.delete(identity.userId);
     }).catch(() => undefined);
 
     const result = await probe;

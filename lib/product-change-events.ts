@@ -148,11 +148,14 @@ export function buildSyncChangeEvents(
     const amount = Number(rawAmount);
     const before = Number(previousHoldings[productId]);
     if (!Number.isFinite(amount) || !Number.isFinite(before) || amount === before) continue;
+    const beforeDisplay = formatAmount(before);
+    const afterDisplay = formatAmount(amount);
+    if (beforeDisplay === afterDisplay) continue;
     add(productId, {
       type: "holding",
       title: "持仓变化",
-      before: formatAmount(before),
-      after: formatAmount(amount),
+      before: beforeDisplay,
+      after: afterDisplay,
     });
   }
 
@@ -219,11 +222,13 @@ export function buildManualChangeEvents(
     const product = productById.get(productId);
     const before = previousHoldings[productId] ?? 0;
     const after = nextHoldings[productId] ?? 0;
-    if (before !== after) add(productId, {
+    const beforeDisplay = formatAmount(before);
+    const afterDisplay = formatAmount(after);
+    if (beforeDisplay !== afterDisplay) add(productId, {
       type: "holding",
       title: "持仓变化",
-      before: `${formatAmount(before)} ${product?.asset ?? "USDT"}`,
-      after: `${formatAmount(after)} ${product?.asset ?? "USDT"}`,
+      before: `${beforeDisplay} ${product?.asset ?? "USDT"}`,
+      after: `${afterDisplay} ${product?.asset ?? "USDT"}`,
     });
   }
 

@@ -16,7 +16,7 @@
 | --- | --- | --- | --- |
 | 页面启动诊断 | 私有页面 URL 加 `?diagnostics=1`；已有查询参数时用 `&diagnostics=1` | 测量页面启动、账户读取与每日刷新，展示浏览器及服务端计时、资源和可用 D1 指标；含义与限制见[页面启动指标](#页面启动指标与限制)。不提供上游响应正文或交易所子请求明细 | 仅诊断模式返回状态与计时；浏览器内临时显示，不保存或上报面板内容，不改变刷新和页面状态 |
 | 平台能力检查器 | “数据源设置 → API 检测”；`POST /private/api/diagnostics/platform-capabilities` | 检查代码已知的平台 API 能力，覆盖产品/APR 与持仓；不是未知接口发现器 | 只读调用已配置账号；限流时会保存该用户的冷却时间；报告不写入产品或持仓 |
-| Bitget 产品专项探针 | `GET` 或 `POST /private/api/diagnostics/bitget-products` | 默认检查 Bitget 产品资料；可用 `?asset=USDC&productId=...` 指定单产品容量检查 | 只读产品接口，不读取持仓；当前 Worker 实例内每用户 30 秒冷却，不保证跨实例或实例重启后仍生效 |
+| Bitget 产品专项探针 | `GET` 或 `POST /private/api/diagnostics/bitget-products` | 默认检查 Bitget 产品资料；可用 `?asset=USDC&productId=...` 指定单产品容量检查；`?mode=trace&asset=USDC&productId=...` 对照单个产品在上游列表与产品筛选中的状态 | 只读产品接口，不读取持仓；当前 Worker 实例内每用户 30 秒冷却，不保证跨实例或实例重启后仍生效 |
 | Binance 定期产品专项探针 | `GET` 或 `POST /private/api/diagnostics/binance-locked-products` | 检查已配置 Binance Global/Bahrain 账号的定期产品 APR、额度和申购状态；不会请求持仓 | 每个已配置账号最多一次产品列表请求；当前 Worker 实例内每用户 30 秒冷却，不保证跨实例或实例重启后仍生效 |
 | Binance 活期档位专项探针 | `GET` 或 `POST /private/api/diagnostics/binance-usdc-tiers?asset=USDC` | 检查 USDC 活期 APR 档位；`asset` 支持 USDC、USDT、BTC，省略时默认为 USDC | 每个已配置 Binance 账号最多一次公开产品列表请求；不读持仓、不写产品/缓存/历史；当前 Worker 实例内每用户 30 秒冷却，不保证跨实例或实例重启后仍生效 |
 | Bitget USDGO 专项探针 | `POST /private/api/diagnostics/bitget-usdgo` | 一次读取 Bitget USDGO 产品与持仓接口能力，返回脱敏状态/计数 | 不写 D1 业务数据；会记录脱敏应用诊断字段；没有跨请求冷却 |
@@ -29,6 +29,8 @@
 2. 要确认项目内已知 API 能力或多平台同步状态：从设置页运行平台能力检查器。它范围较广，只有确实需要跨平台盘点时才运行。
 3. 已把问题缩小到某平台/币种/产品时：选择上表对应的专项探针，避免重复运行通用检查器。
 4. 要判断线上上游响应内容：以应用明确记录且脱敏的诊断字段为证据；Worker 请求日志中的 URL、HTTP 状态或 `outcome=ok` 本身不能说明产品数据字段是否正确。
+
+Bitget USDC 单产品追踪只请求一次产品列表，报告目标 ID 是否在原始列表、筛选条件及不带持仓时的选择结果，或安全分类的请求错误；不返回完整列表或凭证。VIP 产品是否保留还可能取决于持仓，此探针不检查持仓。列表中没有目标只证明本次指定请求未返回，不能单独证明产品下架、接口有缺陷或其他请求条件也没有该产品。探针检查的是运行时刻的结果，不能还原过去未记录的响应。
 
 私人产品缓存 GET 在执行超过 5 秒时，尽力输出一次 `product_cache_read_slow` 应用日志：随机请求关联 ID、经过时间、当时仍在执行的固定阶段、已结束阶段的结果与耗时，以及已经取得且允许记录的数据库指标；之后的阶段开始与结束记录为 `product_cache_read_phase`，新取得的数据库指标记录为 `product_cache_read_metric`，请求后续正常返回或抛错时，再输出同一 ID 的 `product_cache_read_finished`。重点阶段包括 `auth`、`auth_keys_fetch`、`database_init_wait`、`snapshot_query`（快照数据库调用）、`snapshot_parse`（解析返回的快照）、`maturities_catalog`、`maturities_user_products`、`maturities_holdings`、`maturities_commit` 以及 `history_summary`；父阶段和并行阶段可能同时进行。该 5 秒仅用于记录诊断，不是超时，也不会中止、重试或触发同步。普通快速读取不输出这些应用日志。字段只使用固定阶段名、耗时、状态和随机 ID，不包含账号、钱包、凭证、持仓、请求参数或响应正文；Cloudflare 自动生成的请求事件仍可能包含请求元数据，以其实际配置为准。
 
