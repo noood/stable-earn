@@ -52,7 +52,9 @@ export function buildSyncChangeEvents(
     const beforeApr = before ? primaryApr(before) : null;
     const afterApr = primaryApr(rate);
 
-    const previousHolding = knownSnapshotHolding(previous, rate.productId);
+    // A fallback retains the last confirmed balance, which is useful as the
+    // comparison baseline even though it cannot establish a new change.
+    const previousHolding = knownSnapshotHolding(previous, rate.productId, true);
     const currentHolding = knownSnapshotHolding(current, rate.productId);
     const beforeCapacity = before ? firstTierCapacity(before) : undefined;
     const afterCapacity = rate.capacitySource === "cache" ? undefined : firstTierCapacity(rate);
@@ -77,7 +79,7 @@ export function buildSyncChangeEvents(
         title: afterApr < beforeApr ? "首档 APR 下调" : "首档 APR 上调",
         before: formatApr(beforeApr),
         after: formatApr(afterApr),
-        attention: beforeApr >= minimumOpportunityApr && afterApr < minimumOpportunityApr,
+        attention: crossedOpportunityThreshold(beforeApr, afterApr),
       });
     }
 
@@ -96,7 +98,7 @@ export function buildSyncChangeEvents(
         ) ? "首档额度减少" : "首档额度增加",
         before: formatCapacity(beforeCapacity, rate.catalog?.asset),
         after: formatCapacity(afterCapacity, rate.catalog?.asset),
-        attention: false,
+        attention: rate.aprSource !== "cache" && afterApr !== null && afterApr >= minimumOpportunityApr,
       });
     }
 
@@ -236,8 +238,7 @@ export function buildManualChangeEvents(
       title: "APR 修改",
       before: formatManualApr(beforeApr),
       after: formatManualApr(afterApr),
-      attention: beforeApr !== null && afterApr !== null
-        && beforeApr >= minimumOpportunityApr && afterApr < minimumOpportunityApr,
+      attention: beforeApr !== null && afterApr !== null && crossedOpportunityThreshold(beforeApr, afterApr),
     });
     const beforeLimit = manualLimitValue(product, before);
     const afterLimit = manualLimitValue(product, after);
@@ -246,7 +247,8 @@ export function buildManualChangeEvents(
       title: "首档额度修改",
       before: formatManualLimit(product, before),
       after: formatManualLimit(product, after),
-      attention: false,
+      attention: beforeLimit !== undefined && afterLimit !== undefined
+        && afterApr !== null && afterApr >= minimumOpportunityApr,
     });
     if ((before?.termDays ?? null) !== (after?.termDays ?? null)) add(productId, {
       type: "maturity",
@@ -564,10 +566,14 @@ function firstTierCapacity(rate: LiveRate): number | null | undefined {
   return typeof max === "number" && Number.isFinite(max) ? max : undefined;
 }
 
-function knownSnapshotHolding(snapshot: ProductSnapshotForChanges, productId: string) {
-  if (snapshot.holdingFallbacks?.[productId] !== undefined) return undefined;
+function knownSnapshotHolding(snapshot: ProductSnapshotForChanges, productId: string, allowFallback = false) {
+  if (!allowFallback && snapshot.holdingFallbacks?.[productId] !== undefined) return undefined;
   const value = snapshot.holdingUpdates?.[productId];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function crossedOpportunityThreshold(before: number, after: number) {
+  return (before >= minimumOpportunityApr) !== (after >= minimumOpportunityApr);
 }
 
 function overCapacityState(holding: number | undefined, capacity: number | null | undefined) {

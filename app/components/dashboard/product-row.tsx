@@ -9,7 +9,7 @@ import { effectiveApr, formatAmount, type Account, type HoldingPosition, type Ho
 import { dateOnlyFromTimestamp, formatShortDate, manualFirstTierIsUnlimited, productNeedsManualApr, productNeedsManualLimit, productNeedsManualTerm, productNeedsManualType, productNeedsManualPurchaseDate, productTermDays, productTermStatus, productTypeIsResolved, type ProductOverride } from "@/lib/product-overrides";
 import { holdingSyncNote, productCapacityIsIncomplete, productInformationIssues, productInformationNote, type ProductInformationIssue } from "@/lib/product-status";
 import { apiFieldCapability } from "@/lib/api-capabilities";
-import { rateHeadlineFor } from "@/lib/product-rate-presentation";
+import { rateAprTone, rateHeadlineFor } from "@/lib/product-rate-presentation";
 import { accounts } from "@/lib/seed-data";
 import { hasCompletePurchaseTiming, type HoldingTiming } from "@/lib/holding-timing";
 import { productKindLabel } from "@/lib/product-kind";
@@ -120,7 +120,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
   const lifecycleValue = <>{lifecycleDateLabel}{termStatusText && <><span className="product-fact-separator">｜</span><span className={lifecycleStatusWarning ? "product-fact-danger" : "product-fact-note"}>{termStatusText}</span></>}</>;
   const rateExplanation = product.exchange === "bitget-wallet" ? <p>整体 APR 包含基础收益和奖励利率。奖励每 8 小时结算一次，赎回时空投到钱包余额。</p> : undefined;
 
-  return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
+  return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} apr={product.rateCoverage === "unavailable" ? undefined : product.tiers[0]?.apr} />
     {(!editing || !manualProduct) && fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
     {(!editing || !manualProduct) && qualificationFact && <ProductFact label="申购资格" value={qualificationFact} />}
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
@@ -157,8 +157,10 @@ function apiMaturityIsPast(value: string) {
   return Date.parse(value) <= Date.now();
 }
 
-function ProductRateHeadline({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
-  return <div className="product-rate-headline"><span>{label}</span><span className={`status-chip ${muted ? "status-chip-muted" : "status-chip-highlight"}`}>{value}</span></div>;
+function ProductRateHeadline({ label, value, apr }: { label: string; value: string; apr?: number }) {
+  const tone = rateAprTone(apr);
+  const toneClass = tone === "missing" ? "status-chip-muted" : tone === "base" ? "status-chip-highlight" : `status-chip-apr-${tone}`;
+  return <div className="product-rate-headline"><span>{label}</span><span className={`status-chip ${toneClass}`}>{value}</span></div>;
 }
 
 function ProductFact({ label, value }: { label: string; value: ReactNode }) {

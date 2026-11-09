@@ -876,6 +876,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         userEmail={userEmail}
         demo={isDemo}
         loading={openingLoading || loading || personalDataLoading}
+        manualRefreshing={manualRefreshInProgress}
         manualRefreshCooling={manualRefreshCooling}
         cooldownUntil={manualRefreshAvailableAt}
         onManualRefresh={handleManualRefresh}
@@ -964,7 +965,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         <DashboardFooter />
       </div>
 
-      {!isDemo && apiSettingsMounted && <ApiSettings open={showApiSettings} onClose={() => setShowApiSettings(false)} onCooldownChange={() => setManualRefreshAvailableAt(null)} onCredentialsRemoved={async () => {
+      {!isDemo && apiSettingsMounted && <ApiSettings open={showApiSettings} onClose={() => setShowApiSettings(false)} onCredentialsRemoved={async () => {
         // A response started before a wallet/config change must never restore its old balances or refresh marker.
         productRequestGenerationRef.current += 1;
         refreshInFlightRef.current = false;
@@ -993,12 +994,12 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   );
 }
 
-function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUntil, onManualRefresh, onApiSettings }: { userEmail: string | null; demo: boolean; loading: boolean; manualRefreshCooling: boolean; cooldownUntil: string | null; onManualRefresh: () => void; onApiSettings: () => void }) {
+function HeaderMenu({ userEmail, demo, loading, manualRefreshing, manualRefreshCooling, cooldownUntil, onManualRefresh, onApiSettings }: { userEmail: string | null; demo: boolean; loading: boolean; manualRefreshing: boolean; manualRefreshCooling: boolean; cooldownUntil: string | null; onManualRefresh: () => void; onApiSettings: () => void }) {
   const menuRef = useDismissibleDetails();
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutFailed, setLogoutFailed] = useState(false);
   const cooldownTime = cooldownUntil ? new Date(cooldownUntil).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : null;
-  const refreshLabel = loading
+  const refreshLabel = manualRefreshing
     ? "正在刷新…"
     : <><span>手动刷新</span>{manualRefreshCooling && cooldownTime && <span className="menu-item-refresh-note">冷却至 {cooldownTime}</span>}</>;
 
@@ -1026,7 +1027,7 @@ function HeaderMenu({ userEmail, demo, loading, manualRefreshCooling, cooldownUn
     setLogoutFailed(true);
   }
 
-  return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><span aria-hidden="true">⋯</span></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}{!demo && <button type="button" disabled={loading || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-refresh">{refreshLabel}</button>}<button type="button" onClick={(event) => closeMenu(event, onApiSettings)} className="menu-item">数据源设置</button>{!demo && <form action="/logout" method="post" onSubmit={submitLogout}><button type="submit" disabled={logoutPending} className="menu-item menu-item-danger">{logoutPending ? "正在退出…" : "退出登录"}</button>{logoutFailed && <p className="px-3 pb-2 type-caption text-danger" role="status">退出失败，请重试。</p>}</form>}</div></details></div>;
+  return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><span aria-hidden="true">⋯</span></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}{!demo && <button type="button" disabled={loading || manualRefreshing || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-refresh">{refreshLabel}</button>}<button type="button" onClick={(event) => closeMenu(event, onApiSettings)} className="menu-item">数据源设置</button>{!demo && <form action="/logout" method="post" onSubmit={submitLogout}><button type="submit" disabled={logoutPending} className="menu-item menu-item-danger">{logoutPending ? "正在退出…" : "退出登录"}</button>{logoutFailed && <p className="px-3 pb-2 type-caption text-danger" role="status">退出失败，请重试。</p>}</form>}</div></details></div>;
 }
 
 async function loadProductHistoryPage(productId: string, cursor: string | null): Promise<ProductHistoryPage> {

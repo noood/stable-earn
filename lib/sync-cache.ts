@@ -1,6 +1,5 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 
-const DEFAULT_MANUAL_REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
 export const SYNC_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
 
 export type ScheduledRefreshState = "scheduled" | "syncing" | "overdue";
@@ -58,14 +57,6 @@ export function parseSyncCacheRow<T>(row: SyncCacheRow): SyncCacheRecord<T> {
   };
 }
 
-export function manualCooldownUntil(
-  record: SyncCacheRecord<unknown> | null,
-  now = Date.now(),
-  durationMs = DEFAULT_MANUAL_REFRESH_COOLDOWN_MS,
-) {
-  return futureTime(record?.lastManualAt, durationMs, now);
-}
-
 /**
  * A scheduled refresh records its attempt before contacting any exchange.
  * Until the cache is saved or a final error is recorded, a recent attempt is
@@ -83,7 +74,6 @@ export function syncCacheMetadata(
   record: SyncCacheRecord<unknown> | null,
   state: SyncCacheState,
   now = Date.now(),
-  manualCooldownMs = DEFAULT_MANUAL_REFRESH_COOLDOWN_MS,
 ): SyncCacheMetadata {
   const updatedAt = record?.updatedAt ?? null;
   const schedule = scheduledRefreshMetadata(record, now);
@@ -91,7 +81,7 @@ export function syncCacheMetadata(
     state,
     updatedAt,
     expiresAt: null,
-    cooldownUntil: manualCooldownUntil(record, now, manualCooldownMs),
+    cooldownUntil: null, // Kept for clients open during deployment.
     lastAttemptAt: record?.lastAttemptAt ?? null,
     lastError: record?.lastError ?? null,
     ...schedule,
@@ -211,12 +201,6 @@ export function formatCacheTime(value: string | null) {
     minute: "2-digit",
     hour12: false,
   }).format(new Date(value));
-}
-
-function futureTime(value: string | null | undefined, durationMs: number, now: number) {
-  const base = timestamp(value);
-  if (base === null || base + durationMs <= now) return null;
-  return new Date(base + durationMs).toISOString();
 }
 
 function timestamp(value: string | null | undefined) {

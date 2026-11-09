@@ -30,7 +30,9 @@ export async function getDatabase() {
     });
     databaseInitializations.set(db, initialization);
   }
-  await initialization;
+  const timing = currentStartupTiming();
+  if (timing) await timing.measure("database_init_wait", () => initialization);
+  else await initialization;
 
   return db;
 }

@@ -10,6 +10,7 @@ const {
   buildSyncChangeEvents,
   loadProductChangeEventPage,
   loadProductChangeEvents,
+  loadProductHistorySummaries,
   markProductChangeEventsRead,
   prepareProductChangeEventStatements,
 } = load("@/lib/product-change-events");
@@ -90,6 +91,7 @@ test("a cached APR does not create a rate event, while a live quota change is st
   assert.deepEqual(events.map((event) => event.type), ["capacity"]);
   assert.equal(events[0].before, "300.00 USDT");
   assert.equal(events[0].after, "250.00 USDT");
+  assert.equal(events[0].attention, false, "an unconfirmed cached APR cannot qualify the quota change");
 });
 
 test("product history can page beyond the former global 2,000 event limit", async () => {
@@ -185,7 +187,7 @@ test("an omitted quota is unknown, while an explicit unlimited quota is comparab
     "定时刷新",
     observedAt,
   );
-  assert.deepEqual(unlimitedToLimited.map((event) => [event.before, event.after, event.attention]), [["不限额", "300.00 USDT", false]]);
+  assert.deepEqual(unlimitedToLimited.map((event) => [event.before, event.after, event.attention]), [["不限额", "300.00 USDT", true]]);
 
   const limitedToUnlimited = buildSyncChangeEvents(
     { rates: [{ productId: "api-usdt", apr: 6, tiers: [{ min: 0, max: 300, apr: 6 }] }] },
@@ -195,7 +197,7 @@ test("an omitted quota is unknown, while an explicit unlimited quota is comparab
     "定时刷新",
     observedAt,
   );
-  assert.deepEqual(limitedToUnlimited.map((event) => [event.before, event.after, event.attention]), [["300.00 USDT", "不限额", false]]);
+  assert.deepEqual(limitedToUnlimited.map((event) => [event.before, event.after, event.attention]), [["300.00 USDT", "不限额", true]]);
 });
 
 test("a refresh records a maturity when an existing position crosses its redeem date", () => {
@@ -218,11 +220,12 @@ test("a refresh records a maturity when an existing position crosses its redeem 
   assert.deepEqual(newlyDiscoveredFuturePosition, []);
 });
 
-test("APR alerts only on a downward crossing below 6%, then can alert again after recovery", () => {
+test("APR alerts on either crossing of 6%, but not fluctuations on the same side", () => {
   const snapshot = (apr) => ({ rates: [{ productId: "api-usdt", apr, tiers: [{ min: 0, max: 500, apr }] }] });
   assert.equal(buildSyncChangeEvents(snapshot(6), snapshot(5.9), "定时刷新", observedAt)[0].attention, true);
   assert.equal(buildSyncChangeEvents(snapshot(5.9), snapshot(5), "定时刷新", observedAt)[0].attention, false);
-  assert.equal(buildSyncChangeEvents(snapshot(5), snapshot(6), "定时刷新", observedAt)[0].attention, false);
+  assert.equal(buildSyncChangeEvents(snapshot(5), snapshot(6), "定时刷新", observedAt)[0].attention, true);
+  assert.equal(buildSyncChangeEvents(snapshot(6), snapshot(6.1), "定时刷新", observedAt)[0].attention, false);
   assert.equal(buildSyncChangeEvents(snapshot(6.1), snapshot(5.9), "定时刷新", observedAt)[0].attention, true);
 });
 
@@ -233,8 +236,7 @@ test("capacity alerts only when known holdings enter over-capacity, and reset af
     holdingFallbacks,
   });
   const entered = buildSyncChangeEvents(snapshot(450, 500), snapshot(450, 300), "定时刷新", observedAt);
-  assert.equal(entered.filter((event) => event.attention).length, 1);
-  assert.equal(entered.find((event) => event.attention)?.title, "持仓超过首档额度");
+  assert.equal(entered.filter((event) => event.title === "持仓超过首档额度" && event.attention).length, 1);
 
   const stillOver = buildSyncChangeEvents(snapshot(450, 300), snapshot(470, 300), "定时刷新", observedAt);
   assert.equal(stillOver.some((event) => event.attention), false);
@@ -245,6 +247,52 @@ test("capacity alerts only when known holdings enter over-capacity, and reset af
 
   const unknown = buildSyncChangeEvents(snapshot(250, 300), snapshot(450, 300, { "api-usdt": observedAt }), "定时刷新", observedAt);
   assert.equal(unknown.some((event) => event.attention), false);
+  const recoveredAfterFallback = buildSyncChangeEvents(snapshot(450, 300, { "api-usdt": observedAt }), snapshot(470, 300), "定时刷新", observedAt);
+  assert.equal(recoveredAfterFallback.some((event) => event.title === "持仓超过首档额度"), false);
+  const newOverAfterFallback = buildSyncChangeEvents(snapshot(250, 300, { "api-usdt": observedAt }), snapshot(450, 300), "定时刷新", observedAt);
+  assert.equal(newOverAfterFallback.some((event) => event.title === "持仓超过首档额度" && event.attention), true);
+});
+
+test("confirmed quota changes alert only when the new APR is at least 6%", () => {
+  const snapshot = (apr, cap, extra = {}) => ({ rates: [{ productId: "p", apr, tiers: [{ min: 0, max: cap, apr }], ...extra }] });
+  const changes = (before, after) => buildSyncChangeEvents(before, after, "手动刷新", observedAt);
+  assert.equal(changes(snapshot(6, 300), snapshot(6, 1000))[0].attention, true);
+  assert.equal(changes(snapshot(7, 300), snapshot(6, 100)).find((e) => e.type === "capacity").attention, true);
+  assert.equal(changes(snapshot(6, 300), snapshot(5.9, 1000)).find((e) => e.type === "capacity").attention, false);
+  assert.equal(changes(snapshot(5.9, 300), snapshot(5.9, 1000))[0].attention, false);
+  assert.deepEqual(changes(snapshot(6, 300), snapshot(6, 300)), []);
+  const both = changes(snapshot(5.9, 300), snapshot(6, 1000));
+  assert.deepEqual(both.map((e) => [e.type, e.attention]), [["rate", true], ["capacity", true]]);
+  assert.deepEqual(changes(null, snapshot(6, 1000)), []);
+  assert.equal(changes(snapshot(7, 300), snapshot(7, 1000, { capacitySource: "cache" })).length, 0);
+});
+
+test("manual APR and known quota changes follow the same opportunity rules", () => {
+  const product = { id: "p", asset: "USDT", productType: "flexible", productDataMode: "manual", source: { kind: "manual" }, tiers: [] };
+  const settings = (apr, firstTierLimit, firstTierUnlimited = false) => ({ apr, firstTierLimit, firstTierUnlimited, termDays: null, purchaseDate: null, updatedAt: null });
+  const changes = (before, after) => buildManualChangeEvents({}, {}, { p: before }, { p: after }, [], [], [product],
+    { holdingProductIds: [], overrideProductIds: ["p"], manualProductIds: [], deletedManualProductIds: [] }, observedAt);
+  const both = changes(settings(5.9, 300), settings(6, 1000));
+  assert.deepEqual(both.map((e) => [e.type, e.attention]), [["rate", true], ["capacity", true]]);
+  assert.equal(changes(settings(6, 300), settings(6, 100))[0].attention, true);
+  assert.equal(changes(settings(5.9, 300), settings(5.9, 100))[0].attention, false);
+  assert.equal(changes(settings(6, null), settings(6, 100))[0].attention, false);
+  assert.equal(changes(settings(6, 100), settings(6, null, true))[0].attention, true);
+  assert.deepEqual(changes(settings(6, 100), settings(6, 100)), []);
+});
+
+test("simultaneous opportunity changes remain one product alert until both events are read", async () => {
+  const snapshot = (apr, cap) => ({ rates: [{ productId: "p", apr, tiers: [{ min: 0, max: cap, apr }] }] });
+  const events = buildSyncChangeEvents(snapshot(5.9, 300), snapshot(6, 1000), "手动刷新", observedAt);
+  const db = sqliteDb();
+  await db.batch(prepareProductChangeEventStatements(db, "user-1", events));
+  assert.deepEqual(await loadProductHistorySummaries(db, "user-1"), [{ productId: "p", eventCount: 2, unreadCount: 2 }]);
+  await markProductChangeEventsRead(db, "user-1", "p", [events[0].id], observedAt);
+  assert.equal((await loadProductHistorySummaries(db, "user-1"))[0].unreadCount, 1);
+  await markProductChangeEventsRead(db, "user-1", "p", [events[1].id], observedAt);
+  assert.equal((await loadProductHistorySummaries(db, "user-1"))[0].unreadCount, 0);
+  assert.deepEqual(buildSyncChangeEvents(snapshot(6, 1000), snapshot(6, 1000), "手动刷新", observedAt), []);
+  db.sqlite.close();
 });
 
 test("manual edits are recorded with the manual source", () => {
@@ -294,10 +342,9 @@ test("manual capacity alerts are transition-based and reset when holdings return
     observedAt,
   );
   const entered = change({ "manual-usdt": 450 }, { "manual-usdt": 450 }, previousOverrides, lowLimit);
-  assert.equal(entered.filter((event) => event.attention).length, 1);
-  assert.equal(entered.find((event) => event.attention).title, "持仓超过首档额度");
+  assert.equal(entered.filter((event) => event.title === "持仓超过首档额度" && event.attention).length, 1);
   const recoveredLimit = change({ "manual-usdt": 450 }, { "manual-usdt": 450 }, lowLimit, previousOverrides);
-  assert.equal(recoveredLimit.some((event) => event.attention), false);
+  assert.equal(recoveredLimit.some((event) => event.title === "持仓超过首档额度"), false);
   const reentered = change({ "manual-usdt": 450 }, { "manual-usdt": 450 }, previousOverrides, lowLimit);
   assert.equal(reentered.some((event) => event.attention), true);
 });

@@ -184,7 +184,7 @@ test("sync logs preserve platform outcomes before total failure and correlate sc
   assert.equal(partial.bitgetHoldings, false);
 });
 
-test("first opening is one refresh per Shanghai day across devices, separate from manual cooldown", async () => {
+test("first opening is one refresh per Shanghai day while manual refreshes have no interval", async () => {
   const f = fixture();
   const first = await f.read("?visit=1");
   assert.equal(first.cache.state, "updated");
@@ -199,12 +199,15 @@ test("first opening is one refresh per Shanghai day across devices, separate fro
   assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 1);
   assert.equal(f.logs.some((entry) => entry.event === "refresh_skipped" && entry.reason === "daily_refresh_already_committed"), true);
   assert.equal(f.logs.some((entry) => Object.hasOwn(entry, "ownerId")), false);
+  f.db.sqlite.prepare("INSERT INTO user_settings (user_id, manual_refresh_cooldown_minutes, updated_at) VALUES (?, 30, ?)").run("test-user", "2026-09-05T00:00:00Z");
   await f.read("?refresh=1");
   assert.equal(f.logs.at(-1).trigger, "manual");
-  assert.equal((await f.read("?refresh=1")).cache.state, "cooldown");
+  const secondManual = await f.read("?refresh=1");
+  assert.equal(secondManual.cache.state, "updated");
+  assert.equal(secondManual.cache.cooldownUntil, null);
   f.setTime("2026-09-05T16:00:00Z"); // midnight in Shanghai, not UTC
   assert.equal((await f.read("?visit=1")).cache.state, "updated");
-  assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 3);
+  assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 4);
 });
 
 test("daily refresh diagnostics report request handling only in diagnostic mode", async () => {
@@ -271,10 +274,10 @@ test("cache, maturity and history reads overlap without a second history read wh
   let snapshotStarted = false, maturityStarted = false;
   f.db.prepare = (sql) => ({ bind(...args) {
     const statement = prepare(sql).bind(...args);
-    if (sql.includes("FROM (SELECT ? AS owner_id)")) return { ...statement, first: async () => {
+    if (sql.includes("FROM (SELECT ? AS owner_id)")) return { ...statement, all: async () => {
       snapshotStarted = true;
       await gate;
-      return statement.first();
+      return statement.all();
     } };
     if (sql.includes("FROM holdings h")) return { ...statement, all: async () => {
       maturityStarted = true;
@@ -374,7 +377,7 @@ test("parallel history cannot lag behind a concurrent commit observed by the cac
     const gate = new Promise((resolve) => { release = resolve; });
     f.db.prepare = (sql) => ({ bind(...args) {
       const statement = prepare(sql).bind(...args);
-      const method = delayed === "snapshot" && sql.includes("FROM (SELECT ? AS owner_id)") ? "first"
+      const method = delayed === "snapshot" && sql.includes("FROM (SELECT ? AS owner_id)") ? "all"
         : delayed === "history" && isHistoryRead(sql) ? "all" : null;
       if (!method) return statement;
       return { ...statement, [method]: async () => { blocked = true; await gate; return statement[method](); } };
@@ -415,7 +418,7 @@ test("an already-completed daily visit exposes its storage stages without dispat
     method: "POST", headers: { origin: "http://test" },
   }));
   const header = response.headers.get("server-timing");
-  for (const stage of ["auth", "database", "settings", "lock_acquire", "cache_read", "daily_check", "maturities", "history", "lock_release"]) {
+  for (const stage of ["auth", "database", "lock_acquire", "cache_read", "daily_check", "maturities", "history", "lock_release"]) {
     assert.ok(header.includes(`${stage};dur=`), stage);
   }
   assert.doesNotMatch(header, /(?:^|,)sync;dur=/);
@@ -661,13 +664,15 @@ test("first scheduled attempt has syncing state without a successful cache", asy
   assert.deepEqual(response.failures, []);
 });
 
-test("manual cooldown must not hide the previous total failure", async () => {
+test("manual refresh can retry immediately after a failed refresh", async () => {
   const f = fixture();
   await f.refresh();
   f.step("error");
   await assert.rejects(f.refresh({ manual: true }));
   const response = await f.read("?refresh=1");
-  assert.equal(response.cache.state, "cooldown");
+  assert.equal(response.cache.state, "error");
+  assert.equal(response.cache.cooldownUntil, null);
+  assert.equal(f.logs.filter((r) => r.event === "sync_started").length, 3);
   assert.deepEqual(response.failures, ["产品和持仓数据更新失败"]);
   assert.ok(response.holdingFallbacks["bg-usdc"]);
 });

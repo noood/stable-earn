@@ -127,6 +127,37 @@ test("signed-out demo shows two synthetic product changes without requesting pri
   expect(privateHistoryRequests).toBe(0);
 });
 
+test("APR badges use the displayed rate in view and edit modes", async ({ page }, testInfo) => {
+  await page.route("**/private/api/products**", async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== "GET" || url.searchParams.get("preview") !== "1") return route.continue();
+    const response = await route.fetch();
+    const payload = await response.json();
+    for (const [id, apr] of [["bn-g-usdt", 5.8], ["bn-bh-usdt", 6], ["bg-usdt-simple", 9], ["bg-usdt-promo", 12]]) {
+      payload.products.find((product) => product.id === id).tiers[0].apr = apr;
+    }
+    payload.holdingUpdates["bg-usdt-promo"] = 10;
+    await route.fulfill({ response, json: payload });
+  });
+  await page.goto("/private");
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+  for (const editing of [false, true]) {
+    if (editing) await page.getByRole("button", { name: "编辑持仓" }).click();
+    for (const [account, rate, expectedClass] of [
+      ["Binance Global", "5.80%", "status-chip-apr-low"],
+      ["Binance Bahrain", "6.00%", "status-chip-highlight"],
+      ["Bitget", "9.00%", "status-chip-apr-medium"],
+      ["Bitget", "12.00%", "status-chip-apr-high"],
+    ]) {
+      const headline = page.locator("tr.product-row").filter({ hasText: account })
+        .locator(".product-rate-headline").filter({ hasText: rate });
+      await expect(headline.locator(".status-chip")).toHaveClass(new RegExp(expectedClass));
+      if (expectedClass === "status-chip-apr-high") await expect(headline.locator(".status-chip")).toHaveCSS("color", "rgb(24, 32, 29)");
+    }
+    if (!editing) await page.screenshot({ path: testInfo.outputPath("apr-colors.png"), fullPage: true, animations: "disabled" });
+  }
+});
+
 test("an unknown API quota shows a red warning instead of unlimited capacity", async ({ page }) => {
   await page.route("**/private/api/products**", async (route) => {
     const url = new URL(route.request().url());
@@ -586,7 +617,7 @@ test("top notice keeps success, partial failure, total failure, read failure and
   await expect(notice.getByRole("button", { name: "手动刷新" })).toHaveCount(0);
 });
 
-test("API settings modal keeps its four sections, truthful account copy, and report feedback", async ({ page }) => {
+test("API settings modal keeps its three sections, truthful account copy, and report feedback", async ({ page }) => {
   await page.route("**/private/api/credentials", async (route) => {
     await route.fulfill({
       status: 200,
@@ -636,7 +667,7 @@ test("API settings modal keeps its four sections, truthful account copy, and rep
     const dialog = page.getByRole("dialog", { name: "数据源设置" });
     await expect(dialog).toBeVisible();
     const sectionHeadings = await dialog.locator(".api-settings-body h3").allTextContents();
-    expect(sectionHeadings.slice(0, 4)).toEqual(["配置 API", "钱包地址", "手动刷新频率", "API 检测"]);
+    expect(sectionHeadings).toEqual(["配置 API", "钱包地址", "API 检测"]);
     const modalBody = dialog.locator(".api-settings-body");
     const modalBodyBox = await modalBody.boundingBox();
     expect(modalBodyBox).not.toBeNull();
@@ -652,16 +683,7 @@ test("API settings modal keeps its four sections, truthful account copy, and rep
     await expect(closeButton).toHaveCSS("height", "32px");
     await expect(closeButton.locator("svg")).toHaveCSS("width", "20px");
     await expect.poll(() => closeButton.locator("svg path").evaluate((path) => path.getBBox().width)).toBe(12);
-    await expect(dialog.getByRole("heading", { name: "手动刷新频率" })).toBeVisible();
-    const cooldownOptions = dialog.getByRole("radiogroup", { name: "手动刷新冷却时间" });
-    await expect(cooldownOptions).toHaveCSS("width", "160px");
-    await expect(cooldownOptions).toHaveCSS("height", "40px");
-    const noCooldown = dialog.getByRole("radio", { name: "无" });
-    await expect(noCooldown).toBeVisible();
-    await expect(noCooldown).toHaveCSS("font-size", "14px");
-    await expect(noCooldown).toHaveCSS("line-height", "20px");
-    await expect(dialog.getByRole("radio", { name: "30 分钟" })).toHaveAttribute("aria-checked", "true");
-    await expect(dialog.getByText("仅限制账号维度手动刷新的间隔，不影响每日首次打开页面的自动刷新。")).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "手动刷新频率" })).toHaveCount(0);
 
     await expect(dialog.getByRole("heading", { name: "配置 API" })).toBeVisible();
     await expect(dialog.locator(".api-settings-body > section").first()).toHaveCSS("margin-block-end", "32px");
@@ -696,7 +718,6 @@ test("API settings modal keeps its four sections, truthful account copy, and rep
     await expect(checkButton).toHaveCSS("border-radius", await addButton.evaluate((button) => getComputedStyle(button).borderRadius));
     await expect(checkButton).toHaveCSS("padding-left", await editHoldingsButton.evaluate((button) => getComputedStyle(button).paddingLeft));
     await expect(checkButton).toHaveCSS("border-radius", await editHoldingsButton.evaluate((button) => getComputedStyle(button).borderRadius));
-    await expect(cooldownOptions).toHaveCSS("height", checkButtonHeight);
     await expect(checkButton).toHaveText("检测 API");
     await expect(dialog.getByText("检查交易所接口是否可用、能获取哪些数据，并生成检测报告。")).toBeVisible();
     await checkButton.click();
@@ -729,7 +750,7 @@ test("API settings modal keeps its four sections, truthful account copy, and rep
       const pageWidths = await page.evaluate(() => ({ viewport: window.innerWidth, document: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
       expect(pageWidths.document).toBeLessThanOrEqual(pageWidths.viewport);
       expect(pageWidths.body).toBeLessThanOrEqual(pageWidths.viewport);
-      for (const rowIndex of [0, 1]) {
+      for (const rowIndex of [0]) {
         const row = dialog.locator(".api-settings-split-row").nth(rowIndex);
         await expect(row).toHaveCSS("column-gap", width <= 639 ? "16px" : "32px");
         await row.scrollIntoViewIfNeeded();
@@ -945,7 +966,7 @@ test("localhost rate-limit demo uses mock data without calling the diagnostics A
   expect(diagnosticsRequests).toBe(0);
 });
 
-test("table skeleton stays visible while the initial holdings read is pending", async ({ page }) => {
+test("table skeleton stays visible while the initial holdings read is pending", async ({ page }, testInfo) => {
   let releaseHoldings;
   let holdingsIntercepted = false;
   const holdingsGate = new Promise((resolve) => { releaseHoldings = resolve; });
@@ -963,12 +984,52 @@ test("table skeleton stays visible while the initial holdings read is pending", 
     const table = page.getByRole("table");
     await expect(table).toHaveAttribute("aria-busy", "true");
     await expect(table.locator(".skeleton-table-line").first()).toBeVisible();
+    const aprSkeleton = table.locator("tbody tr").first().locator("td").nth(3);
+    const aprAlignment = await aprSkeleton.evaluate((cell) => ({
+      contentRight: cell.getBoundingClientRect().right - parseFloat(getComputedStyle(cell).paddingRight),
+      placeholderRight: cell.querySelector(".skeleton-table-line").getBoundingClientRect().right,
+    }));
+    expect(aprAlignment.placeholderRight).toBeCloseTo(aprAlignment.contentRight, 0);
+    await page.locator(".action-menu-trigger").click();
+    const menuRefresh = page.locator(".action-menu-popover").getByRole("button", { name: "手动刷新", exact: true });
+    await expect(menuRefresh).toBeVisible();
+    await expect(menuRefresh).toBeDisabled();
+    await expect(page.locator(".action-menu-popover").getByText("正在刷新…")).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("initial-menu.png"), animations: "disabled" });
 
     releaseHoldings();
     await expect(table).toHaveAttribute("aria-busy", "false", { timeout: 20_000 });
     await expect(table.locator(".skeleton-table-line")).toHaveCount(0);
   } finally {
     releaseHoldings();
+  }
+});
+
+test("the menu shows the in-progress label only during a manual refresh", async ({ page }, testInfo) => {
+  let releaseRefresh;
+  let refreshStarted = false;
+  const refreshGate = new Promise((resolve) => { releaseRefresh = resolve; });
+  await page.route("**/private/api/products**", async (route) => {
+    if (route.request().method() === "POST" && new URL(route.request().url()).searchParams.get("refresh") === "1") {
+      refreshStarted = true;
+      await refreshGate;
+    }
+    await route.continue();
+  });
+  try {
+    await page.goto("/private");
+    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    await page.locator(".action-menu-trigger").click();
+    const menu = page.locator(".action-menu-popover");
+    await menu.getByRole("button", { name: "手动刷新", exact: true }).click();
+    await expect.poll(() => refreshStarted).toBe(true);
+    await page.locator(".action-menu-trigger").click();
+    await expect(menu.getByRole("button", { name: "正在刷新…", exact: true })).toBeDisabled();
+    await page.screenshot({ path: testInfo.outputPath("manual-menu.png"), animations: "disabled" });
+    releaseRefresh();
+    await expect(menu.getByRole("button", { name: "手动刷新", exact: true })).toBeEnabled();
+  } finally {
+    releaseRefresh();
   }
 });
 
@@ -1476,6 +1537,72 @@ test("mobile layout does not create page-level horizontal overflow", async ({ pa
 
   expect(widths.document).toBeLessThanOrEqual(widths.viewport);
   expect(widths.body).toBeLessThanOrEqual(widths.viewport);
+});
+
+test("table keeps fixed trailing columns and uniform spacing at desktop and mobile widths", async ({ page }) => {
+  for (const width of [375, 1280, 1740]) {
+    await page.setViewportSize({ width, height: 842 });
+    await page.goto("/private");
+    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    const layout = await page.locator(".product-table").evaluate((table) => {
+      const headers = Array.from(table.querySelectorAll("thead th"));
+      const cells = Array.from(table.querySelector("tbody tr.product-row").cells);
+      const button = cells[4].querySelector(".product-history-trigger").getBoundingClientRect();
+      const headerText = document.createRange();
+      headerText.selectNodeContents(headers[3]);
+      const headerRect = headers[3].getBoundingClientRect();
+      return {
+        tableWidth: table.getBoundingClientRect().width,
+        widths: headers.map((header) => header.getBoundingClientRect().width),
+        padding: [...headers, ...cells].map((cell) => [getComputedStyle(cell).paddingLeft, getComputedStyle(cell).paddingRight]),
+        button: [button.width, button.height],
+        headerFits: headerText.getBoundingClientRect().left >= headerRect.left + 31 && headerText.getBoundingClientRect().right <= headerRect.right - 31,
+        scrolls: table.parentElement.scrollWidth > table.parentElement.clientWidth + 1,
+      };
+    });
+    expect(layout.widths[0]).toBeCloseTo(layout.tableWidth * 0.22, 0);
+    expect(layout.widths[1]).toBeCloseTo(layout.tableWidth * 0.285, 0);
+    expect(layout.widths[3]).toBeCloseTo(136, 0);
+    expect(layout.widths[4]).toBeCloseTo(104, 0);
+    expect(layout.padding.every(([left, right]) => left === "32px" && right === "32px")).toBe(true);
+    expect(layout.button).toEqual([32, 32]);
+    expect(layout.headerFits).toBe(true);
+    expect(layout.scrolls).toBe(width === 375);
+  }
+});
+
+test("narrow product and holding content fit with clear gaps at desktop and mobile widths", async ({ page }) => {
+  for (const width of [980, 1280, 375]) {
+    await page.setViewportSize({ width, height: 842 });
+    await page.goto("/private");
+    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    for (const editing of [false, true]) {
+      if (editing) await page.getByRole("button", { name: "编辑持仓" }).click();
+      const overlaps = await page.locator(".product-rate-headline, .product-fact, .manual-field").evaluateAll((rows) => rows.flatMap((row) => {
+        const items = Array.from(row.children).filter((item) => {
+          const style = getComputedStyle(item);
+          return style.display !== "none" && item.getBoundingClientRect().width > 0;
+        });
+        if (items.length < 2) return [];
+        const first = items[0].getBoundingClientRect();
+        const last = items[1].getBoundingClientRect();
+        const cell = row.closest("td").getBoundingClientRect();
+        return first.right > last.left + 1 || last.right > cell.right + 1
+          ? [{ label: row.textContent.trim(), firstRight: first.right, lastLeft: last.left, lastRight: last.right, cellRight: cell.right }]
+          : [];
+      }));
+      expect(overlaps, `${width}px ${editing ? "editing" : "view"}`).toEqual([]);
+      const holdingOverflow = await page.locator(".holding-column").evaluateAll((columns) => columns.flatMap((column) => {
+        const cell = column.closest("td");
+        const contentRight = cell.getBoundingClientRect().right - parseFloat(getComputedStyle(cell).paddingRight);
+        const items = [column, ...column.querySelectorAll(".holding-summary-head, .holding-summary-note, .holding-editor")];
+        return items.flatMap((item) => item.getBoundingClientRect().right > contentRight + 1 || item.scrollWidth > item.clientWidth + 1
+          ? [{ text: item.textContent.trim(), className: item.className }]
+          : []);
+      }));
+      expect(holdingOverflow, `${width}px ${editing ? "editing" : "view"}`).toEqual([]);
+    }
+  }
 });
 
 test("logout submits a same-origin POST from the menu and returns to the public page", async ({ page }) => {

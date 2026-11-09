@@ -3,12 +3,18 @@ import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
 const load = moduleLoader();
-const { rateHeadlineFor } = load("@/lib/product-rate-presentation");
+const { rateAprTone, rateHeadlineFor } = load("@/lib/product-rate-presentation");
 const { productInformationIssues, productParticipatesInInterest } = load("@/lib/product-status");
 const product = (overrides = {}) => ({
   id: "api-product", accountId: "bybit-global", exchange: "bybit", region: "global", asset: "USDT",
   productDataMode: "api", apiAccess: "public", holdingDataMode: "api", productType: "flexible",
   rateCoverage: "partial", source: { kind: "live" }, tiers: [{ id: "tier", min: 0, max: null, apr: 7 }], ...overrides,
+});
+
+test("APR badge tones follow displayed thresholds without treating missing as zero", () => {
+  for (const [apr, expected] of [[0, "low"], [5.99, "low"], [5.999, "base"], [6, "base"], [8.99, "base"], [9, "medium"], [11.99, "medium"], [12, "high"], [99, "high"], [undefined, "missing"], [NaN, "missing"]]) {
+    assert.equal(rateAprTone(apr), expected, `APR ${apr}`);
+  }
 });
 
 test("an unreadable quota is never presented as an open-ended tier", () => {
