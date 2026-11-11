@@ -64,12 +64,47 @@ for (const emptyMeta of [false, true]) test(`fresh bootstrap is one complete ato
   f.sqlite.close();
 });
 
-test("concurrent cold callers share one marker read and one bootstrap", async () => {
-  const f = database();
+test("concurrent cold callers check independently before caching successful initialization", async () => {
+  const f = database({ ready: true });
   const results = await Promise.all(Array.from({ length: 12 }, () => f.getDatabase()));
   assert.ok(results.every((result) => result === f.db));
-  assert.equal(f.calls.reads, 1);
-  assert.deepEqual(f.calls.batches, [schemaStatements.length]);
+  assert.equal(f.calls.reads, 12);
+  assert.deepEqual(f.calls.batches, []);
+  await f.getDatabase();
+  assert.equal(f.calls.reads, 12);
+  f.sqlite.close();
+});
+
+test("a stalled cold request cannot block a later request or poison the completed check", async () => {
+  let resolveFirst;
+  let reads = 0;
+  const firstResult = new Promise((resolve) => { resolveFirst = resolve; });
+  const db = {
+    prepare: () => ({ bind: () => ({ first: () => ++reads === 1 ? firstResult : Promise.resolve({ version: 1 }) }) }),
+  };
+  const { getDatabase } = loadDb(db);
+  const stalled = getDatabase();
+  assert.equal(await getDatabase(), db);
+  assert.equal(reads, 2);
+  resolveFirst({ version: 1 });
+  assert.equal(await stalled, db);
+  assert.equal(await getDatabase(), db);
+  assert.equal(reads, 2);
+});
+
+test("independent fresh bootstraps remain safe when D1 serializes the atomic batches", async () => {
+  const f = database();
+  const batch = f.db.batch;
+  let queue = Promise.resolve();
+  f.db.batch = (statements) => {
+    const next = queue.then(() => batch(statements));
+    queue = next.then(() => undefined, () => undefined);
+    return next;
+  };
+  const results = await Promise.all(Array.from({ length: 3 }, () => f.getDatabase()));
+  assert.ok(results.every((result) => result === f.db));
+  assert.equal(f.sqlite.prepare("SELECT version FROM product_history_meta WHERE singleton = 1").get().version, 1);
+  assert.equal(f.calls.batches.length, 3);
   f.sqlite.close();
 });
 

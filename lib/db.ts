@@ -14,7 +14,9 @@ type RuntimeEnv = Cloudflare.Env & {
 
 type UserIdentity = { userId: string; email: string };
 
-const databaseInitializations = new WeakMap<D1Database, Promise<void>>();
+// Cache only a completed check. A pending D1 promise belongs to the request
+// that created it and must not hold up other concurrent Worker requests.
+const initializedDatabases = new WeakSet<D1Database>();
 let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 let jwksIssuer: string | null = null;
 
@@ -22,17 +24,12 @@ export async function getDatabase() {
   const db = (env as RuntimeEnv).DB;
   if (!db) throw new Error("D1 binding DB is not configured");
 
-  let initialization = databaseInitializations.get(db);
-  if (!initialization) {
-    initialization = initializeDatabase(db).catch((error) => {
-      databaseInitializations.delete(db);
-      throw error;
-    });
-    databaseInitializations.set(db, initialization);
+  if (!initializedDatabases.has(db)) {
+    const timing = currentStartupTiming();
+    if (timing) await timing.measure("database_init_wait", () => initializeDatabase(db));
+    else await initializeDatabase(db);
+    initializedDatabases.add(db);
   }
-  const timing = currentStartupTiming();
-  if (timing) await timing.measure("database_init_wait", () => initialization);
-  else await initialization;
 
   return db;
 }
