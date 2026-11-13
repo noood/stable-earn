@@ -26,7 +26,7 @@ type OverrideSnapshotRow = { product_id: string; confirmed_apr: number | null; p
 type HiddenProductRow = { product_id: string };
 
 export async function GET(request: Request) {
-  return withStartupServerTiming(request, (timing) => getHoldings(request, timing));
+  return withStartupServerTiming(request, (timing) => getHoldings(request, timing), { watchSlowHoldingsRead: true });
 }
 
 async function getHoldings(request: Request, timing: StartupServerTiming) {

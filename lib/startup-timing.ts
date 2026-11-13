@@ -12,9 +12,11 @@ const slowReadMetricNames = new Set<StartupTimingMetric>([
   "snapshot_sql", "snapshot_d1", "snapshot_attempts",
   "history_summary_sql", "history_summary_d1", "history_summary_attempts",
 ]);
-type SlowReadErrorKind = "timeout" | "aborted" | "type_error" | "syntax_error" | "other";
+type SlowReadErrorKind = "timeout" | "aborted" | "type_error" | "syntax_error" | "unsupported_schema_version" | "schema_initialization_incomplete" | "other";
 function slowReadErrorKind(error: unknown): SlowReadErrorKind {
   if (!(error instanceof Error)) return "other";
+  if (error.message === "Unsupported database schema version") return "unsupported_schema_version";
+  if (error.message === "Database schema initialization failed") return "schema_initialization_incomplete";
   if (error.name === "TimeoutError") return "timeout";
   if (error.name === "AbortError") return "aborted";
   if (error.name === "TypeError") return "type_error";
@@ -29,11 +31,11 @@ export function currentStartupTiming() { return context.getStore(); }
 export async function withStartupServerTiming(
   request: Request,
   handler: (timing: StartupServerTiming) => Promise<Response>,
-  options?: { watchSlowProductRead?: boolean },
+  options?: { watchSlowProductRead?: boolean; watchSlowHoldingsRead?: boolean },
 ): Promise<Response> {
   const enabled = new URL(request.url).searchParams.get("diagnostics") === "1";
-  const watchSlowProductRead = options?.watchSlowProductRead === true;
-  if (!enabled && !watchSlowProductRead) {
+  const watchRead = options?.watchSlowProductRead ? "product_cache_read" : options?.watchSlowHoldingsRead ? "holdings_read" : undefined;
+  if (!enabled && !watchRead) {
     return context.run(undefined, () => handler({ enabled: false, measure: (_phase, operation) => operation(), record: () => {} }));
   }
 
@@ -43,11 +45,11 @@ export async function withStartupServerTiming(
   let sequence = 0;
   let slowReported = false;
   const values = new Map<StartupTimingMetric, number>();
-  const requestId = watchSlowProductRead ? crypto.randomUUID() : undefined;
-  const slowTimer = watchSlowProductRead ? setTimeout(() => {
+  const requestId = watchRead ? crypto.randomUUID() : undefined;
+  const slowTimer = watchRead ? setTimeout(() => {
     slowReported = true;
     console.warn({
-      event: "product_cache_read_slow",
+      event: `${watchRead}_slow`,
       requestId,
       elapsedMs: Math.round(performance.now() - startedAt),
       active: [...active.values()].map(({ phase, start }) => ({ phase, startedMs: Math.round(start) })),
@@ -62,7 +64,7 @@ export async function withStartupServerTiming(
       const start = performance.now() - startedAt;
       const id = sequence++;
       active.set(id, { phase, start });
-      if (slowReported) console.info({ event: "product_cache_read_phase", requestId, phase, state: "started", elapsedMs: Math.round(start) });
+      if (slowReported) console.info({ event: `${watchRead}_phase`, requestId, phase, state: "started", elapsedMs: Math.round(start) });
       let outcome: "ok" | "error" = "ok";
       let errorKind: SlowReadErrorKind | undefined;
       try { return await operation(); }
@@ -71,14 +73,17 @@ export async function withStartupServerTiming(
         active.delete(id);
         const end = performance.now() - startedAt;
         spans.push({ phase, start, end, outcome, errorKind });
-        if (slowReported) console.info({ event: "product_cache_read_phase", requestId, phase, state: outcome, elapsedMs: Math.round(end), durationMs: Math.round(end - start), ...(errorKind ? { errorKind } : {}) });
+        if (slowReported) console.info({ event: `${watchRead}_phase`, requestId, phase, state: outcome, elapsedMs: Math.round(end), durationMs: Math.round(end - start), ...(errorKind ? { errorKind } : {}) });
+        if (watchRead && outcome === "error" && (phase === "database_init_marker" || phase === "database_init_schema")) {
+          console.warn({ event: "database_init_failed", source: watchRead, requestId, phase, durationMs: Math.round(end - start), errorKind });
+        }
       }
     },
     record(metric, value) {
       if (Object.hasOwn(startupTimingMetrics, metric) && typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1e12) {
         values.set(metric, value);
         if (slowReported && slowReadMetricNames.has(metric)) {
-          console.info({ event: "product_cache_read_metric", requestId, metric, value });
+          console.info({ event: `${watchRead}_metric`, requestId, metric, value });
         }
       }
     },
@@ -87,13 +92,13 @@ export async function withStartupServerTiming(
   try {
     response = await context.run(timing, () => handler(timing));
   } catch (error) {
-    if (slowReported) console.warn({ event: "product_cache_read_finished", requestId, outcome: "error", elapsedMs: Math.round(performance.now() - startedAt) });
+    if (slowReported) console.warn({ event: `${watchRead}_finished`, requestId, outcome: "error", elapsedMs: Math.round(performance.now() - startedAt) });
     throw error;
   } finally {
     if (slowTimer !== undefined) clearTimeout(slowTimer);
   }
   const duration = Math.max(0, performance.now() - startedAt);
-  if (slowReported) console.info({ event: "product_cache_read_finished", requestId, outcome: "response", status: response.status, elapsedMs: Math.round(duration) });
+  if (slowReported) console.info({ event: `${watchRead}_finished`, requestId, outcome: "response", status: response.status, elapsedMs: Math.round(duration) });
   if (!enabled) return response;
   // Response assembly and lock release can overlap. Subtract the union of
   // measured intervals, rather than adding overlapping durations twice.

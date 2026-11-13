@@ -66,6 +66,31 @@ test("private dashboard reaches a settled table state and switches assets", asyn
   expect(pageErrors).toEqual([]);
 });
 
+test("same-platform products use APR order in view and edit mode", async ({ page }) => {
+  await page.goto("/private");
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+  for (const editing of [false, true]) {
+    if (editing) await page.getByRole("button", { name: "编辑持仓" }).click();
+    const bitgetRates = await page.locator("tr.product-row")
+      .filter({ has: page.locator("td:first-child").getByText("Bitget", { exact: true }) })
+      .locator(".product-rate-headline").allTextContents();
+    const high = bitgetRates.findIndex((text) => text.includes("10.00%"));
+    const low = bitgetRates.findIndex((text) => text.includes("8.06%"));
+    expect(high).toBeGreaterThanOrEqual(0);
+    expect(low).toBeGreaterThan(high);
+  }
+  const rows = page.locator("tr.product-row");
+  const limited = rows.filter({ hasText: "Binance Global" }).filter({ hasText: "限时活期" });
+  const rowIndex = async (text) => (await rows.allTextContents()).findIndex((row) => row.includes(text));
+  const before = await rowIndex("限时活期");
+  expect(before).toBeLessThan(await rowIndex("650.00"));
+  await limited.getByRole("textbox", { name: "APR", exact: true }).fill("1");
+  await expect(limited.locator(".product-rate-headline")).toContainText("1.00%");
+  expect(await rowIndex("限时活期")).toBe(before);
+  expect(await rowIndex("限时活期")).toBeLessThan(await rowIndex("650.00"));
+  await page.getByRole("button", { name: "取消", exact: true }).first().click();
+});
+
 test("BTC logo is served from the local SVG asset", async ({ page }) => {
   await page.goto("/");
   const btcTab = page.getByRole("button", { name: "BTC", exact: true });
@@ -400,13 +425,13 @@ test("a mixed-source product follows API holding rules when removed", async ({ p
   await expect(page.getByRole("dialog", { name: "移除产品" })).toBeVisible();
 });
 
-test("opt-in API date preview shows missing and derived dates at USDT rows 5 and 9", async ({ page }) => {
+test("opt-in API date preview shows missing and derived dates", async ({ page }) => {
   await page.clock.setFixedTime(new Date(visualPreviewAt));
   await page.goto(`/private?syncScenario=api-dates&previewAt=${encodeURIComponent(visualPreviewAt)}`);
   await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
   const rows = page.locator("tr.product-row");
-  const missing = rows.nth(4);
-  const derived = rows.nth(8);
+  const missing = rows.filter({ hasText: "持仓 40.00 / 申购额度 100.00" });
+  const derived = rows.filter({ hasText: "Binance Global" }).filter({ hasText: "持仓 80.00 / 申购额度 200.00" });
   await expect(missing).toContainText("Binance Global");
   await expect(missing).toContainText("持仓 40.00 / 申购额度 100.00");
   await expect(missing.locator(".product-meta-danger")).toHaveText("买入日未获取，不参与收益计算");

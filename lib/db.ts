@@ -35,20 +35,29 @@ export async function getDatabase() {
 }
 
 async function initializeDatabase(db: D1Database) {
-  let marker: { version: unknown } | null;
-  try {
-    marker = await db.prepare("SELECT version FROM product_history_meta WHERE singleton = 1").bind().first<{ version: unknown }>();
-  } catch (error) {
-    if (!isMissingHistoryMetaTable(error)) throw error;
-    marker = null;
+  const timing = currentStartupTiming();
+  async function checkMarker() {
+    let marker: { version: unknown } | null;
+    try {
+      marker = await db.prepare("SELECT version FROM product_history_meta WHERE singleton = 1").bind().first<{ version: unknown }>();
+    } catch (error) {
+      if (!isMissingHistoryMetaTable(error)) throw error;
+      marker = null;
+    }
+    if (marker?.version === 1) return true;
+    // A newer/unknown schema must never be bootstrapped with this version's DDL.
+    if (marker !== null) throw new Error("Unsupported database schema version");
+    return false;
   }
-  if (marker?.version === 1) return;
-  // A newer/unknown schema must never be bootstrapped with this version's DDL.
-  if (marker !== null) throw new Error("Unsupported database schema version");
-  const results = await db.batch(schemaStatements.map((statement) => db.prepare(statement)));
-  if (!Array.isArray(results) || results.length !== schemaStatements.length || results.some((result) => result?.success !== true)) {
-    throw new Error("Database schema initialization failed");
+  if (await (timing ? timing.measure("database_init_marker", checkMarker) : checkMarker())) return;
+  async function initializeSchema() {
+    const results = await db.batch(schemaStatements.map((statement) => db.prepare(statement)));
+    if (!Array.isArray(results) || results.length !== schemaStatements.length || results.some((result) => result?.success !== true)) {
+      throw new Error("Database schema initialization failed");
+    }
   }
+  if (timing) await timing.measure("database_init_schema", initializeSchema);
+  else await initializeSchema();
 }
 
 function isMissingHistoryMetaTable(error: unknown): boolean {
