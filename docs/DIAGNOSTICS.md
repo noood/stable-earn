@@ -32,7 +32,9 @@
 
 Bitget USDC 单产品追踪只请求一次产品列表，报告目标 ID 是否在原始列表、筛选条件及不带持仓时的选择结果，或安全分类的请求错误；不返回完整列表或凭证。VIP 产品是否保留还可能取决于持仓，此探针不检查持仓。列表中没有目标只证明本次指定请求未返回，不能单独证明产品下架、接口有缺陷或其他请求条件也没有该产品。探针检查的是运行时刻的结果，不能还原过去未记录的响应。
 
-私人产品缓存 GET 在执行超过 5 秒时，尽力输出一次 `product_cache_read_slow` 应用日志：随机请求关联 ID、经过时间、当时仍在执行的固定阶段、已结束阶段的结果与耗时，以及已经取得且允许记录的数据库指标；之后的阶段开始与结束记录为 `product_cache_read_phase`，新取得的数据库指标记录为 `product_cache_read_metric`，请求后续正常返回或抛错时，再输出同一 ID 的 `product_cache_read_finished`。重点阶段包括 `auth`、`auth_keys_fetch`、`database_init_wait`、`snapshot_query`（快照数据库调用）、`snapshot_parse`（解析返回的快照）、`maturities_catalog`、`maturities_user_products`、`maturities_holdings`、`maturities_commit` 以及 `history_summary`；父阶段和并行阶段可能同时进行。该 5 秒仅用于记录诊断，不是超时，也不会中止、重试或触发同步。普通快速读取不输出这些应用日志。字段只使用固定阶段名、耗时、状态和随机 ID，不包含账号、钱包、凭证、持仓、请求参数或响应正文；Cloudflare 自动生成的请求事件仍可能包含请求元数据，以其实际配置为准。
+私人产品缓存 GET 和持仓 GET 在执行超过 5 秒时，分别尽力输出一次 `product_cache_read_slow` 或 `holdings_read_slow` 应用日志：随机请求关联 ID、经过时间、当时仍在执行的固定阶段、已结束阶段的结果与耗时，以及已经取得且允许记录的数据库指标；之后的阶段开始与结束记录分别为 `product_cache_read_phase` 或 `holdings_read_phase`，新取得的数据库指标使用对应的 `_metric`，请求后续正常返回或抛错时再输出同一 ID 的 `_finished`。重点阶段包括 `auth`、`auth_keys_fetch`、`database_init_wait`、`database_init_marker`（读取并检查数据库版本标记）、`database_init_schema`（初始化结构的数据库批量调用及结果校验）、`snapshot_query`、`snapshot_parse`、`holdings_snapshot`、`maturities_catalog`、`maturities_user_products`、`maturities_holdings`、`maturities_commit` 以及 `history_summary`；父阶段和并行阶段可能同时进行。
+
+初始化版本检查或结构初始化抛错时，即使不到 5 秒，也记录 `database_init_failed`，包含固定来源、阶段、耗时、随机请求关联 ID 和安全错误类别；不记录异常原文。预期的版本表不存在会转入初始化，不当作失败。`type_error` 不等于已证实的网络故障；其他 D1 错误可能只能归为 `other`。该 5 秒仅用于记录诊断，不是超时，也不会中止、重试或触发同步。普通快速成功读取不输出这些应用日志。字段只使用固定阶段名、耗时、状态和随机 ID，不包含账号、钱包、凭证、持仓、请求参数或响应正文；Cloudflare 自动生成的请求事件仍可能包含请求元数据，以其实际配置为准。
 
 缓存快照使用同一条查询返回结果及 D1 可提供的元信息，不增加一次查询。仅在 D1 实际返回时记录 `snapshot_sql`（末次尝试的 SQL 执行耗时）、`snapshot_d1`（D1 duration）及 `snapshot_attempts`（总尝试数）；历史摘要对应 `history_summary_sql`、`history_summary_d1`、`history_summary_attempts`。缺失的数值保持缺失，不假定为零或一次。数据库调用总体耗时是 `snapshot_query` / `history_summary`，包含等待和结果接收，不等于 SQL 执行耗时。自动重试时 SQL 耗时只对应最后一次，不能用相减的差值断言为网络耗时；请求一直未返回时拿不到它的最终 D1 指标。慢日志不会输出记录条数或查询数据。
 

@@ -4,6 +4,8 @@ export const startupTimingPhases = {
   auth_keys_fetch: "公钥网络请求至响应头",
   database: "数据库准备",
   database_init_wait: "等待数据库初始化",
+  database_init_marker: "检查数据库版本标记",
+  database_init_schema: "初始化数据库结构",
   settings: "读取刷新设置",
   lock_read: "检查运行锁",
   lock_acquire: "申请运行锁",

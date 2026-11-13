@@ -25,6 +25,7 @@ import { createLocalProductHistoryPreviewLoader } from "@/lib/product-history-pr
 import { userProductInputToProduct } from "@/lib/user-products";
 import { hasCompletePurchaseTiming, summarizeHoldingTiming } from "@/lib/holding-timing";
 import { readLocalPreviewOverrides, saveLocalPreviewOverrides } from "@/lib/local-preview-storage";
+import { compareTableProducts } from "@/lib/product-table-sort";
 
 type ApiResult = {
   dailyRefreshPending?: boolean;
@@ -745,6 +746,10 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
     return [...products.filter((product) => !hiddenIds.has(product.id)), ...(editing ? draftManualProducts : manualProducts)];
   }, [activeHiddenProductIds, draftManualProducts, editing, manualProducts, products]);
   const resolvedProducts = useMemo(() => activeBaseProducts.map((product) => applyProductOverride(product, activeOverrides[product.id])), [activeBaseProducts, activeOverrides]);
+  // Draft changes should not move a row while its inputs are being edited.
+  const savedSortProducts = useMemo(() => new Map([...products, ...manualProducts].map((product) => [
+    product.id, applyProductOverride(product, productOverrides[product.id]),
+  ])), [products, manualProducts, productOverrides]);
   const holdingIsKnown = (product: Product) => isDemo || product.holdingDataMode === "manual" || apiHoldingProductIds.has(product.id);
   const assetProducts = useMemo(() => resolvedProducts
     .filter((product) => product.asset === asset)
@@ -752,10 +757,8 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       const leftIsNew = editing && left.id.startsWith("manual-") && !manualProducts.some((product) => product.id === left.id);
       const rightIsNew = editing && right.id.startsWith("manual-") && !manualProducts.some((product) => product.id === right.id);
       if (leftIsNew !== rightIsNew) return leftIsNew ? -1 : 1;
-      return left.exchange.localeCompare(right.exchange, "en", { sensitivity: "base" })
-      || left.region.localeCompare(right.region, "en", { sensitivity: "base" })
-      || left.name.localeCompare(right.name, "en", { sensitivity: "base" });
-    }), [asset, editing, manualProducts, resolvedProducts]);
+      return compareTableProducts(editing ? savedSortProducts.get(left.id) ?? left : left, editing ? savedSortProducts.get(right.id) ?? right : right);
+    }), [asset, editing, manualProducts, resolvedProducts, savedSortProducts]);
   const tableProducts = assetProducts;
   const holdingTimingByProduct = useMemo(() => {
     const grouped = new Map<string, HoldingPosition[]>();
