@@ -61,6 +61,15 @@ export function SectionIntro({ title, description }: { title: string; descriptio
   return <div className="mb-3"><h3 className="type-label font-semibold">{title}</h3>{description && <p className="text-muted type-caption mt-1">{description}</p>}</div>;
 }
 
+export function FeedbackPanel({ children, tone = "neutral", role = tone === "danger" ? "alert" : "status", className = "" }: {
+  children: ReactNode;
+  tone?: "neutral" | "danger";
+  role?: "alert" | "status";
+  className?: string;
+}) {
+  return <div className={`feedback-panel ${tone === "danger" ? "error-panel" : "muted-panel"} type-caption ${className}`} role={role}>{children}</div>;
+}
+
 function modalFocusableElements(panel: HTMLElement) {
   return [...panel.querySelectorAll<HTMLElement>(
     'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -71,15 +80,16 @@ export function ModalFrame({ ariaLabel, title, description, onClose, busy = fals
   const panelRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    const panel = panelRef.current;
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (!panel) return;
-    (modalFocusableElements(panel)[0] ?? panel).focus();
-
     return () => {
       if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, []);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (panel) (modalFocusableElements(panel)[0] ?? panel).focus();
+  }, [ariaLabel]);
 
   useEffect(() => {
     const dialog = panelRef.current;

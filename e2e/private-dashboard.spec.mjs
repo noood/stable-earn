@@ -808,7 +808,8 @@ test("scrolling the product history popover at its boundary does not scroll the 
   await page.goto("/private?asset=USDT");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
 
-  const row = page.locator("tr.product-row").filter({ hasText: "Binance Global" }).first();
+  const row = page.locator("tr.product-row").filter({ hasText: "Binance Global" })
+    .filter({ hasText: "持仓 650.00 / 首档 300.00" });
   await row.getByRole("button", { name: /查看变更记录/ }).click();
   const popover = page.getByRole("dialog", { name: "产品变更记录" });
   await expect(popover).toBeVisible();
@@ -1494,19 +1495,20 @@ for (const viewport of [
       && new URL(image.currentSrc).origin === location.origin
       && image.getBoundingClientRect().width === 44 && image.getBoundingClientRect().height === 44))).toBe(true);
     await expect(dialog.locator(".api-connection-row").filter({ hasText: "Bybit EU" }).locator(".account-badge")).toHaveAttribute("src", "/platforms/bybit-eu.webp");
-    await expect(page).toHaveScreenshot(`private-settings-top-${viewport.name}.png`, {
+    await expect.soft(page).toHaveScreenshot(`private-settings-top-${viewport.name}.png`, {
       animations: "disabled", caret: "hide",
     });
     await dialog.locator(".api-settings-body").evaluate((body) => { body.scrollTop = body.scrollHeight; });
-    await expect(page).toHaveScreenshot(`private-settings-bottom-${viewport.name}.png`, {
+    await expect.soft(page).toHaveScreenshot(`private-settings-bottom-${viewport.name}.png`, {
       animations: "disabled", caret: "hide",
     });
     await dialog.getByRole("button", { name: "关闭" }).click();
 
-    const historyRow = page.locator("tr.product-row").filter({ hasText: "Binance Global" }).first();
+    const historyRow = page.locator("tr.product-row").filter({ hasText: "Binance Global" })
+      .filter({ hasText: "持仓 650.00 / 首档 300.00" });
     await historyRow.getByRole("button", { name: "查看变更记录" }).click();
     await expect(page.getByRole("dialog", { name: "产品变更记录" })).toBeVisible();
-    await expect(page).toHaveScreenshot(`private-history-${viewport.name}.png`, {
+    await expect.soft(page).toHaveScreenshot(`private-history-${viewport.name}.png`, {
       animations: "disabled", caret: "hide",
     });
   });

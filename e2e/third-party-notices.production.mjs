@@ -13,5 +13,5 @@ test("production serves complete known third-party notices as a static resource"
     "complete upstream copyright notice remains unconfirmed",
   ]) expect(body).toContain(notice);
   // Only client packages are exposed here. Server-only licenses stay in the server artifact.
-  expect(body).not.toContain("jose@6.2.12");
+  expect(body).not.toMatch(/^jose@/m);
 });

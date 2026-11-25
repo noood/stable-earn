@@ -1,6 +1,6 @@
 import { getDatabase } from "@/lib/db";
 import { listPrivateSyncUserIds, refreshPrivateProductsCache } from "@/lib/private-sync/service";
-import { loadSyncCache } from "@/lib/sync-cache";
+import { loadSyncCache, privateCacheKey } from "@/lib/sync-cache";
 import { acquireRefresh, finishScheduledRefresh, releaseRefresh, scheduledRefreshDone } from "@/lib/refresh-control";
 import { diagnosticErrorKind, syncDiagnostic, withSyncDiagnostics } from "@/lib/sync-diagnostics";
 
@@ -49,7 +49,7 @@ export async function consumeScheduledRefresh(batch: MessageBatch<ScheduledSyncJ
         return;
       }
       try {
-        const cached = await loadSyncCache(db, job.userId, "private-products");
+        const cached = await loadSyncCache(db, job.userId, privateCacheKey);
         // A browser failure is not a completed scheduled job. Track queue
         // completion explicitly rather than inferring it from last_error.
         if (Date.parse(cached?.updatedAt ?? "") >= job.scheduledAt

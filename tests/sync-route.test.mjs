@@ -4,6 +4,7 @@ import { moduleLoader } from "./helpers/load-ts.mjs";
 import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
 const isHistoryRead = (sql) => /FROM product_change_events\s+WHERE|LEFT JOIN product_history_summaries/.test(sql);
+const isMaturityLookup = (sql) => sql.includes("FROM json_each(?) AS candidate");
 
 function fixture({ scheduledEnabled = true, includeOkxProduct = false } = {}) {
   const logs = [];
@@ -297,6 +298,7 @@ test("cache, maturity and history reads overlap without a second history read wh
   assert.ok(Array.isArray(result.historySummaries));
   assert.equal(result.changeEvents, undefined);
   assert.equal(f.queries.filter(isHistoryRead).length, 1);
+  assert.equal(f.queries.some(isMaturityLookup), false);
   assert.equal(f.queries.some((sql) => sql.includes("ORDER BY observed_at DESC, event_id DESC")), false);
 });
 
@@ -310,19 +312,19 @@ function seedDueManualPosition(db) {
     VALUES ('test-user','manual-due','2026-08-01','2026-08-01')`).run();
 }
 
-test("a due alert is committed before history is reread, and repeat visits preserve its read state", async () => {
+test("a due alert is committed before history is reread, and repeat visits skip writes and preserve its read state", async () => {
   for (const query of ["?history=summary", ""]) {
     const f = fixture({ scheduledEnabled: false });
     seedDueManualPosition(f.db);
     const batch = f.db.batch.bind(f.db);
-    let release, writing = false;
+    let release, writes = 0;
     const gate = new Promise((resolve) => { release = resolve; });
-    f.db.batch = async (statements) => { writing = true; await gate; return batch(statements); };
+    f.db.batch = async (statements) => { writes += 1; await gate; return batch(statements); };
     let settled = false;
     const read = f.read(query).finally(() => { settled = true; });
     try {
-      for (let i = 0; i < 30 && !writing; i++) await new Promise(setImmediate);
-      assert.equal(writing, true);
+      for (let i = 0; i < 30 && !writes; i++) await new Promise(setImmediate);
+      assert.equal(writes, 1);
       assert.equal(settled, false);
       assert.equal(f.queries.filter(isHistoryRead).length, query ? 1 : 0);
     } finally { release(); }
@@ -332,11 +334,53 @@ test("a due alert is committed before history is reread, and repeat visits prese
     assert.equal(f.queries.filter(isHistoryRead).length, 2);
 
     f.db.sqlite.prepare("UPDATE product_change_events SET read_at = '2026-09-05' WHERE owner_id = 'test-user'").run();
+    f.queries.length = 0;
     const repeated = await f.read(query);
-    if (query) assert.equal(repeated.historySummaries[0].unreadCount, 0);
-    else assert.equal(repeated.changeEvents[0].readAt, "2026-09-05");
+    assert.equal(f.queries.some((sql) => sql.startsWith("INSERT OR IGNORE INTO product_change_events")), false);
+    assert.equal(f.queries.filter(isMaturityLookup).length, 1);
+    if (query) {
+      assert.equal(repeated.historySummaries[0].unreadCount, 0);
+      assert.equal(f.queries.filter(isHistoryRead).length, 1);
+    } else assert.equal(repeated.changeEvents[0].readAt, "2026-09-05");
     assert.equal(f.db.sqlite.prepare("SELECT COUNT(*) AS n FROM product_change_events").get().n, 1);
   }
+});
+
+test("a stale prefetched summary is reread when another page records the maturity before the lookup", async () => {
+  const f = fixture({ scheduledEnabled: false });
+  seedDueManualPosition(f.db);
+  const prepare = f.db.prepare.bind(f.db);
+  const batch = f.db.batch.bind(f.db);
+  const gate = Promise.withResolvers();
+  let lookupBlocked = false;
+  let writes = 0;
+  f.db.prepare = (sql) => ({ bind(...args) {
+    const statement = prepare(sql).bind(...args);
+    if (!isMaturityLookup(sql)) return statement;
+    return { ...statement, async all() {
+      if (!lookupBlocked) {
+        lookupBlocked = true;
+        await gate.promise;
+      }
+      return statement.all();
+    } };
+  } });
+  f.db.batch = async (statements) => { writes += 1; return batch(statements); };
+
+  const firstRead = f.read("?history=summary");
+  const expected = [{ productId: "manual-due", eventCount: 1, unreadCount: 1 }];
+  try {
+    for (let i = 0; i < 30 && !lookupBlocked; i++) await new Promise(setImmediate);
+    assert.equal(lookupBlocked, true);
+    // The first page has already seen the empty snapshot and summary.
+    assert.equal(f.queries.filter(isHistoryRead).length, 1);
+    assert.deepEqual((await f.read("?history=summary")).historySummaries, expected);
+  } finally {
+    gate.resolve();
+  }
+  assert.deepEqual((await firstRead).historySummaries, expected);
+  assert.equal(writes, 1);
+  assert.equal(f.queries.filter(isHistoryRead).length, 4);
 });
 
 test("an ignored maturity insert still rereads history if another request wrote the alert after prefetch", async () => {

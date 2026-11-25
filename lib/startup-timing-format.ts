@@ -19,6 +19,7 @@ export const startupTimingPhases = {
   maturities_catalog: "读取到期检查产品目录",
   maturities_user_products: "读取到期检查手动产品",
   maturities_holdings: "读取到期检查持仓",
+  maturities_lookup: "查找已记录的到期事件",
   maturities_commit: "保存到期记录",
   history: "读取变更记录",
   history_cache: "读取旧版历史缓存",

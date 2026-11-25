@@ -17,7 +17,6 @@
   --text-subtle: #929b96;
   --border: #dde2de;
   --border-strong: #cad5cd;
-  --border-highlight: #cfdfc7;
   --status-success: #16834a;
   --danger-surface: #fbeeee;
   --danger-text: #934040;
@@ -139,7 +138,6 @@ input:focus-visible,
   text-decoration: none;
 }
 .button-text:hover:not(:disabled) { background: transparent; color: var(--brand-hover); text-decoration: none; }
-.inline-action { vertical-align: baseline; }
 
 .top-nav { border-bottom: var(--hairline) solid var(--border); background: var(--surface-nav); }
 .asset-icon { width: 1.25rem; height: 1.25rem; flex: 0 0 auto; overflow: visible; }
@@ -266,12 +264,11 @@ input:focus-visible,
 .status-chip-apr-low { background: var(--surface-muted); }
 .status-chip-apr-medium { background: color-mix(in srgb, var(--surface-highlight-strong) 65%, var(--brand-line)); color: var(--brand); }
 .status-chip-apr-high { background: color-mix(in srgb, var(--surface-highlight-strong) 30%, var(--brand-line)); }
-.highlight-panel { border: var(--hairline) solid var(--border-highlight); border-radius: var(--radius-card); background: var(--surface-highlight); color: var(--brand); }
 .muted-panel,
 .error-panel { border-radius: var(--radius-control); }
 .muted-panel { background: var(--surface-muted); color: var(--text-secondary); }
 .error-panel { background: var(--danger-surface); color: var(--danger-text); }
-.api-feedback-panel { padding: var(--space-control) var(--space-3); }
+.feedback-panel { padding: var(--space-control) var(--space-3); }
 .surface-popover { border: var(--hairline) solid var(--border-strong); border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow-dialog); }
 .progress-track { height: var(--progress-height); overflow: hidden; border-radius: var(--radius-pill); background: var(--surface-muted); }
 .progress-fill { height: 100%; border-radius: inherit; background: var(--brand-muted); }

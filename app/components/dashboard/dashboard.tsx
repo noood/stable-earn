@@ -319,6 +319,8 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       const productsRequestStartedAt = performance.now();
       lastProductRequestAtRef.current = productsRequestStartedAt;
       const productsResponse = fetch(productsEndpoint, { cache: "no-store" });
+      // The fetch may fail before holdings finish. refreshRates handles the original rejection.
+      void productsResponse.catch(() => undefined);
       personalDataLoadingRef.current = true;
       try {
         const loaded = await loadPersonalData();

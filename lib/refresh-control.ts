@@ -65,8 +65,8 @@ export async function dailyRefreshCompleted(db: D1Database, userId: string, day 
   return row?.daily_day === day;
 }
 
-/** Include the daily completion marker in the same transaction as the result. */
-export function prepareDailyRefreshCommit(db: D1Database, userId: string, token: string, day: string): D1PreparedStatement {
+/** Change the daily marker in the same transaction as the relevant snapshot. */
+export function prepareDailyRefreshMarker(db: D1Database, userId: string, token: string, day: string | null): D1PreparedStatement {
   return db.prepare("UPDATE refresh_control SET daily_day = ? WHERE user_id = ? AND lease_token = ?")
     .bind(day, userId, token);
 }

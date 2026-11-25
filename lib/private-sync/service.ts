@@ -1,23 +1,22 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { HoldingMap, HoldingPosition } from "@/lib/domain";
+import { holdingPositionKey } from "@/lib/holding-cache";
 import type { ProductOverrideMap } from "@/lib/product-overrides";
 import { applyProductOverride } from "@/lib/product-overrides";
 import { loadCatalogProducts } from "@/lib/product-catalog";
 import { loadUserProducts } from "@/lib/user-products";
 import { buildManualMaturityEvents, buildSyncChangeEvents, prepareProductChangeEventStatements, type ProductSnapshotForChanges } from "@/lib/product-change-events";
 import { diagnosticErrorKind, syncDiagnostic, withSyncDiagnostics } from "@/lib/sync-diagnostics";
-import { prepareDailyRefreshCommit, prepareRefreshCommitGuard, renewRefresh } from "@/lib/refresh-control";
-import { loadSyncCache, prepareSyncCacheSave, prepareSyncFailureRecord, recordSyncAttempt, recordSyncFailure } from "@/lib/sync-cache";
+import { prepareDailyRefreshMarker, prepareRefreshCommitGuard, renewRefresh } from "@/lib/refresh-control";
+import { loadSyncCache, prepareSyncCacheSave, prepareSyncFailureRecord, privateCacheKey, recordSyncAttempt, recordSyncFailure } from "@/lib/sync-cache";
 import type { PrivateProductsPayload, RefreshOptions } from "./types";
 import { refreshSource, safeCacheError } from "./status";
 import { buildPrivatePayload } from "./payload";
 import type { StartupServerTiming } from "@/lib/startup-timing";
 import type { StartupTimingPhase } from "@/lib/startup-timing-format";
 
-export const privateCacheKey = "private-products";
-
-/** True means due candidates were processed; a prefetched history may be stale. */
-export async function recordDueManualMaturities(db: D1Database, userId: string, timing?: StartupServerTiming): Promise<boolean> {
+/** Minimum event count for reusing prefetched history, or null after an insert attempt. */
+export async function recordDueManualMaturities(db: D1Database, userId: string, timing?: StartupServerTiming): Promise<number | null> {
   const measure = <T,>(phase: StartupTimingPhase, operation: () => Promise<T>) => timing ? timing.measure(phase, operation) : operation();
   const [catalogProducts, userProducts, holdingRows] = await Promise.all([
     measure("maturities_catalog", () => loadCatalogProducts(db, userId)),
@@ -37,7 +36,7 @@ export async function recordDueManualMaturities(db: D1Database, userId: string, 
       }>()),
   ]);
   const products = [...catalogProducts, ...userProducts].filter((product) => product.productDataMode === "manual");
-  if (products.length === 0) return false;
+  if (products.length === 0) return 0;
   const overrides = Object.fromEntries(holdingRows.results.map((row) => [row.product_id, {
     apr: row.confirmed_apr,
     firstTierLimit: row.first_tier_limit,
@@ -50,12 +49,23 @@ export async function recordDueManualMaturities(db: D1Database, userId: string, 
   const resolvedProducts = products.map((product) => applyProductOverride(product, overrides[product.id]));
   const holdings = Object.fromEntries(holdingRows.results.map((row) => [row.product_id, Number(row.amount)])) as HoldingMap;
   const events = buildManualMaturityEvents(resolvedProducts, holdings, overrides);
-  if (events.length === 0) return false;
-  await measure("maturities_commit", () => db.batch(prepareProductChangeEventStatements(db, userId, events)));
-  // Even an ignored insert may have raced with another request that just wrote
-  // this alert, after our history prefetch. Always reread when candidates exist.
-  // INSERT OR IGNORE still preserves the existing event's read state.
-  return true;
+  if (events.length === 0) return 0;
+
+  // Read the existing IDs and history count from the same database snapshot.
+  const { results } = await measure("maturities_lookup", () => db.prepare(`SELECT recorded.event_id,
+      COALESCE((SELECT event_count FROM product_history_state WHERE owner_id = ?), 0) AS history_event_count
+    FROM json_each(?) AS candidate
+    LEFT JOIN product_change_events recorded ON recorded.owner_id = ? AND recorded.event_id = candidate.value`)
+    .bind(userId, JSON.stringify(events.map((event) => event.id)), userId)
+    .all<{ event_id: string | null; history_event_count: number }>());
+  const recordedIds = new Set(results.map((row) => row.event_id));
+  const newEvents = events.filter((event) => !recordedIds.has(event.id));
+  if (newEvents.length === 0) return results[0]!.history_event_count;
+
+  await measure("maturities_commit", () => db.batch(prepareProductChangeEventStatements(db, userId, newEvents)));
+  // Another request may have inserted the same alert after the lookup. In that
+  // case INSERT OR IGNORE preserves its read state and we still reread history.
+  return null;
 }
 
 export async function refreshPrivateProductsCache(db: D1Database, userId: string, options: RefreshOptions = {}) {
@@ -114,7 +124,7 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
       ...prepareProductChangeEventStatements(db, userId, changeEvents),
       prepareSyncCacheSave(db, userId, privateCacheKey, payload, payload.fetchedAt),
       ...(options.dailyDay && options.leaseToken
-        ? [prepareDailyRefreshCommit(db, userId, options.leaseToken, options.dailyDay)]
+        ? [prepareDailyRefreshMarker(db, userId, options.leaseToken, options.dailyDay)]
         : []),
     ]);
     progress.committed = true;
@@ -128,7 +138,7 @@ async function refreshPrivateProductsAttempt(db: D1Database, userId: string, opt
         await db.batch([
           prepareRefreshCommitGuard(db, userId, options.leaseToken),
           prepareSyncFailureRecord(db, userId, privateCacheKey, safeCacheError(error)),
-          prepareDailyRefreshCommit(db, userId, options.leaseToken, options.dailyDay),
+          prepareDailyRefreshMarker(db, userId, options.leaseToken, options.dailyDay),
         ]);
         syncDiagnostic("daily_refresh_committed", { day: options.dailyDay, result: "failure" }, true);
       } else {
@@ -168,8 +178,4 @@ function prepareHoldingPositionStatements(db: D1Database, userId: string, positi
         position.purchaseAt ?? null, position.redeemAt ?? null, position.source, position.updatedAt));
   }
   return statements;
-}
-
-function holdingPositionKey(position: Pick<HoldingPosition, "productId" | "positionId" | "purchaseAt" | "redeemAt">) {
-  return [position.productId, position.positionId ?? "", position.purchaseAt ?? "", position.redeemAt ?? ""].join("\u0000");
 }

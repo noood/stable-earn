@@ -307,13 +307,13 @@ export async function resolveCatalogProductAccounts(db: D1Database, ownerId: str
  * active dashboard. Catalog, holding, and history records
  * remain stored so reconnecting the account can restore the products.
  */
-export async function archiveApiCatalogProducts(
+export function prepareArchiveApiCatalogProducts(
   db: D1Database,
   ownerId: string,
   accountId: string,
 ) {
   const archivedAt = new Date().toISOString();
-  await db.prepare(`UPDATE product_catalog
+  return db.prepare(`UPDATE product_catalog
       SET status = 'archived', archived_at = ?, last_seen_at = ?
       WHERE owner_id = ?
         AND status = 'active'
@@ -321,8 +321,7 @@ export async function archiveApiCatalogProducts(
         AND json_extract(payload, '$.accountId') = ?
         AND (json_extract(payload, '$.productDataMode') = 'api'
           OR json_extract(payload, '$.holdingDataMode') = 'api')`)
-    .bind(archivedAt, archivedAt, ownerId, accountId)
-    .run();
+    .bind(archivedAt, archivedAt, ownerId, accountId);
 }
 
 function holdingEvidence(

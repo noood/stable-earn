@@ -27,7 +27,7 @@ test("daily refresh is completed only by an atomic result commit and abandoned l
   assert.equal(await control.dailyRefreshCompleted(db, "a", day), false);
   await db.batch([
     control.prepareRefreshCommitGuard(db, "a", next),
-    control.prepareDailyRefreshCommit(db, "a", next, day),
+    control.prepareDailyRefreshMarker(db, "a", next, day),
   ]);
   assert.equal(await control.dailyRefreshCompleted(db, "a", day), true);
   assert.equal(await control.dailyRefreshCompleted(db, "a", "2026-09-09"), false);

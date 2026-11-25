@@ -6,13 +6,13 @@ import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-secu
 
 export const dynamic = "force-dynamic";
 
-const activeProbes = new Map<string, Promise<unknown>>();
+const activeProbes = new Map<string, { asset: string; promise: Promise<unknown> }>();
 const lastProbeAt = new Map<string, number>();
 const cooldownMs = 30_000;
 
 function cooldownResponse(remainingSeconds: number) {
   return NextResponse.json(
-    { error: "刚完成一次 Binance 活期币种检查，请稍后再试。" },
+    { error: "Binance 活期币种检查正在进行或刚完成，请稍后再试。" },
     { status: 429, headers: { ...privateResponseHeaders, "Retry-After": String(remainingSeconds) } },
   );
 }
@@ -39,9 +39,10 @@ async function handleDiagnostic(request: Request, requireMutationOrigin: boolean
 
   try {
     const existing = activeProbes.get(identity.userId);
-    if (existing) return NextResponse.json(await existing, { headers: privateResponseHeaders });
+    if (existing?.asset === asset) return NextResponse.json(await existing.promise, { headers: privateResponseHeaders });
 
     const remainingMs = (lastProbeAt.get(identity.userId) ?? 0) + cooldownMs - Date.now();
+    if (existing) return cooldownResponse(Math.max(1, Math.ceil(remainingMs / 1000)));
     if (remainingMs > 0) return cooldownResponse(Math.ceil(remainingMs / 1000));
 
     const probe = (async () => {
@@ -73,10 +74,10 @@ async function handleDiagnostic(request: Request, requireMutationOrigin: boolean
         results,
       };
     })();
-    activeProbes.set(identity.userId, probe);
+    activeProbes.set(identity.userId, { asset, promise: probe });
     lastProbeAt.set(identity.userId, Date.now());
     void probe.finally(() => {
-      if (activeProbes.get(identity.userId) === probe) activeProbes.delete(identity.userId);
+      if (activeProbes.get(identity.userId)?.promise === probe) activeProbes.delete(identity.userId);
     }).catch(() => undefined);
 
     return NextResponse.json(await probe, { headers: privateResponseHeaders });

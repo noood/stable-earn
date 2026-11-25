@@ -59,7 +59,7 @@ export async function loadCredential(db: D1Database, userId: string, accountId: 
   return row ? decryptCredential(userId, row.account_id, row.ciphertext, row.iv) : null;
 }
 
-export async function saveCredential(
+export async function prepareSaveCredential(
   db: D1Database,
   userId: string,
   accountId: CredentialAccountId,
@@ -67,18 +67,16 @@ export async function saveCredential(
 ) {
   const encrypted = await encryptCredential(userId, accountId, credential);
   const updatedAt = new Date().toISOString();
-  await db.prepare(`INSERT INTO exchange_credentials (user_id, account_id, ciphertext, iv, updated_at)
+  return db.prepare(`INSERT INTO exchange_credentials (user_id, account_id, ciphertext, iv, updated_at)
       VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(user_id, account_id)
       DO UPDATE SET ciphertext = excluded.ciphertext, iv = excluded.iv, updated_at = excluded.updated_at`)
-    .bind(userId, accountId, encrypted.ciphertext, encrypted.iv, updatedAt)
-    .run();
+    .bind(userId, accountId, encrypted.ciphertext, encrypted.iv, updatedAt);
 }
 
-export async function deleteCredential(db: D1Database, userId: string, accountId: CredentialAccountId) {
-  await db.prepare("DELETE FROM exchange_credentials WHERE user_id = ? AND account_id = ?")
-    .bind(userId, accountId)
-    .run();
+export function prepareDeleteCredential(db: D1Database, userId: string, accountId: CredentialAccountId) {
+  return db.prepare("DELETE FROM exchange_credentials WHERE user_id = ? AND account_id = ?")
+    .bind(userId, accountId);
 }
 
 async function encryptCredential(userId: string, accountId: string, credential: StoredCredential) {

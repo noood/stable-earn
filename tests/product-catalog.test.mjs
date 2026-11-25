@@ -4,7 +4,7 @@ import { moduleLoader } from "./helpers/load-ts.mjs";
 import { sqliteDb } from "./helpers/sqlite-db.mjs";
 
 const load = moduleLoader();
-const { archiveApiCatalogProducts, prepareProductCatalogSync, resolveCatalogProductIds } = load("@/lib/product-catalog");
+const { prepareArchiveApiCatalogProducts, prepareProductCatalogSync, resolveCatalogProductIds } = load("@/lib/product-catalog");
 
 test("an existing API product keeps its row and marks APR unavailable after a complete field-empty response", async () => {
   const db = sqliteDb();
@@ -206,7 +206,7 @@ test("removing API credentials archives every account API product but preserves 
     (owner_id, event_id, product_id, change_type, title, observed_at, source, attention)
     VALUES ('user', 'history-1', 'position-positive', 'holding', '持仓变化', ?, '定时刷新', 0)`).run(now);
 
-  await archiveApiCatalogProducts(db, "user", "binance-global");
+  await prepareArchiveApiCatalogProducts(db, "user", "binance-global").run();
   const statuses = Object.fromEntries(db.sqlite.prepare("SELECT product_id, status FROM product_catalog ORDER BY product_id").all()
     .map((row) => [row.product_id, row.status]));
   assert.deepEqual(statuses, {

@@ -18,7 +18,7 @@
 | 平台能力检查器 | “数据源设置 → API 检测”；`POST /private/api/diagnostics/platform-capabilities` | 检查代码已知的平台 API 能力，覆盖产品/APR 与持仓；不是未知接口发现器 | 只读调用已配置账号；限流时会保存该用户的冷却时间；报告不写入产品或持仓 |
 | Bitget 产品专项探针 | `GET` 或 `POST /private/api/diagnostics/bitget-products` | 默认检查 Bitget 产品资料；可用 `?asset=USDC&productId=...` 指定单产品容量检查；`?mode=trace&asset=USDC&productId=...` 对照单个产品在上游列表与产品筛选中的状态 | 只读产品接口，不读取持仓；当前 Worker 实例内每用户 30 秒冷却，不保证跨实例或实例重启后仍生效 |
 | Binance 定期产品专项探针 | `GET` 或 `POST /private/api/diagnostics/binance-locked-products` | 检查已配置 Binance Global/Bahrain 账号的定期产品 APR、额度和申购状态；不会请求持仓 | 每个已配置账号最多一次产品列表请求；当前 Worker 实例内每用户 30 秒冷却，不保证跨实例或实例重启后仍生效 |
-| Binance 活期档位专项探针 | `GET` 或 `POST /private/api/diagnostics/binance-usdc-tiers?asset=USDC` | 检查 USDC 活期 APR 档位；`asset` 支持 USDC、USDT、BTC，省略时默认为 USDC | 每个已配置 Binance 账号最多一次公开产品列表请求；不读持仓、不写产品/缓存/历史；当前 Worker 实例内每用户 30 秒冷却，不保证跨实例或实例重启后仍生效 |
+| Binance 活期档位专项探针 | `GET` 或 `POST /private/api/diagnostics/binance-usdc-tiers?asset=USDC` | 检查指定币种的活期 APR 档位。支持 USDC、USDT、BTC，默认 USDC | 每个已配置 Binance 账号最多一次公开产品列表请求，不读持仓或写业务数据。当前 Worker 实例内，同一用户正在检查其他币种时返回 429，开始检查后的 30 秒内也限制再次发起。跨实例和重启后无法保证此限制 |
 | Bitget USDGO 专项探针 | `POST /private/api/diagnostics/bitget-usdgo` | 一次读取 Bitget USDGO 产品与持仓接口能力，返回脱敏状态/计数 | 不写 D1 业务数据；会记录脱敏应用诊断字段；没有跨请求冷却 |
 
 专项 API 路由既接受已登录的同站 GET，也接受经过同源校验的 POST；`bitget-usdgo` 仅提供 POST。所有路由都不接受匿名调用。
@@ -32,13 +32,25 @@
 
 Bitget USDC 单产品追踪只请求一次产品列表，报告目标 ID 是否在原始列表、筛选条件及不带持仓时的选择结果，或安全分类的请求错误；不返回完整列表或凭证。VIP 产品是否保留还可能取决于持仓，此探针不检查持仓。列表中没有目标只证明本次指定请求未返回，不能单独证明产品下架、接口有缺陷或其他请求条件也没有该产品。探针检查的是运行时刻的结果，不能还原过去未记录的响应。
 
-私人产品缓存 GET 和持仓 GET 在执行超过 5 秒时，分别尽力输出一次 `product_cache_read_slow` 或 `holdings_read_slow` 应用日志：随机请求关联 ID、经过时间、当时仍在执行的固定阶段、已结束阶段的结果与耗时，以及已经取得且允许记录的数据库指标；之后的阶段开始与结束记录分别为 `product_cache_read_phase` 或 `holdings_read_phase`，新取得的数据库指标使用对应的 `_metric`，请求后续正常返回或抛错时再输出同一 ID 的 `_finished`。重点阶段包括 `auth`、`auth_keys_fetch`、`database_init_wait`、`database_init_marker`（读取并检查数据库版本标记）、`database_init_schema`（初始化结构的数据库批量调用及结果校验）、`snapshot_query`、`snapshot_parse`、`holdings_snapshot`、`maturities_catalog`、`maturities_user_products`、`maturities_holdings`、`maturities_commit` 以及 `history_summary`；父阶段和并行阶段可能同时进行。
+## 私人页服务端读取日志
 
-初始化版本检查或结构初始化抛错时，即使不到 5 秒，也记录 `database_init_failed`，包含固定来源、阶段、耗时、随机请求关联 ID 和安全错误类别；不记录异常原文。预期的版本表不存在会转入初始化，不当作失败。`type_error` 不等于已证实的网络故障；其他 D1 错误可能只能归为 `other`。该 5 秒仅用于记录诊断，不是超时，也不会中止、重试或触发同步。普通快速成功读取不输出这些应用日志。字段只使用固定阶段名、耗时、状态和随机 ID，不包含账号、钱包、凭证、持仓、请求参数或响应正文；Cloudflare 自动生成的请求事件仍可能包含请求元数据，以其实际配置为准。
+私人产品缓存 GET 和持仓 GET 执行达到 5 秒时，分别尽力写入 `product_cache_read_slow` 或 `holdings_read_slow`。日志包含仍在执行的阶段、已完成阶段的结果与耗时，以及已取得的允许记录的数据库指标。后续阶段与指标用同一 `requestId` 写入对应的 `_phase` 和 `_metric` 事件，返回响应或抛错时写入 `_finished`。5 秒是记录时点，请求继续运行。普通快速成功的读取不写入这些应用日志。
+
+### 排查数据库初始化
+
+1. 在 Cloudflare Workers Observability 的 Workers 日志数据集中，按异常时间筛选 `event = "product_cache_read_slow"`、`event = "holdings_read_slow"` 或 `event = "database_init_failed"`。按应用日志里的 `requestId` 查看同一次读取的后续记录。产品和持仓是两个请求，各有自己的 ID。
+2. 在 `active` 列表中，`database_init_marker` 表示仍在读取和检查版本标记，`database_init_schema` 表示仍在运行初始化或检查批量结果。`database_init_wait` 是包住这两步的总阶段。如果等待的是 `snapshot_query` 或 `holdings_snapshot`，关注业务快照读取。
+3. 版本检查或结构初始化抛错时，即使不到 5 秒也会记录 `database_init_failed`。`unsupported_schema_version` 表示版本标记不受支持，`schema_initialization_incomplete` 表示初始化批量结果未通过校验。`type_error`、`other` 等分类只能提供排查线索。首次建库时缺少版本表会进入结构初始化。
+
+日志只包含固定阶段、耗时、状态、允许记录的数据库指标和随机关联 ID。异常原文和账号、钱包、凭证、持仓、请求参数、响应正文均不写入这些应用日志。Cloudflare 自动生成的请求事件仍可能包含请求元数据。
+
+### 快照指标与日志限制
 
 缓存快照使用同一条查询返回结果及 D1 可提供的元信息，不增加一次查询。仅在 D1 实际返回时记录 `snapshot_sql`（末次尝试的 SQL 执行耗时）、`snapshot_d1`（D1 duration）及 `snapshot_attempts`（总尝试数）；历史摘要对应 `history_summary_sql`、`history_summary_d1`、`history_summary_attempts`。缺失的数值保持缺失，不假定为零或一次。数据库调用总体耗时是 `snapshot_query` / `history_summary`，包含等待和结果接收，不等于 SQL 执行耗时。自动重试时 SQL 耗时只对应最后一次，不能用相减的差值断言为网络耗时；请求一直未返回时拿不到它的最终 D1 指标。慢日志不会输出记录条数或查询数据。
 
-排查时从 Workers Observability 的日志数据集筛选上述事件，并按随机 ID 或 Cloudflare 的 invocation/trace 关联对应请求。慢阶段抛错时只记录固定分类（超时、中止、类型错误、语法错误或其他），不记录异常原文；类型错误不能直接等同网络错误。阶段 `ok` 只表示该操作没有抛错，不代表登录认证成功或数据内容正确；`response` 只表示处理函数生成了响应，不代表浏览器已收到或完成解析。若有慢记录但没有结束记录，只说明未观察到后续结束，不能据此断定是数据库、认证或浏览器的具体故障；阶段仍在执行也不能证明其内部哪个操作卡住。定时器可能因运行时调度未执行，日志也可能因采样、缓冲或请求取消而缺失，不能保证每次卡住都留有记录；请求未到达 Worker 时不会产生这些记录。不要把它们与页面 `diagnostics=1` 返回的临时计时混为一谈。
+阶段 `ok` 表示操作未抛错，`response` 表示处理函数生成了响应。判断业务结果和浏览器接收情况仍需各自的证据。只有慢记录时，可以定位到当时仍在等待的阶段。确认数据库内部或连接故障需要进一步证据。运行时调度、采样、缓冲和请求取消都可能造成缺失日志。请求未到达 Worker 时也不会留下这些记录。
+
+## 刷新请求日志
 
 私人产品路由的每日/手动刷新会记录脱敏的 `refresh_requested`、`refresh_skipped`、`refresh_dispatched` 事件，并与 `sync_started` / `sync_finished` 使用同一 `runId`；每日刷新另外记录 `daily_refresh_committed`。诊断面板中的“每日刷新请求”来自本次接口返回的处理状态，不再把普通缓存轮询称为每日刷新。当天已有最终结果时，接口只返回“今日刷新尝试已处理，本次只读取缓存”；这不能证明本次请求重新同步了数据。跳过事件说明是运行锁、后台计划重试窗口、或当天已提交；完成事件只记录上海日期和成功、部分成功或已保存失败，不记录持仓金额、产品行、凭证或 API 响应。若看到请求/派发记录但没有完成记录，只能说明这次流程没有留下最终提交证据；日志本身不能确定 Worker 被取消的具体原因。
 
@@ -50,7 +62,7 @@ Bitget USDC 单产品追踪只请求一次产品列表，报告目标 ID 是否�
 
 每日刷新请求会显示已执行并保存完整/部分结果、失败、中断、等待已有刷新/计划窗口，或今天已有刷新尝试因而本次只读缓存；首次缓存已确认完成时显示“无需请求：服务端确认今日尝试已完成”，不伪造 HTTP 状态或请求耗时。普通缓存轮询单独标为“产品缓存轮询”。HTTP 200 不代表同步执行或数据变化。持仓和产品接口显示浏览器总耗时、从导航开始的请求起止时点及服务端总耗时；两者差值包含网络传输、浏览器调度和响应解析，不能单独当作网络时间。持仓 GET 将批量读取及其结果转换标为“批量读取个人数据快照”；缓存 GET 将合并查询标为“读取缓存、设置与刷新状态”，与到期检查的计时可以重叠；每日入口继续细分登录校验、数据库准备、刷新设置、运行锁、缓存读取、当日记录检查、手动产品到期检查和变更记录读取。实际执行同步时只记录整段同步耗时，不细分交易所请求。分段起止从该接口开始计，不能直接把重叠分段相加；“其余处理”是总时间扣除已计时区间并集的剩余时间。
 
-页面启动诊断仅输出固定步骤名、数值和处理状态，不显示响应正文、账户数据或密钥，不改变同步判定与页面状态。不带参数时面板隐藏，接口不返回诊断结果或计时头。面板不保存或上报诊断内容，检查后移除参数即可；上述慢缓存读取应用日志独立于该面板。
+页面启动诊断仅输出固定步骤名、数值和处理状态，不显示响应正文、账户数据或密钥，不改变同步判定与页面状态。不带参数时面板隐藏，接口不返回诊断结果或计时头。面板不保存或上报诊断内容，检查后移除参数即可。服务端读取日志独立记录，无需打开面板。
 
 历史诊断在同一次产品响应内记录“历史摘要调用总耗时”；旧客户端记录“读取旧版历史缓存”及是否命中，未命中时另记“重建旧版历史缓存”“历史合并去重排序”。批量重建不伪造最近历史与未读提醒各自独立的调用往返时间。调用总耗时包含 D1 调用等待、往返及结果接收，不等于 SQL 执行耗时；D1 提供时另列实际结果中的 `timings.sql_duration_ms`、`duration`、返回条数、扫描行数及 `total_attempts`。摘要返回条数是产品数，不是事件总数。D1 的独立 SQL 耗时只反映末次执行尝试；存在自动重试时，不能用调用总耗时减去末次 SQL 耗时直接推断网络耗时。未提供的 SQL 耗时和尝试次数明确显示缺失，不填 0ms 或默认一次；`duration` 单独标为 D1 duration，不冒充缺失的独立 SQL 指标。
 
@@ -63,6 +75,7 @@ Bitget USDC 单产品追踪只请求一次产品列表，报告目标 ID 是否�
 ## 代码与测试索引
 
 - 页面诊断：`app/components/startup-diagnostics.tsx`；`e2e/private-shell.spec.mjs`
+- 服务端读取与数据库初始化诊断：`lib/startup-timing.ts`、`lib/db.ts`；`tests/startup-timing.test.mjs`、`tests/database-init-diagnostics.test.mjs`
 - 平台能力检查器：`lib/platform-capability-probe.ts`、`app/private/api/diagnostics/platform-capabilities/route.ts`；`tests/platform-capability-probe.test.mjs`、`tests/platform-capability-probe-route.test.mjs`
 - Bitget 产品：`app/private/api/diagnostics/bitget-products/route.ts`；`tests/bitget-product-evidence.test.mjs`
 - Binance 定期产品：`app/private/api/diagnostics/binance-locked-products/route.ts`；`tests/binance-locked-product-diagnostic-route.test.mjs`

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode, type InputHTMLAttributes } from "react";
-import { AccountBadge, ActionButton, CheckIcon, ModalFrame, SectionIntro } from "@/app/components/ui";
+import { AccountBadge, ActionButton, CheckIcon, FeedbackPanel, ModalFrame, SectionIntro } from "@/app/components/ui";
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
 import type { Account } from "@/lib/domain";
 import { accounts } from "@/lib/seed-data";
@@ -322,7 +322,7 @@ export function ApiSettings({ open, onClose, onCredentialsRemoved }: { open: boo
   if (pendingWalletRemoval) return (
     <ModalFrame ariaLabel="移除钱包地址" title="移除钱包地址" onClose={() => { setPendingWalletRemoval(false); setWalletMessage(null); }} busy={walletBusy}>
       <p className="text-secondary type-body">移除后，Bitget Wallet / Morph 产品会从列表中移除，已同步的当前持仓会清除；产品资料与变更记录保留。重新添加钱包并成功同步后可恢复展示。</p>
-      {walletMessage && <div className="error-panel api-feedback-panel type-caption mt-4" role="alert">{walletMessage}</div>}
+      {walletMessage && <FeedbackPanel tone="danger" className="mt-4">{walletMessage}</FeedbackPanel>}
       <div className="mt-5 flex justify-end gap-2">
         <ActionButton variant="secondary" disabled={walletBusy} onClick={() => { setPendingWalletRemoval(false); setWalletMessage(null); }}>取消</ActionButton>
         <ActionButton variant="danger" disabled={walletBusy} onClick={() => void changeWallet(true)}>{walletBusy ? "正在移除…" : "确认移除钱包"}</ActionButton>
@@ -333,7 +333,7 @@ export function ApiSettings({ open, onClose, onCredentialsRemoved }: { open: boo
   if (pendingRemoval) return (
     <ModalFrame ariaLabel="移除 API 配置及产品" title="移除 API 配置及产品" onClose={() => setPendingRemoval(null)} busy={busy}>
       <p className="text-secondary type-body">移除后，该账户关联的所有 API 产品都会从列表中移除。已保存的持仓、产品资料和变更记录会保留；同步缓存会清除，之后重新配置并成功同步即可恢复产品。</p>
-      {message && <div className="error-panel api-feedback-panel type-caption mt-4" role="alert">{message}</div>}
+      {message && <FeedbackPanel tone="danger" className="mt-4">{message}</FeedbackPanel>}
       <div className="mt-5 flex justify-end gap-2">
         <ActionButton variant="secondary" disabled={busy} onClick={() => setPendingRemoval(null)}>取消</ActionButton>
         <ActionButton variant="danger" disabled={busy} onClick={() => void remove(pendingRemoval.id, pendingRemoval.label)}>{busy ? "正在移除…" : "移除配置及产品"}</ActionButton>
@@ -345,7 +345,7 @@ export function ApiSettings({ open, onClose, onCredentialsRemoved }: { open: boo
     <ModalFrame ariaLabel="数据源设置" title="数据源设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-8">
       <section>
         <SectionIntro title="配置 API" description="Key 和 Secret 由服务器加密保存；完整密钥不会返回浏览器。" />
-        {statusError && <div className="error-panel api-feedback-panel type-caption mb-3" role="alert">配置状态读取失败，请重试。<ActionButton variant="text" size="small" onClick={() => { setStatusError(false); void loadStatus(); }}>重试</ActionButton></div>}
+        {statusError && <FeedbackPanel tone="danger" className="mb-3">配置状态读取失败，请重试。<ActionButton variant="text" size="small" onClick={() => { setStatusError(false); void loadStatus(); }}>重试</ActionButton></FeedbackPanel>}
         <div className="api-connection-list">
           {status?.sources.map((source, index) => {
             const account = accounts.find((item) => item.id === source.id);
@@ -374,10 +374,10 @@ export function ApiSettings({ open, onClose, onCredentialsRemoved }: { open: boo
           })}
         </div>
       </section>
-      {message && <div className="muted-panel api-feedback-panel type-caption font-normal">{message}</div>}
+      {message && <FeedbackPanel className="font-normal">{message}</FeedbackPanel>}
       <section>
         <SectionIntro title="钱包地址" description="通过钱包地址同步链上理财持仓。" />
-        {walletLoadError ? <div className="error-panel api-feedback-panel type-caption" role="alert">钱包配置读取失败。<ActionButton variant="text" size="small" disabled={modalBusy} onClick={() => void loadWallet()}>重试读取钱包</ActionButton></div>
+        {walletLoadError ? <FeedbackPanel tone="danger">钱包配置读取失败。<ActionButton variant="text" size="small" disabled={modalBusy} onClick={() => void loadWallet()}>重试读取钱包</ActionButton></FeedbackPanel>
           : walletAddress === undefined ? <p className="text-secondary type-caption" role="status">正在读取钱包配置…</p>
           : <div className="api-connection-list"><SourceRow account={accounts.find((account) => account.id === "bitget-wallet-morph")} label="Bitget Wallet" statusLabel={walletAddress ? "已配置" : "未配置"} statusClass={walletAddress ? "status-chip-highlight" : "status-chip-muted"} description="Morph 链" actions={walletAddress
             ? <SourceRowMenu label="Bitget Wallet" updateLabel="修改钱包" removeLabel="移除钱包" disabled={modalBusy || editingWallet} onUpdate={() => { setWalletDraft(walletAddress); setEditingWallet(true); setWalletMessage(null); }} onRemove={() => { setWalletMessage(null); setPendingWalletRemoval(true); }} />
@@ -388,7 +388,7 @@ export function ApiSettings({ open, onClose, onCredentialsRemoved }: { open: boo
               <div className="flex justify-end gap-2"><ActionButton type="button" variant="secondary" disabled={modalBusy} onClick={() => { setEditingWallet(false); setWalletDraft(""); setWalletMessage(null); }}>取消</ActionButton><ActionButton type="submit" disabled={modalBusy || !normalizeWalletAddress(walletDraft)}>{walletBusy ? "正在保存…" : "保存"}</ActionButton></div>
             </form>}
           </SourceRow></div>}
-        {walletMessage && <p className={`${walletMessageError ? "error-panel" : "muted-panel"} api-feedback-panel type-caption mt-3`} role={walletMessageError ? "alert" : "status"}>{walletMessage}</p>}
+        {walletMessage && <FeedbackPanel tone={walletMessageError ? "danger" : "neutral"} className="mt-3">{walletMessage}</FeedbackPanel>}
       </section>
       <section>
         <div className="api-settings-split-row">
@@ -415,17 +415,17 @@ export function ApiSettings({ open, onClose, onCredentialsRemoved }: { open: boo
               && capabilityReport.requestSafety?.stopReason == null && <ActionButton variant="text" size="small" onClick={downloadCapabilityReport}>下载 JSON · {new Date(capabilityReport.generatedAt).toLocaleDateString("zh-CN")}</ActionButton>}
           </div>
         </div>
-        {rateLimitDetected && <p className="error-panel api-feedback-panel type-caption mt-3" role="status">
+        {rateLimitDetected && <FeedbackPanel tone="danger" role="status" className="mt-3">
           {capabilityReport?.requestSafety
             ? `已发出 ${capabilityReport.requestSafety.requestsStarted} 次请求，平台限制了检查请求，已停止后续探测，本报告没有完整生成。`
             : "平台限制了检查请求，已停止后续探测，本次检查没有完整生成。"}{retryWaitSeconds > 0 ? "请等冷却时间结束后再次检测。" : "冷却时间已结束，可以重新检测。"}
-        </p>}
+        </FeedbackPanel>}
         {!rateLimitDetected && capabilityReport?.requestSafety && <p className="type-caption text-muted mt-3" role="status">
           {capabilityReport.requestSafety.stopReason === "request_limit"
             ? `已达到单次 ${capabilityReport.requestSafety.requestLimit} 次请求的保护上限，后续探测已停止；本报告可能不完整。`
             : `最多 ${capabilityReport.requestSafety.concurrencyLimit} 个只读请求同时进行；本次共发起 ${capabilityReport.requestSafety.requestsStarted} 个请求。`}
         </p>}
-        {apiCheckState.error && <p className="error-panel api-feedback-panel type-caption mt-3" role="alert">{apiCheckState.error}</p>}
+        {apiCheckState.error && <FeedbackPanel tone="danger" className="mt-3">{apiCheckState.error}</FeedbackPanel>}
       </section>
     </ModalFrame>
   );

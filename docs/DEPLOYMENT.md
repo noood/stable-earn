@@ -6,13 +6,15 @@
 
 ## 需要准备
 
-- Cloudflare 账号，以及已登录的 Wrangler（`npx wrangler login`）。
+- Cloudflare 账号。
 - 一个 D1 数据库，名称使用 `stablecoin-earn-monitor`。
 - 一个 Queue，名称使用 `stable-earn-sync`。
 - Cloudflare Access 应用，路径规则使用 `/private*`，覆盖 `/private` 页面入口及其子路径。如果新增其他以 `/private` 开头的公开路径，应重新检查匹配范围。
 - 按数据源准备交易所只读 API Key，或已支持链上产品的钱包公开地址。交易所 Key 须关闭交易、转账、申购、赎回和提现权限；钱包接入不需要私钥或助记词。
 
 ## 第一次部署
+
+先在仓库根目录执行 `npm ci`，安装锁文件中的 Wrangler 与构建工具。如果 Wrangler 尚未登录，执行 `npx wrangler login`。
 
 1. 在 Cloudflare 创建 D1 数据库和 Queue：
 
@@ -34,10 +36,9 @@ POLICY_AUD
 
 首次安装须先按[新数据库初始化](#新数据库初始化)准备目标数据库，再继续部署。
 
-2. 安装依赖并部署：
+2. 部署应用：
 
 ```bash
-npm ci
 npm run deploy
 ```
 
@@ -47,7 +48,7 @@ npm run deploy
 
 [`drizzle/`](../drizzle/) 保留了历史 SQL 迁移文件，但当前部署命令不会自动执行它们；`CREATE TABLE IF NOT EXISTS` 也不会替已有表添加或修改列。生产首次安装应提前初始化数据库；升级已有部署前，应先备份 D1，核对 [`db/schema.ts`](../db/schema.ts)、相关历史迁移与现有表结构，再执行适用的迁移、验证后部署新代码。不要盲目重跑全部历史迁移，也不要把生产数据库 ID 或数据提交到仓库。
 
-应用冷启动只读取一次 `product_history_meta` 版本标记；并发请求共享准备过程，已准备好的数据库不重复执行建表语句。空库的自动建表只是开发/容错路径，不替代生产迁移：完整初始化及同次业务查询可能超过 D1 Free 每次调用的查询数限制。
+Worker 实例尚未确认数据库就绪时，每个并发请求独立检查 `product_history_meta` 的版本标记。版本检查确认就绪或初始化完成后，同一实例内后续使用该数据库绑定的请求复用已就绪状态。空库自动建表用于开发与容错，生产库仍按下文迁移。完整初始化及同次业务查询可能超过 D1 Free 每次调用的查询数限制。初始化卡住或报错时，见[诊断说明](DIAGNOSTICS.md#排查数据库初始化)。
 
 ### 新数据库初始化
 
