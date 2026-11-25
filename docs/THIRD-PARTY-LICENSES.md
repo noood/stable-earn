@@ -33,7 +33,7 @@ MEXC 品牌页另明确要求品牌素材不得改动，活动、宣传材料或
 
 ## 实际打包的 JavaScript 与许可材料
 
-Vite 原生许可报告依据实际输出 chunk 的模块来源识别包，而非将 lockfile 的 630 个条目全部计为浏览器分发物。当前客户端报告含下表前 10 个包，SSR 含其中除 `scheduler` 外的 9 个包，RSC 服务端报告含 6 个包（其中 `jose` 不在客户端）；三者去重合计 11 个包。各包自身元数据均为 MIT；这不代表包内复制的第三方代码也可忽略其独立声明。
+Vite 原生许可报告依据构建产物中的模块来源列出实际打包的依赖。当前客户端报告含下表前 10 个包，SSR 含其中除 `scheduler` 外的 9 个包，RSC 服务端报告含 6 个包（其中 `jose` 不在客户端）；三者去重合计 11 个包。各包自身元数据均为 MIT；这不代表包内复制的第三方代码也可忽略其独立声明。
 
 | 实际打包的包 | 版本 | 已找到的许可全文/版权记录 |
 |---|---|---|
@@ -44,14 +44,14 @@ Vite 原生许可报告依据实际输出 chunk 的模块来源识别包，而�
 | `react`、`react-dom`、`react-server-dom-webpack` | 各 19.3.1 | 各包 `LICENSE`，Meta Platforms, Inc. and affiliates |
 | `scheduler` | 0.28.0 | 安装包 `LICENSE`，Meta Platforms, Inc. and affiliates |
 | `unpic` | 4.2.2 | 安装包及 npm `gitHead` 对应源码树未找到独立 LICENSE；元数据声明 MIT，完整版权文本仍待确认 |
-| `vinext` | 1.4.4 | 安装包 `LICENSE`，2026 Cloudflare, Inc.；另有 `THIRD_PARTY_LICENSES.md` |
+| `vinext` | 1.4.6 | 安装包 `LICENSE`，2026 Cloudflare, Inc.；另有 `THIRD_PARTY_LICENSES.md` |
 | `jose`（仅 RSC 服务端） | 6.2.14 | 安装包 `LICENSE.md`，2018 Filip Skokan |
 
 版本对应证据：[`@unpic/core` 包元数据](https://github.com/ascorbic/unpic-img/blob/%40unpic/core%401.0.3/packages/core/package.json)、[同标签项目 README 的许可声明](https://github.com/ascorbic/unpic-img/blob/%40unpic/core%401.0.3/README.md#license)、[同标签 MIT 全文](https://github.com/ascorbic/unpic-img/blob/%40unpic/core%401.0.3/packages/react/LICENSE)、[Vite 插件对应提交的 LICENSE](https://github.com/vitejs/vite-plugin-react/blob/2e8512f98a4fc1b302af760c9d41900c2fa66d0a/LICENSE)、[`unpic` 对应源码提交](https://github.com/ascorbic/unpic/tree/eefd6174338cc1377f8f238b84af94f48acd6da4)。
 
 [MIT 条款](https://opensource.org/license/mit)要求随软件副本或实质部分保留版权和许可声明；浏览器收到的打包代码也应纳入声明材料处理，不能仅在依赖元数据写 `MIT`。标准构建通过 `scripts/third-party-notices.mjs` 将各环境的实际包许可、已核实的版本绑定补充材料、Vinext 附带的第三方声明及字体 OFL 合并成 `third-party-notices.txt`。客户端文件随静态资源发布，可通过站点的 `/third-party-notices.txt` 读取；服务端与 SSR 产物也各保留本环境文件，服务端专用 `jose` 不混入客户端清单。`.vite/third-party-licenses.json` 保留原始包来源报告，不代替补齐后的文本文件。文件仅供读取，不新增页面提示或首屏请求。
 
-`vinext@1.4.4/THIRD_PARTY_LICENSES.md` 另列出 `ua-parser-js` 的 MIT 声明、从 dotenv 16.3.1 改编解析器的 BSD 风格声明，以及 `iconv-lite@0.4.24` 和 `safer-buffer@2.1.2` 的 MIT 声明。构建会完整附带此文件的内容，不能只保留 Vinext 自身的 MIT；这些随包提供的声明也不能直接当成本项目新增 npm 依赖的清单。
+`vinext@1.4.6/THIRD_PARTY_LICENSES.md` 另列出 `ua-parser-js` 的 MIT 声明、从 dotenv 16.3.1 改编解析器的 BSD 风格声明，以及 `iconv-lite@0.4.24` 和 `safer-buffer@2.1.2` 的 MIT 声明。构建会完整附带此文件的内容，不能只保留 Vinext 自身的 MIT；这些随包提供的声明也不能直接当成本项目新增 npm 依赖的清单。
 
 `licenses/unpic-img-MIT.txt` 与 `licenses/vite-plugin-react-MIT.txt` 保存上述已核对的上游全文；它们只用于代码中绑定的包版本及 MIT 标识，不自动套用到升级版本。Vite 原生报告只读取包许可文件，因此额外保留 Vinext 的 `THIRD_PARTY_LICENSES.md`，并附加 `licenses/geist-OFL.txt`。新增包缺少标识/全文、或已核对包升级后仍缺全文时，构建报错，要求重新核对，不静默省略。`unpic@4.2.2` 是明确保留的待确认例外：输出其原始 MIT 元数据和缺口说明，不借用 `@unpic/core` 的版权文本，也不声称整体许可材料已齐全。此例外仅限该版本及 MIT 标识。
 
