@@ -1,5 +1,6 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
-import { prepareRefreshCommitGuard } from "./refresh-control";
+import { prepareDailyRefreshMarker, prepareRefreshCommitGuard } from "./refresh-control";
+import { prepareDeleteSyncCache, privateCacheKey } from "./sync-cache";
 import { normalizeWalletAddress } from "./wallet-address";
 
 export { normalizeWalletAddress } from "./wallet-address";
@@ -52,8 +53,7 @@ function resetWalletSnapshotStatements(db: D1Database, userId: string, now: stri
     db.prepare(`UPDATE product_catalog SET status = 'archived', archived_at = ?, last_seen_at = ?
       WHERE owner_id = ? AND json_valid(payload) AND json_extract(payload, '$.accountId') = ?`)
       .bind(now, now, userId, walletAccountId),
-    db.prepare("DELETE FROM sync_snapshots WHERE owner_id = ? AND cache_key = 'private-products'").bind(userId),
-    db.prepare("UPDATE refresh_control SET daily_day = NULL WHERE user_id = ? AND lease_token = ?")
-      .bind(userId, leaseToken),
+    prepareDeleteSyncCache(db, userId, privateCacheKey),
+    prepareDailyRefreshMarker(db, userId, leaseToken, null),
   ];
 }

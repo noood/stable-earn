@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
-function routeWithMocks({ identity = { userId: "owner" }, credentials = {
+function routeWithMocks({ identity = { userId: "owner" }, beforeProbe, credentials = {
   "binance-global": { apiKey: "secret-key", apiSecret: "secret" },
   "binance-bahrain": { apiKey: "other-key", apiSecret: "other-secret" },
 } } = {}) {
@@ -26,6 +26,7 @@ function routeWithMocks({ identity = { userId: "owner" }, credentials = {
     "@/lib/integrations/binance": {
       diagnoseBinanceFlexibleTiers: async (...args) => {
         calls.probes.push(args);
+        await beforeProbe?.();
         return { account: args[1] === "global" ? "binance-global" : "binance-bahrain", status: "empty", rows: [] };
       },
     },
@@ -115,4 +116,25 @@ test("narrow Binance USDC diagnostic marks unconfigured accounts without request
   assert.equal(calls.probes.length, 1);
   assert.equal(body.requestsStarted, 1);
   assert.equal(body.results.find((result) => result.account === "binance-bahrain").status, "not_configured");
+});
+
+test("an active Binance diagnostic shares its result only with requests for the same asset", async () => {
+  const started = Promise.withResolvers();
+  const gate = Promise.withResolvers();
+  const { post, calls } = routeWithMocks({ beforeProbe: () => {
+    started.resolve();
+    return gate.promise;
+  } });
+  const first = post(request(undefined, "USDC"));
+  await started.promise;
+  const matching = post(request(undefined, "USDC"));
+  const different = post(request(undefined, "BTC"));
+  // Let both requests reach the in-flight lookup before completing the exchange call.
+  await new Promise(setImmediate);
+  gate.resolve();
+  const [firstResponse, matchingResponse, differentResponse] = await Promise.all([first, matching, different]);
+  assert.equal(differentResponse.status, 429);
+  assert.equal((await firstResponse.json()).scope, "Binance USDC 活期产品 APR");
+  assert.equal((await matchingResponse.json()).scope, "Binance USDC 活期产品 APR");
+  assert.deepEqual(calls.probes.map((call) => call[2]), ["USDC", "USDC"]);
 });

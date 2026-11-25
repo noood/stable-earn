@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { credentialAccount, credentialAccounts, deleteCredential, listConfiguredCredentialIds, manualDataAccounts, saveCredential, type CredentialAccountId } from "@/lib/credentials";
+import { credentialAccount, credentialAccounts, listConfiguredCredentialIds, manualDataAccounts, prepareDeleteCredential, prepareSaveCredential } from "@/lib/credentials";
 import { getDatabase, getUserIdentity } from "@/lib/db";
-import { archiveApiCatalogProducts } from "@/lib/product-catalog";
+import { prepareArchiveApiCatalogProducts } from "@/lib/product-catalog";
 import { isSameOriginMutation, privateResponseHeaders } from "@/lib/request-security";
-import { deleteSyncCache } from "@/lib/sync-cache";
-import { releaseRefresh, supersedeRefreshForCredentialChange } from "@/lib/refresh-control";
+import { prepareDeleteSyncCache, privateCacheKey } from "@/lib/sync-cache";
+import { prepareDailyRefreshMarker, prepareRefreshCommitGuard, releaseRefresh, supersedeRefreshForCredentialChange } from "@/lib/refresh-control";
 
 export const dynamic = "force-dynamic";
 
@@ -47,17 +47,23 @@ export async function PUT(request: Request) {
   }
 
   const db = await getDatabase();
-  const token = await supersedeRefreshForCredentialChange(db, identity.userId);
+  const { userId } = identity;
+  const token = await supersedeRefreshForCredentialChange(db, userId);
   if (!token) return NextResponse.json({ error: "API 配置正在更新，请稍后重试。" }, { status: 409, headers: privateResponseHeaders });
   try {
-    await saveCredential(db, identity.userId, account.id, {
+    const save = await prepareSaveCredential(db, userId, account.id, {
       apiKey,
       apiSecret,
       passphrase: account.requiresPassphrase ? passphrase : undefined,
     });
-    await deleteSyncCache(db, identity.userId, "private-products");
+    await db.batch([
+      prepareRefreshCommitGuard(db, userId, token),
+      save,
+      prepareDeleteSyncCache(db, userId, privateCacheKey),
+      prepareDailyRefreshMarker(db, userId, token, null),
+    ]);
   } finally {
-    await releaseRefresh(db, identity.userId, token);
+    await releaseRefresh(db, userId, token);
   }
   return NextResponse.json({ saved: true, accountId: account.id }, { headers: privateResponseHeaders });
 }
@@ -69,14 +75,19 @@ export async function DELETE(request: Request) {
   const account = credentialAccount(new URL(request.url).searchParams.get("accountId") ?? "");
   if (!account) return NextResponse.json({ error: "不支持该账户。" }, { status: 400, headers: privateResponseHeaders });
   const db = await getDatabase();
-  const token = await supersedeRefreshForCredentialChange(db, identity.userId);
+  const { userId } = identity;
+  const token = await supersedeRefreshForCredentialChange(db, userId);
   if (!token) return NextResponse.json({ error: "API 配置正在更新，请稍后重试。" }, { status: 409, headers: privateResponseHeaders });
   try {
-    await deleteCredential(db, identity.userId, account.id as CredentialAccountId);
-    await archiveApiCatalogProducts(db, identity.userId, account.id);
-    await deleteSyncCache(db, identity.userId, "private-products");
+    await db.batch([
+      prepareRefreshCommitGuard(db, userId, token),
+      prepareDeleteCredential(db, userId, account.id),
+      prepareArchiveApiCatalogProducts(db, userId, account.id),
+      prepareDeleteSyncCache(db, userId, privateCacheKey),
+      prepareDailyRefreshMarker(db, userId, token, null),
+    ]);
   } finally {
-    await releaseRefresh(db, identity.userId, token);
+    await releaseRefresh(db, userId, token);
   }
   return NextResponse.json({ deleted: true, accountId: account.id }, { headers: privateResponseHeaders });
 }

@@ -10,6 +10,7 @@ import { syncDiagnostic, withSyncDiagnostics } from "@/lib/sync-diagnostics";
 import { sanitizeSyncFailure, scheduledRefreshPending } from "@/lib/sync-notice";
 import {
   loadSyncCache,
+  privateCacheKey,
   syncAttemptInProgress,
   syncCacheMetadata,
   type SyncCacheRecord,
@@ -17,7 +18,7 @@ import {
 } from "@/lib/sync-cache";
 import type { PrivateProductsPayload } from "@/lib/private-sync/types";
 import { legacyFailures, normalizeLegacyNote } from "@/lib/private-sync/status";
-import { privateCacheKey, recordDueManualMaturities, refreshPrivateProductsCache } from "@/lib/private-sync/service";
+import { recordDueManualMaturities, refreshPrivateProductsCache } from "@/lib/private-sync/service";
 import { withStartupServerTiming, type StartupServerTiming } from "@/lib/startup-timing";
 
 type DailyRefreshDiagnostic = {
@@ -96,13 +97,13 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
       ? { historySummaries: await loadProductHistorySummaries(db, ownerId, timing) }
       : { changeEvents: await loadProductChangeEvents(db, ownerId, 2000, timing) });
   }
-  async function reply(response: Response, maturitiesRecorded = false, dailyRefresh?: { day: string; completed: boolean }, prefetchedHistory?: Awaited<ReturnType<typeof readHistory>>) {
+  async function reply(response: Response, maturitiesChecked = false, dailyRefresh?: { day: string; completed: boolean }, prefetchedHistory?: Awaited<ReturnType<typeof readHistory>>) {
     const body = await response.json() as Record<string, unknown>;
     const cache = body.cache;
     if (!scheduledSyncEnabled && cache && typeof cache === "object" && !Array.isArray(cache)) {
       body.cache = { ...(cache as Record<string, unknown>), scheduledAt: null, scheduledState: "disabled" };
     }
-    if (!maturitiesRecorded) await timing.measure("maturities", () => recordDueManualMaturities(db, ownerId, timing));
+    if (!maturitiesChecked) await timing.measure("maturities", () => recordDueManualMaturities(db, ownerId, timing));
     const history = prefetchedHistory ?? await readHistory();
     return NextResponse.json({
       ...body,
@@ -125,18 +126,18 @@ async function handleProductsRequest(request: Request, refreshAllowed: boolean, 
 
   // Ordinary polls never contact exchanges, including accounts without a cache.
   if (!manual && !daily) {
-    const [saved, hasMaturityCandidates, history] = await Promise.all([
+    const [saved, maturityHistoryEventCount, history] = await Promise.all([
       timing.measure("snapshot_read", () => loadPrivateProductsSnapshot<PrivateProductsPayload>(db, ownerId, privateCacheKey, timing)),
       timing.measure("maturities", () => recordDueManualMaturities(db, ownerId, timing)),
       params.get("history") === "summary" ? readHistory() : undefined,
     ]);
     const day = refreshDay();
-    // Counts are monotonic (events are append-only). A parallel summary may
-    // predate a concurrent sync commit seen by the cache snapshot. Its count
-    // must cover that same snapshot, not just our own maturity writes.
-    const historyCoversSnapshot = history?.historySummaries
-      && history.historySummaries.reduce((count, summary) => count + summary.eventCount, 0) >= saved.historyEventCount;
-    const currentHistory = !hasMaturityCandidates && historyCoversSnapshot ? history : await readHistory();
+    // Counts are monotonic (events are append-only). Cover both the saved
+    // snapshot and any later commit observed by the maturity lookup.
+    const canReuseHistory = maturityHistoryEventCount !== null && history?.historySummaries
+      && history.historySummaries.reduce((count, summary) => count + summary.eventCount, 0)
+        >= Math.max(saved.historyEventCount, maturityHistoryEventCount);
+    const currentHistory = canReuseHistory ? history : await readHistory();
     return reply(snapshot(saved.record, saved.leaseUntil > Date.now()), true, {
       day,
       completed: saved.dailyDay === day && Boolean(saved.record?.payload || saved.record?.lastError),

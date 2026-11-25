@@ -29,11 +29,11 @@ test("maturity input uses three scoped reads and does not join another owner's d
   db.sqlite.prepare(`INSERT INTO product_override_limits (user_id,product_id,first_tier_limit,updated_at) VALUES ('b','shared',999,'2026-10-01')`).run();
   const queries = [];
   const wrapped = { ...db, prepare(sql) { queries.push(sql); return db.prepare(sql); } };
-  assert.equal(await recordDueManualMaturities(wrapped, "a"), false);
+  assert.equal(await recordDueManualMaturities(wrapped, "a"), 0);
   assert.equal(queries.length, 3);
   assert.equal(queries.filter((sql) => sql.includes("FROM holdings h")).length, 1);
   assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM product_change_events").get().n, 0);
-  assert.equal(await recordDueManualMaturities(db, "b"), true);
+  assert.equal(await recordDueManualMaturities(db, "b"), null);
   assert.deepEqual(db.sqlite.prepare("SELECT owner_id,product_id FROM product_change_events").all().map((r) => ({ ...r })), [{ owner_id: "b", product_id: "shared" }]);
   db.sqlite.close();
 });
@@ -44,7 +44,7 @@ test("missing dates, zero positions, flexible products and future maturities do 
   position(db, "no-date", { purchase: null });
   position(db, "flexible", { kind: "flexible", term: null });
   position(db, "future", { purchase: "2026-10-19" });
-  assert.equal(await recordDueManualMaturities(db, "a"), false);
+  assert.equal(await recordDueManualMaturities(db, "a"), 0);
   assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM product_change_events").get().n, 0);
   db.sqlite.close();
 });
@@ -71,10 +71,32 @@ test("catalog manual-kind/term overrides and user products keep the same maturit
   catalog("catalog-due");
   catalog("api-not-manual", "api");
   catalog("archived", "manual", "archived");
-  assert.equal(await recordDueManualMaturities(db, "a"), true);
+  assert.equal(await recordDueManualMaturities(db, "a"), null);
   assert.deepEqual(db.sqlite.prepare("SELECT product_id FROM product_change_events ORDER BY product_id").all().map((r) => r.product_id), ["catalog-due", "user-due"]);
   db.sqlite.prepare("UPDATE product_change_events SET read_at = '2026-10-20'").run();
-  assert.equal(await recordDueManualMaturities(db, "a"), true);
+  assert.equal(await recordDueManualMaturities(db, "a"), 2);
   assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM product_change_events WHERE read_at IS NOT NULL").get().n, 2);
+  db.sqlite.close();
+});
+
+test("a batch writes only missing maturity events for the current account", async () => {
+  const db = sqliteDb();
+  position(db, "recorded");
+  position(db, "shared", { owner: "b" });
+  await recordDueManualMaturities(db, "a");
+  await recordDueManualMaturities(db, "b");
+  position(db, "shared");
+
+  const batchSizes = [];
+  const wrapped = { ...db, batch(statements) {
+    batchSizes.push(statements.length);
+    return db.batch(statements);
+  } };
+  assert.equal(await recordDueManualMaturities(wrapped, "a"), null);
+  assert.deepEqual(batchSizes, [1]);
+  assert.equal(await recordDueManualMaturities(wrapped, "a"), 2);
+  assert.deepEqual(batchSizes, [1]);
+  assert.deepEqual(db.sqlite.prepare("SELECT owner_id || ':' || product_id AS id FROM product_change_events ORDER BY id")
+    .all().map((row) => row.id), ["a:recorded", "a:shared", "b:shared"]);
   db.sqlite.close();
 });

@@ -19,14 +19,16 @@ test("APR and capacity policy tables retain every separately agreed scenario", (
   }
 });
 
-test("capability summary separates invalid product fields from incomplete requests and dust from zero", () => {
+test("capability and directory rules distinguish incomplete requests, small holdings and zero holdings", () => {
   const document = readDoc("PLATFORM-CAPABILITIES").split("## 空、部分、失败及目录处理规则")[1] ?? "";
   const partialRow = document.split("\n").find((line) => line.startsWith("| `partial`")) ?? "";
   assert.match(partialRow, /分页未完成、查询范围不全/);
   assert.match(partialRow, /单个产品 APR\/额度异常本身不代表请求部分返回/);
   assert.doesNotMatch(partialRow, /分页未完成、字段缺失/);
-  assert.match(document, /持仓 `≤0\.01` 已不满足持仓门槛，不要求必须为零/);
-  assert.match(document, /用户手动“移除产品”的零持仓限制是另一项操作/);
+  assert.match(document, /\[目录与身份\]\(DATA-STATES\.md#目录与身份\)/);
+  const directory = readDoc("DATA-STATES").split("## 目录与身份")[1]?.split("## API 结果状态")[0] ?? "";
+  assert.match(directory, /持仓 `≤0\.01` 已不满足目录的持仓门槛，即使它仍是正数/);
+  assert.match(directory, /用户手动“移除产品”要求明确零持仓/);
 });
 
 test("parsing rules distinguish last-tier null from independent subscription-limit null", () => {

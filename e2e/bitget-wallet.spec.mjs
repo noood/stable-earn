@@ -331,9 +331,11 @@ test("wallet settings validate the address, save locally and confirm removal bef
   await dialog.getByRole("button", { name: "移除钱包", exact: true }).click();
   let confirmation = page.getByRole("dialog", { name: "移除钱包地址", exact: true });
   await expect(confirmation).toBeVisible();
+  await expect(confirmation.getByRole("button", { name: "关闭", exact: true })).toBeFocused();
   expect(mutations).toHaveLength(1);
   await confirmation.getByRole("button", { name: "取消", exact: true }).click();
   await expect(confirmation).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "关闭", exact: true })).toBeFocused();
   expect(mutations).toHaveLength(1);
 
   await dialog.getByLabel("Bitget Wallet 更多操作").click();

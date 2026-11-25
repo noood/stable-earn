@@ -70,6 +70,12 @@ npx playwright test --config=playwright.production.config.mjs
 
 它在 127.0.0.1:3001 临时启动生产构建，账户接口使用合成响应，不使用凭证或生产 D1；运行前确保端口空闲。常规开发预览的 E2E 仍使用 `npm run test:e2e`。
 
+### 工具链兼容
+
+当前保留 ESLint 9.39.4 和 TypeScript 5.9.3。`eslint-config-next@16.4.6` 使用的 `eslint-plugin-import@2.32.0`、`eslint-plugin-jsx-a11y@6.10.2`、`eslint-plugin-react@7.37.5` 尚未声明支持 ESLint 10；`typescript-eslint@8.74.0` 会明确拒绝 TypeScript 7。升级这两个大版本前，需要同时核对解析器和插件的兼容范围，并验证干净安装、依赖树和检查命令，不能仅凭单次 CI 通过或强制忽略依赖冲突来判断兼容。
+
+ESLint 9.39.4 已被上游标记为不再支持；当前保留它是兼容性取舍，不表示维护或安全风险已解决。插件正式支持 ESLint 10，或准备单独改造检查工具链时，重新评估升级。
+
 ### 截图基线
 
 仓库目前只维护 macOS（`darwin`）基线，覆盖桌面和 375px 窄屏。其他系统需先生成并人工审阅对应平台的基线，不跨系统比较；只有确认视觉变化符合预期后才更新。

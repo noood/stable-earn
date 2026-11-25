@@ -1,6 +1,7 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 
 export const SYNC_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+export const privateCacheKey = "private-products";
 
 export type ScheduledRefreshState = "scheduled" | "syncing" | "overdue";
 
@@ -185,10 +186,9 @@ export function prepareSyncFailureRecord(
     .bind(error.slice(0, 240), ownerId, cacheKey);
 }
 
-export async function deleteSyncCache(db: D1Database, ownerId: string, cacheKey: string) {
-  await db.prepare("DELETE FROM sync_snapshots WHERE owner_id = ? AND cache_key = ?")
-    .bind(ownerId, cacheKey)
-    .run();
+export function prepareDeleteSyncCache(db: D1Database, ownerId: string, cacheKey: string) {
+  return db.prepare("DELETE FROM sync_snapshots WHERE owner_id = ? AND cache_key = ?")
+    .bind(ownerId, cacheKey);
 }
 
 export function formatCacheTime(value: string | null) {

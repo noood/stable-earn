@@ -227,7 +227,7 @@ test("the background maturity reader carries both explicit quota choices and leg
       f.db.sqlite.prepare(`INSERT INTO product_override_limits (user_id,product_id,first_tier_limit,first_tier_unlimited,updated_at)
         VALUES ('alice',?,NULL,?,?) ON CONFLICT DO UPDATE SET first_tier_unlimited=excluded.first_tier_unlimited`)
         .run(f.product.id, choice === undefined ? null : choice ? 1 : 0, savedAt);
-      assert.equal(await service.recordDueManualMaturities(f.db, "alice"), false);
+      assert.equal(await service.recordDueManualMaturities(f.db, "alice"), 0);
       const override = observed.at(-1);
       assert.equal(override.firstTierUnlimited, choice);
       assert.equal(Object.hasOwn(override, "firstTierUnlimited"), choice !== undefined);

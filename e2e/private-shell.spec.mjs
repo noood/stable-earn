@@ -8,7 +8,7 @@ test("private route serves a lightweight shell before loading the dashboard", as
   expect(html).toContain("skeleton-block");
   expect(html).toContain('aria-busy="true"');
   expect(html).toContain("Stable Earn");
-  expect(html).toContain("平台 / 产品");
+  expect(html).toContain("平台与产品类型");
   expect(html).toContain("实际到账以平台账户为准");
   expect(html).not.toContain("正在加载个人数据");
   expect(html).not.toContain("总持仓 ·");
@@ -41,7 +41,7 @@ test("module-loading skeleton has no visible copy and gives way to the dashboard
     await expect(page.getByRole("button", { name: "编辑持仓" })).toBeDisabled();
     await expect(page.getByRole("navigation", { name: "主导航" })).toContainText("Stable Earn");
     await expect(page.getByRole("button", { name: "USDT" })).toHaveAttribute("aria-current", "page");
-    await expect(page.getByRole("columnheader", { name: "平台 / 产品" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "平台与产品类型" })).toBeVisible();
     await expect(page.getByText("实际到账以平台账户为准。", { exact: false })).toBeVisible();
     await expect(page.getByText("正在加载个人数据")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
@@ -82,7 +82,7 @@ test("module-download failure keeps the fixed shell without a retry button", asy
   await expect(page.getByRole("button", { name: "编辑持仓" })).toHaveClass(/button-primary/);
   await expect(page.locator(".empty-product-state > p")).toHaveClass(/text-muted type-label font-semibold/);
   await expect(page.getByRole("navigation", { name: "主导航" })).toContainText("Stable Earn");
-  await expect(page.getByRole("columnheader", { name: "平台 / 产品" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "平台与产品类型" })).toBeVisible();
   await expect(page.getByText("实际到账以平台账户为准。", { exact: false })).toBeVisible();
   expect(accountReads).toHaveLength(0);
   expect(pageErrors).toEqual([]);
@@ -102,6 +102,39 @@ test("dashboard preload starts before client mount and downloads once", async ({
   expect(Number(started.match(/导航后 (\d+)ms/)[1])).toBeLessThanOrEqual(Number(mounted.match(/导航后 (\d+)ms/)[1]));
   expect(dashboardRequests).toHaveLength(1);
   await expect(page.locator(".metrics-panel .skeleton-block")).toHaveCount(0);
+});
+
+test("an early product network failure is handled while startup waits for holdings", async ({ page }) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  let releaseHoldings;
+  const holdingsGate = new Promise((resolve) => { releaseHoldings = resolve; });
+  await page.route((url) => url.pathname === "/private/api/holdings", async (route) => {
+    await holdingsGate;
+    await route.continue();
+  });
+  await page.route((url) => url.pathname === "/private/api/products", async (route) => {
+    if (route.request().method() === "GET") await route.abort();
+    else await route.continue();
+  });
+  const productFailed = page.waitForEvent("requestfailed", (request) => (
+    new URL(request.url()).pathname === "/private/api/products" && request.method() === "GET"
+  ));
+
+  try {
+    await page.goto("/private?diagnostics=1", { waitUntil: "domcontentloaded" });
+    await productFailed;
+    // Give Chromium time to dispatch an unhandled rejection before holdings unblock.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    expect(pageErrors).toEqual([]);
+    releaseHoldings();
+    const diagnostics = page.getByLabel("页面启动诊断");
+    await expect(diagnostics.getByText(/产品缓存读取.*请求或响应读取失败/)).toBeVisible();
+    await expect(diagnostics).toContainText("首次打开流程结束");
+    expect(pageErrors).toEqual([]);
+  } finally {
+    releaseHoldings();
+  }
 });
 
 test("a completed server daily marker removes the extra request without hiding the saved failure", async ({ page }) => {
@@ -141,7 +174,7 @@ test("local-only module failure preview shows the failure style without a retry 
   await expect(page.locator(".empty-product-state > p")).toHaveText("页面加载失败，数据无法显示，请刷新页面。");
   await expect(page.getByRole("button", { name: "重试" })).toHaveCount(0);
   await expect(page.getByRole("navigation", { name: "主导航" })).toContainText("Stable Earn");
-  await expect(page.getByRole("columnheader", { name: "平台 / 产品" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "平台与产品类型" })).toBeVisible();
   expect(accountApiRequested).toBe(false);
 
 });
@@ -161,7 +194,7 @@ test("local second-stage failure shows the same fixed shell from skeleton to acc
     await expect.poll(() => holdingsReadBlocked).toBe(true);
     await expect(page.getByRole("navigation", { name: "主导航" })).toContainText("Stable Earn");
     await expect(page.locator('.metrics-panel[aria-busy="true"] .skeleton-block').first()).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "平台 / 产品" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "平台与产品类型" })).toBeVisible();
     await expect(page.getByText("实际到账以平台账户为准。", { exact: false })).toBeVisible();
 
     releaseHoldingsRead();
@@ -169,7 +202,7 @@ test("local second-stage failure shows the same fixed shell from skeleton to acc
     await expect(page.getByRole("button", { name: "编辑持仓" })).toHaveClass(/button-primary/);
     await expect(page.locator(".empty-product-state > p")).toHaveClass(/text-muted type-label font-semibold/);
     await expect(page.getByRole("navigation", { name: "主导航" })).toContainText("Stable Earn");
-    await expect(page.getByRole("columnheader", { name: "平台 / 产品" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "平台与产品类型" })).toBeVisible();
     await expect(page.locator(".metrics-panel")).toContainText("—");
   } finally {
     releaseHoldingsRead();
