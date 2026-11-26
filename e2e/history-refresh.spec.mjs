@@ -40,6 +40,40 @@ async function previewSnapshotFixture(page, productId, initialEvents = []) {
   };
 }
 
+for (const width of [1280, 375, 320]) {
+  test(`long history entries wrap inside the popover at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const productId = "bn-g-usdt";
+    const title = "产品名称变更，平台已将原活动移到稳定币理财列表，持仓和到期安排仍以平台账户记录为准。".repeat(3);
+    const before = "OriginalSavingsOffer".repeat(12);
+    const after = "更新后的活动名称";
+    await previewSnapshotFixture(page, productId, [{ ...event(productId, "long-history-entry", title), before, after }]);
+    const row = page.getByRole("row").filter({ hasText: "Binance Global" }).filter({ hasText: "持仓 650.00" });
+    await row.getByRole("button", { name: /查看变更记录/ }).click();
+
+    const dialog = page.getByRole("dialog", { name: "产品变更记录" });
+    const titleText = dialog.getByText(title, { exact: true });
+    const beforeText = dialog.getByText(before, { exact: true });
+    await expect(titleText).toBeVisible();
+    await expect(beforeText).toBeVisible();
+    await expect(dialog.getByText(after, { exact: true })).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    const box = await dialog.boundingBox();
+    expect(box?.width).toBe(Math.min(320, width - 24));
+    expect(box.x).toBeGreaterThanOrEqual(12);
+    expect(box.x + box.width).toBeLessThanOrEqual(width - 12);
+    expect(await dialog.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+    for (const text of [titleText, beforeText]) {
+      expect(await text.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return range.getClientRects().length;
+      })).toBeGreaterThan(1);
+    }
+    await dialog.screenshot({ path: testInfo.outputPath("long-history.png"), animations: "disabled" });
+  });
+}
+
 test("same-page refresh shows new history without losing loaded older pages or clearing it before confirmation", async ({ page }) => {
   const productId = "preview-apr-six";
   const fixture = await previewSnapshotFixture(page, productId);

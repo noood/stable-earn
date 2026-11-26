@@ -1573,7 +1573,9 @@ test("table keeps fixed trailing columns and uniform spacing at desktop and mobi
     await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
     const layout = await page.locator(".product-table").evaluate((table) => {
       const headers = Array.from(table.querySelectorAll("thead th"));
-      const cells = Array.from(table.querySelector("tbody tr.product-row").cells);
+      const rows = table.querySelectorAll("tbody tr.product-row");
+      const cells = Array.from(rows[0].cells);
+      const divider = getComputedStyle(rows[0]);
       const button = cells[4].querySelector(".product-history-trigger").getBoundingClientRect();
       const headerText = document.createRange();
       headerText.selectNodeContents(headers[3]);
@@ -1582,6 +1584,9 @@ test("table keeps fixed trailing columns and uniform spacing at desktop and mobi
         tableWidth: table.getBoundingClientRect().width,
         widths: headers.map((header) => header.getBoundingClientRect().width),
         padding: [...headers, ...cells].map((cell) => [getComputedStyle(cell).paddingLeft, getComputedStyle(cell).paddingRight]),
+        dividerSize: divider.backgroundSize,
+        dividerPosition: divider.backgroundPosition,
+        lastDivider: getComputedStyle(rows[rows.length - 1]).backgroundImage,
         button: [button.width, button.height],
         headerFits: headerText.getBoundingClientRect().left >= headerRect.left + 31 && headerText.getBoundingClientRect().right <= headerRect.right - 31,
         scrolls: table.parentElement.scrollWidth > table.parentElement.clientWidth + 1,
@@ -1592,6 +1597,9 @@ test("table keeps fixed trailing columns and uniform spacing at desktop and mobi
     expect(layout.widths[3]).toBeCloseTo(136, 0);
     expect(layout.widths[4]).toBeCloseTo(104, 0);
     expect(layout.padding.every(([left, right]) => left === "32px" && right === "32px")).toBe(true);
+    expect(layout.dividerSize).toBe("calc(100% - 64px) 0.5px");
+    expect(layout.dividerPosition).toBe("50% 100%");
+    expect(layout.lastDivider).toBe("none");
     expect(layout.button).toEqual([32, 32]);
     expect(layout.headerFits).toBe(true);
     expect(layout.scrolls).toBe(width === 375);

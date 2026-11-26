@@ -402,6 +402,20 @@ export function isLocalSyncStateScenario(scenario: string | null): scenario is s
 }
 
 export function localSyncScenarioPreview(scenario: string | null, now = new Date()) {
+  if (scenario === "history-long") {
+    const preview = localPrivateProductsPreview(now);
+    const event: ProductChangeEvent = {
+      id: "preview-change-long-subscription-status",
+      productId: "bn-g-usdt",
+      type: "availability",
+      title: "申购状态变化",
+      before: "活动面向所有完成身份验证的账户开放，支持追加申购。新申购金额从次日开始计息，已有持仓的收益和赎回时间以平台账户页面显示为准。",
+      after: "暂停新申购，已有持仓继续按原规则计息",
+      observedAt: now.toISOString(),
+      source: "手动刷新",
+    };
+    return { ...preview, changeEvents: [event, ...preview.changeEvents] };
+  }
   if (!isLocalSyncStateScenario(scenario)) return null;
   const initial = scenario.startsWith("initial-");
   const empty = scenario === "empty";
