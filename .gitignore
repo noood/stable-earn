@@ -43,3 +43,6 @@ next-env.d.ts
 /outputs/
 /work/
 *.tsbuildinfo
+
+# local plans and notes
+/local-only/
