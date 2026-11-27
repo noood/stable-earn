@@ -97,7 +97,10 @@ test("navigation shares the canvas and sits four pixels inside the dashboard car
   const brandLabel = nav.getByText("Stable Earn", { exact: true });
   await expect(brandLabel).toHaveCSS("font-size", "18px");
   const active = nav.getByRole("button", { name: "USDT", exact: true });
-  for (const width of [375, 502, 639, 640, 1024, 1160, 1220, 1280, 1920]) {
+  for (const [width, gutter] of [
+    [375, 20], [502, 20], [639, 20], [640, 20], [1024, 40],
+    [1160, 79], [1220, 109], [1242, 120], [1280, 120], [1418, 120], [1920, 330],
+  ]) {
     await page.setViewportSize({ width, height: 900 });
     const singleRow = width >= 640;
     await expect(nav).toHaveCSS("height", singleRow ? "72px" : "108px");
@@ -116,13 +119,7 @@ test("navigation shares the canvas and sits four pixels inside the dashboard car
     }
     const card = await page.locator(".metrics-panel").boundingBox();
     expect(width - card.x - card.width).toBeCloseTo(card.x, 0);
-    if (width < 1024) expect(card.x).toBe(20);
-    if (width === 1024) expect(card.x).toBe(40);
-    if (width === 1160) {
-      expect(card.x).toBeGreaterThan(40);
-      expect(card.x).toBeLessThan(100);
-    }
-    if (width === 1220 || width === 1280) expect(card.x).toBe(100);
+    expect(card.x, `${width}px viewport`).toBe(gutter);
     const brand = await brandLabel.boundingBox();
     const more = await nav.locator(".action-menu-trigger").boundingBox();
     expect(brand.x - card.x).toBeCloseTo(4, 0);
@@ -1892,11 +1889,12 @@ test("table fits the effective APR and keeps uniform spacing at desktop and mobi
   });
   await page.goto("/private");
   const table = page.getByRole("table");
+  await expect(table).toHaveAttribute("aria-busy", "false", { timeout: 10_000 });
   for (const value of ["99.99%", "12345.67%"]) {
     await expect(table.locator("td:nth-child(4)").filter({ hasText: value })).toHaveText(value);
   }
   await waitForVisualAssets(page);
-  for (const width of [375, 1023, 1024, 1063, 1081, 1082, 1220, 1280, 1740]) {
+  for (const width of [375, 1023, 1024, 1063, 1081, 1082, 1220, 1280, 1418, 1740]) {
     await page.setViewportSize({ width, height: 842 });
     const layout = await page.locator(".product-table").evaluate((table) => {
       const headers = Array.from(table.querySelectorAll("thead th"));
@@ -1929,7 +1927,7 @@ test("table fits the effective APR and keeps uniform spacing at desktop and mobi
       };
     });
     if (width >= 1024) {
-      expect(layout.widths[0]).toBeCloseTo(layout.tableWidth * 0.24, 0);
+      expect(layout.widths[0]).toBeCloseTo(layout.tableWidth * 0.225, 0);
       expect(layout.widths[1]).toBeCloseTo(layout.widths[2], 0);
     } else {
       expect(layout.widths[0]).toBeCloseTo(layout.tableWidth * 0.22, 0);
@@ -1974,7 +1972,7 @@ test("purchase dates keep the field label on one line and wrap the maturity note
 });
 
 test("narrow product and holding content fit with clear gaps at desktop and mobile widths", async ({ page }) => {
-  for (const width of [375, 980, 1220, 1280]) {
+  for (const width of [375, 980, 1220, 1280, 1418]) {
     await page.setViewportSize({ width, height: 842 });
     await page.goto("/private");
     await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
