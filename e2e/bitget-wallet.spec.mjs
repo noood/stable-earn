@@ -116,7 +116,7 @@ for (const width of [1280, 375]) {
     await page.setViewportSize({ width, height: 900 });
     await installLocalBgwPreview(page);
     const row = await openBgwPreview(page);
-    await expect(row.locator("td").first().locator(".type-body.font-semibold")).toHaveText("Bitget Wallet");
+    await expect(row.getByRole("cell").first().getByText("Bitget Wallet", { exact: true })).toHaveCSS("font-weight", "600");
     await expect(row.locator("td").first()).toContainText("活期理财");
     await expect(row.locator("td").first()).not.toContainText("Morph");
     await expect(row.locator("td").first()).not.toContainText("Gauntlet");
@@ -129,6 +129,8 @@ for (const width of [1280, 375]) {
     await expect(row.locator(".product-meta-danger").filter({ hasText: "额度" })).toHaveCount(0);
     await expect(row).not.toContainText("不参与收益计算");
     await expect(row.locator(".holding-summary")).toContainText("持仓 123.45 / 首档 不限额");
+    await expect(row.getByText("持仓 123.45", { exact: true })).toHaveCSS("font-weight", "600");
+    await expect(row.getByText("/ 首档 不限额", { exact: true })).toHaveCSS("font-weight", "400");
     await expect(row.getByRole("progressbar")).toHaveCount(0);
     await expect(row.locator("td").nth(3)).toHaveText(`${referenceApr.toFixed(2)}%`);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -140,9 +142,13 @@ for (const width of [1280, 375]) {
     await page.getByRole("button", { name: "编辑持仓" }).click();
     await expect(row.getByRole("combobox", { name: "产品类型", exact: true })).toHaveText("活期理财");
     await expect(row.locator(".holding-editor-readonly")).toContainText("123.45");
+    await expect(row.getByText("持仓 123.45", { exact: true })).toHaveCSS("font-weight", "600");
+    await expect(row.getByText("/ 首档 不限额", { exact: true })).toHaveCSS("font-weight", "400");
     await expect(row.getByRole("textbox", { name: "USDC 产品持仓" })).toHaveCount(0);
     await expect(row.getByRole("textbox", { name: "APY", exact: true })).toHaveCount(0);
     await expect(row.getByRole("textbox", { name: "APR", exact: true })).toHaveValue("6.73");
+    await expect(row.locator(".manual-field-label").getByText("APR", { exact: true })).toHaveCSS("font-weight", "400");
+    await expect(row.getByRole("textbox", { name: "APR", exact: true })).toHaveCSS("font-weight", "400");
     await expect(row.locator(".product-rate-headline").getByRole("button")).toHaveCount(0);
     const info = row.locator(".manual-field-label").getByRole("button", { name: "APR说明", exact: true });
     await expect(info).toHaveCount(1);
@@ -154,8 +160,10 @@ for (const width of [1280, 375]) {
       await expect(row.locator("td").nth(1)).toHaveScreenshot("bgw-manual-field-375.png", { animations: "disabled" });
     }
     await expect(row.getByRole("textbox", { name: "首档额度", exact: true })).toHaveValue("不限额");
+    await info.scrollIntoViewIfNeeded();
     await expect(info).toBeVisible();
-    await info.click();
+    // Open with a click alone so hover cannot mask a missing click handler.
+    await info.dispatchEvent("click");
     const tooltip = page.getByRole("tooltip");
     await expect(tooltip).toContainText("整体 APR 包含基础收益和奖励利率");
     await expect(tooltip).toContainText("奖励每 8 小时结算一次，赎回时空投到钱包余额");
@@ -177,7 +185,7 @@ test("BGW direct APR is consistent in the row, portfolio and daily estimate", as
   await expect(metric("总持仓 · USDC")).toHaveText("10,000.00");
   await expect(metric("组合有效 APR")).toHaveText("6.72%");
   await expect(metric("预计每日收益 · USDC")).toHaveText("1.84");
-  await expect(metric("最佳首档 APR")).toHaveText("6.72%");
+  await expect(metric("最佳首档 APR · Bitget Wallet")).toHaveText("6.72%");
   await expect(metric("高息剩余额度")).toHaveText("不限");
   await expect(page.locator(".metrics-panel")).not.toContainText("APY");
 });
@@ -368,6 +376,7 @@ for (const width of [1280, 375]) {
     await expect(walletRow.locator(".account-badge")).toHaveAttribute("src", "/platforms/bitget-wallet.webp");
     await expect(walletRow.getByText("Morph 链", { exact: true })).toBeVisible();
     await expect(walletRow.getByText("Morph 链", { exact: true })).toHaveCSS("margin-top", "4px");
+    await expect(walletRow.getByText("未配置", { exact: true })).toHaveCSS("font-weight", "400");
     await expect(walletRow).not.toContainText("整体 APR");
     await expect(dialog).not.toContainText("无需私钥");
     await expect(dialog).toHaveScreenshot(`bgw-wallet-settings-${width}.png`, { animations: "disabled" });
@@ -395,7 +404,7 @@ for (const width of [1280, 375]) {
     await page.getByRole("button", { name: "数据源设置", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "数据源设置", exact: true });
     const walletRow = dialog.locator(".api-connection-row").filter({ hasText: "Bitget Wallet" });
-    await expect(walletRow.getByText("已配置", { exact: true })).toBeVisible();
+    await expect(walletRow.getByText("已配置", { exact: true })).toHaveCSS("font-weight", "400");
     await expect(walletRow).not.toContainText(address);
 
     await dialog.getByLabel("Bitget 更多操作", { exact: true }).click();

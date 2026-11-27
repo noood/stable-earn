@@ -7,13 +7,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { moduleLoader } from "./helpers/load-ts.mjs";
 
 const source = ts.createSourceFile("dashboard.tsx", readFileSync(new URL("../app/components/dashboard/dashboard.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const frameSource = ts.createSourceFile("dashboard-frame.tsx", readFileSync(new URL("../app/components/dashboard/dashboard-frame.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const parts = {};
 function visit(node) {
   if (ts.isJsxElement(node)) {
-    const className = node.openingElement.attributes.properties.find((attribute) => attribute.name?.getText(source) === "className")?.initializer?.text;
-    if (className?.startsWith("metrics-panel ")) parts.metrics = node.getText(source);
-    if (className?.startsWith("card type-caption mb-4 ")) parts.notice = node.getText(source);
+    if (node.openingElement.tagName.getText(source) === "MetricsPanel") parts.metrics = node.getText(source);
+    if (node.openingElement.tagName.getText(source) === "DashboardSyncNotice") parts.notice = node.getText(source);
     if (node.openingElement.tagName.getText(source) === "DashboardProductTableSection") {
       const rows = node.children.find((child) => ts.isJsxExpression(child));
       if (rows?.expression) parts.body = rows.expression.getText(source);
@@ -22,22 +20,20 @@ function visit(node) {
   ts.forEachChild(node, visit);
 }
 visit(source);
-function findEmptyState(node) {
-  if (ts.isFunctionDeclaration(node) && node.name?.text === "ProductTableEmptyState") parts.empty = node.getText(frameSource).replace(/^export\s+/, "");
-  ts.forEachChild(node, findEmptyState);
-}
-findEmptyState(frameSource);
-assert.equal(Object.keys(parts).length, 4);
-const ui = moduleLoader()(new URL("../app/components/ui.tsx", import.meta.url).pathname);
-const { dashboardReadState, serverReadFailureMessage } = moduleLoader()("@/lib/sync-notice");
+assert.deepEqual(Object.keys(parts).sort(), ["body", "metrics", "notice"]);
+const load = moduleLoader();
+const ui = load("@/app/components/ui");
+const { DashboardSyncNotice, ProductTableEmptyState } = load("@/app/components/dashboard/dashboard-frame");
+const { DashboardMetricsSkeleton, metricDescriptions } = load("@/app/components/dashboard/dashboard-skeleton");
+const { dashboardReadState, serverReadFailureMessage } = load("@/lib/sync-notice");
 function render(part, overrides = {}) {
   const props = {
     ...ui, dataBlocked: true, initialLoading: false, isDemo: false, asset: "USDT", serverReadFailureMessage,
-    totalHolding: 100, holdingProductCount: 1, portfolioApr: 8, annualEarn: 8, hasApy: false,
+    totalHolding: 100, portfolioApr: 8, annualEarn: 8, hasApy: false,
     bestProduct: { accountId: "test", rateCoverage: "complete", tiers: [{ min: 0, max: 100, apr: 10 }] }, highYieldLeft: 50, tierOneOverflow: 20,
     formatAmount: (value) => value.toFixed(2), highestProductApr: () => 10, accountName: () => "Test Exchange",
     tableProducts: [],
-    DashboardMetricsSkeleton: () => React.createElement(React.Fragment, null, ...Array.from({ length: 6 }, (_, index) => React.createElement(ui.MetricSkeleton, { key: index, highlight: index === 0 }))),
+    DashboardMetricsSkeleton, metricDescriptions, DashboardSyncNotice, ProductTableEmptyState,
     ProductTableSkeletonRows: () => null,
     ...overrides,
   };
@@ -48,7 +44,7 @@ function render(part, overrides = {}) {
   props.preserveManualRefreshButton ??= false;
   props.showSyncFailureRefresh ??= (props.manualRefreshInProgress && props.preserveManualRefreshButton)
     || (!props.dataBlocked && !props.isDemo && !props.updating && !props.scheduledRefreshFailed && props.hasSyncFailure);
-  const code = ts.transpileModule(`${parts.empty}\nreturn (${parts[part]});`, {
+  const code = ts.transpileModule(`return (${parts[part]});`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React },
   }).outputText;
   return renderToStaticMarkup(new Function("React", ...Object.keys(props), code)(React, ...Object.values(props)));
@@ -58,9 +54,8 @@ test("personal read failure keeps six metric cards with missing values instead o
   const html = render("metrics");
   assert.equal((html.match(/class="metric-value[^\"]*">—<\/p>/g) ?? []).length, 6);
   assert.match(html, /metric-item-highlight/);
-  assert.match(html, /— 个持仓产品/);
   for (const label of ["总持仓", "组合有效 APR", "预计每日收益", "最佳首档 APR", "高息剩余额度", "超出首档"]) assert.ok(html.includes(label));
-  assert.doesNotMatch(html, /暂无产品|未超出首档|已进入次档|Test Exchange|text-danger|尚未加载|skeleton/);
+  assert.doesNotMatch(html, /个持仓产品|暂无产品|未超出首档|已进入次档|Test Exchange|text-danger|尚未加载|skeleton/);
 });
 
 test("a complete API response can still name a product with missing APR in the top notice", () => {
@@ -80,7 +75,7 @@ test("personal read error notice has the requested copy and no retry button", ()
   const html = render("notice");
   assert.match(html, /服务器读取失败，数据无法显示，请刷新页面。/);
   assert.doesNotMatch(html, /<button|重试/);
-  assert.match(html, /text-danger font-semibold/);
+  assert.match(html, /text-danger/);
 });
 
 test("personal read failure reuses the table empty state while ordinary empty portfolios retain their copy", () => {
@@ -96,12 +91,15 @@ test("personal read failure reuses the table empty state while ordinary empty po
 test("loading retains skeletons and loaded metrics retain actual values", () => {
   const loading = render("metrics", { dataBlocked: false, initialLoading: true });
   assert.equal((loading.match(/skeleton-value/g) ?? []).length, 6);
+  assert.doesNotMatch(loading, /skeleton-note|metric-note/);
   const loaded = render("metrics", { dataBlocked: false });
   assert.match(loaded, /100\.00/);
-  assert.match(loaded, /1 个持仓产品/);
-  assert.match(loaded, /Test Exchange/);
-  assert.match(loaded, /已进入次档/);
+  assert.doesNotMatch(loaded, /个持仓产品|已进入次档|未超出首档/);
+  assert.match(loaded, /最佳首档 APR · Test Exchange/);
   assert.match(loaded, /metric-value type-metric text-danger/);
+  const noBest = render("metrics", { dataBlocked: false, bestProduct: null });
+  assert.match(noBest, /暂无可确认的首档/);
+  assert.doesNotMatch(noBest, /最佳首档 APR ·/);
 });
 
 test("updating copy uses one warning style, with a timestamp only when available", () => {
@@ -110,7 +108,7 @@ test("updating copy uses one warning style, with a timestamp only when available
       dataBlocked: false, updating: true, historyAvailable: Boolean(lastUpdated), lastUpdated, loading: true,
       currentDataSummary: "", hasSyncFailure: true, failureSummary: serverReadFailureMessage,
     });
-    assert.match(html, /text-secondary font-normal/);
+    assert.match(html, /text-secondary|text-muted/);
     assert.doesNotMatch(html, /暂无成功数据|text-danger|服务器读取失败/);
     assert.ok(html.includes("数据正在更新中，请稍候。"));
     assert.doesNotMatch(html, /当前数据截至 09\/08 10:36/);
@@ -124,12 +122,12 @@ test("page read errors override exchange warnings and dates", () => {
       currentDataSummary: "当前数据截至 09/08 11:09，", failureSummary: "Bitget API 暂不可用",
       openingLoading: false, refreshingExchange: false, manualRefreshCooling: false, handleManualRefresh() {},
     });
-    assert.ok(html.includes("text-danger font-semibold"));
+    assert.match(html, /text-danger/);
     if (dataBlocked) assert.doesNotMatch(html, /当前数据截至|Bitget/);
     else {
       assert.match(html, /Bitget API 暂不可用/);
       assert.match(html, /当前数据截至 09\/08 11:09，/);
-      assert.match(html, /<span class="text-danger font-semibold">Bitget API 暂不可用<\/span>/);
+      assert.match(html, /<span class="[^"]*text-danger[^"]*">Bitget API 暂不可用<\/span>/);
       assert.match(html, /<button[^>]*class="[^"]*button button-primary button-small[^"]*sync-notice-refresh[^"]*"[^>]*>手动刷新<\/button>/);
       assert.doesNotMatch(html, /，请|button-text/);
       assert.doesNotMatch(html, /下次更新将重试/);

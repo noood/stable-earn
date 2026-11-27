@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiSettings } from "@/app/components/api-settings";
 import { useDismissibleDetails } from "@/app/components/use-dismissible-details";
 import { ProductRow, overflowFromFirstTier, formatSyncDateTime, type ManualProductPatch } from "@/app/components/dashboard/product-row";
 import type { ProductHistoryPage } from "@/app/components/product-history";
-import { ActionButton, Metric, ModalFrame } from "@/app/components/ui";
-import { DashboardMetricsSkeleton, ProductTableSkeletonRows } from "@/app/components/dashboard/dashboard-skeleton";
-import { DashboardFooter, DashboardPageFrame, DashboardProductTableSection, ProductTableEmptyState } from "@/app/components/dashboard/dashboard-frame";
+import { ActionButton, Metric, MetricsPanel, ModalFrame } from "@/app/components/ui";
+import { DashboardMetricsSkeleton, ProductTableSkeletonRows, metricDescriptions } from "@/app/components/dashboard/dashboard-skeleton";
+import { DashboardFooter, DashboardPageFrame, DashboardProductTableSection, DashboardSyncNotice, NavigationMoreIcon, ProductTableEmptyState } from "@/app/components/dashboard/dashboard-frame";
 import { publishStartupDiagnostics, reportStartupDiagnostic, startupDiagnosticsEnabled, startupDiagnosticTime } from "@/app/components/startup-diagnostics";
 import { formatStartupRequestTiming } from "@/lib/startup-timing-format";
 import { effectiveApr, formatAmount, type Asset, type HoldingMap, type HoldingPosition, type HoldingSyncState, type Product, type ProductChangeEvent, type ProductHistorySummary } from "@/lib/domain";
@@ -784,7 +784,6 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const tierOneOverflow = assetProducts.reduce((sum, product) => holdingIsKnown(product) && productHasKnownCapacity(product)
     ? sum + overflowFromFirstTier(product, activeHoldings[product.id] ?? 0)
     : sum, 0);
-  const holdingProductCount = assetProducts.filter((product) => holdingIsKnown(product) && (activeHoldings[product.id] ?? 0) > 0).length;
   const missingApiFieldNotices = (isDemo ? [] : resolvedProducts).flatMap((product) => {
     const issues = productInformationIssues(product, activeOverrides[product.id],
       hasCompletePurchaseTiming(holdingTimingByProduct.get(product.id), activeHoldings[product.id] ?? 0),
@@ -888,31 +887,35 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         onApiSettings={isDemo ? openPrivateApiSettings : openApiSettings}
       />}
     >
-      <div className="page-width mx-auto px-5 py-5 lg:px-10 lg:py-6">
-        <div className="card type-caption mb-4 flex items-center justify-between gap-4 px-5 py-4" aria-live="polite">
-          <div className="sync-notice-copy flex min-w-0 flex-1 items-start gap-2">
-            <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
-            {dataBlocked
-              ? <p className="text-danger font-semibold">{serverReadFailureMessage}</p>
-            : <p className="sync-notice-message min-w-0 flex-1 text-muted font-normal"><span className="text-secondary">{currentDataSummary}</span>{updating && <span className="text-secondary font-normal">数据正在更新中，请稍候。</span>}{scheduledRefreshFailed && <span className="text-danger font-semibold">{scheduledFailureLabel}</span>}{!updating && !scheduledRefreshFailed && hasSyncFailure && <span className="text-danger font-semibold">{failureSummary}</span>}{!updating && uniqueMissingApiFieldNotices.length > 0 && <span className="text-danger font-semibold">{hasSyncFailure && !scheduledRefreshFailed ? "；" : ""}{uniqueMissingApiFieldNotices.join("；")}</span>}</p>}
-          </div>
+      <div className="page-width dashboard-content mx-auto">
+        <DashboardSyncNotice actions={<>
           {showSyncFailureRefresh && <ActionButton size="small" className="shrink-0 sync-notice-refresh" aria-label={manualRefreshInProgress && preserveManualRefreshButton ? "正在刷新" : undefined} aria-busy={manualRefreshInProgress && preserveManualRefreshButton} disabled={openingLoading || loading || refreshingExchange || manualRefreshInProgress || manualRefreshCooling} onClick={handleManualRefresh}>
             {manualRefreshInProgress && preserveManualRefreshButton
               ? <span className="loading-spinner" aria-hidden="true" />
               : "手动刷新"}
           </ActionButton>}
           {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
-        </div>
-        <section className="metrics-panel card mb-4 grid overflow-hidden sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6" aria-busy={initialLoading}>
+        </>}>
+          {dataBlocked
+            ? <p className="text-danger">{serverReadFailureMessage}</p>
+            : <p className="sync-notice-message min-w-0 flex-1 text-secondary">
+              <span>{currentDataSummary}</span>
+              {updating && "数据正在更新中，请稍候。"}
+              {scheduledRefreshFailed && <span className="text-danger">{scheduledFailureLabel}</span>}
+              {!updating && !scheduledRefreshFailed && hasSyncFailure && <span className="text-danger">{failureSummary}</span>}
+              {!updating && uniqueMissingApiFieldNotices.length > 0 && <span className="text-danger">{hasSyncFailure && !scheduledRefreshFailed ? "；" : ""}{uniqueMissingApiFieldNotices.join("；")}</span>}
+            </p>}
+        </DashboardSyncNotice>
+        <MetricsPanel aria-busy={initialLoading}>
           {initialLoading ? <DashboardMetricsSkeleton asset={asset} /> : <>
-            <Metric highlight label={`总持仓 · ${asset}`} value={dataBlocked ? "—" : formatAmount(totalHolding)} note={dataBlocked ? "— 个持仓产品" : `${holdingProductCount} 个持仓产品`} />
-            <Metric label="组合有效 APR" value={dataBlocked ? "—" : `${portfolioApr.toFixed(2)}%`} note="按各阶梯实际占用加权" />
-            <Metric label={`预计每日收益 · ${asset}`} value={dataBlocked ? "—" : formatAmount(annualEarn / 365)} note="按可用 APR 和实际档位计算" />
-            <Metric label="最佳首档 APR" value={!dataBlocked && bestProduct ? `${bestProduct.tiers[0]!.apr.toFixed(2)}%` : "—"} note={dataBlocked ? "—" : bestProduct ? accountName(bestProduct.accountId) : "暂无可确认的首档"} />
-            <Metric label="高息剩余额度" value={dataBlocked ? "—" : highYieldLeft === Number.POSITIVE_INFINITY ? "不限" : formatAmount(highYieldLeft)} note="APR ≥ 6% 各档已知剩余额度" />
-            <Metric label="超出首档" value={dataBlocked ? "—" : formatAmount(tierOneOverflow)} valueTone={!dataBlocked && tierOneOverflow > 0 ? "danger" : "default"} note={dataBlocked ? "—" : tierOneOverflow > 0 ? "已进入次档" : "未超出首档"} />
+            <Metric highlight label={`总持仓 · ${asset}`} value={dataBlocked ? "—" : formatAmount(totalHolding)} />
+            <Metric label="组合有效 APR" description={metricDescriptions.portfolioApr} value={dataBlocked ? "—" : `${portfolioApr.toFixed(2)}%`} />
+            <Metric label={`预计每日收益 · ${asset}`} description={metricDescriptions.dailyIncome} value={dataBlocked ? "—" : formatAmount(annualEarn / 365)} />
+            <Metric label={!dataBlocked && bestProduct ? `最佳首档 APR · ${accountName(bestProduct.accountId)}` : "最佳首档 APR"} value={!dataBlocked && bestProduct ? `${bestProduct.tiers[0]!.apr.toFixed(2)}%` : "—"} note={!dataBlocked && !bestProduct ? "暂无可确认的首档" : undefined} />
+            <Metric label="高息剩余额度" description={metricDescriptions.highYieldLeft} value={dataBlocked ? "—" : highYieldLeft === Number.POSITIVE_INFINITY ? "不限" : formatAmount(highYieldLeft)} />
+            <Metric label="超出首档" value={dataBlocked ? "—" : formatAmount(tierOneOverflow)} valueTone={!dataBlocked && tierOneOverflow > 0 ? "danger" : "default"} />
           </>}
-        </section>
+        </MetricsPanel>
 
         <DashboardProductTableSection
           tableBusy={initialLoading}
@@ -923,8 +926,12 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
               : catalogRuleText}
           </p>}
           actions={editing
-            ? <div key="editing-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant="secondary" onClick={cancelEditing} disabled={savingHoldings}>取消</ActionButton><ActionButton variant="secondary" onClick={addManualProduct} disabled={savingHoldings}>添加产品</ActionButton><ActionButton onClick={() => void finishEditing()} disabled={savingHoldings}>{savingHoldings ? "保存中…" : "保存持仓"}</ActionButton></div>
-            : <div key="view-actions" className="table-toolbar-actions flex shrink-0 items-center gap-2"><ActionButton variant={isDemo ? "secondary" : "primary"} onClick={beginEditing} disabled={!canEdit}>编辑持仓</ActionButton></div>}
+            ? <Fragment key="editing-actions">
+                <ActionButton variant="secondary" onClick={cancelEditing} disabled={savingHoldings}>取消</ActionButton>
+                <ActionButton variant="secondary" onClick={addManualProduct} disabled={savingHoldings}>添加产品</ActionButton>
+                <ActionButton onClick={() => void finishEditing()} disabled={savingHoldings}>{savingHoldings ? "保存中…" : "保存持仓"}</ActionButton>
+              </Fragment>
+            : <ActionButton key="view-actions" variant={isDemo ? "secondary" : "primary"} onClick={beginEditing} disabled={!canEdit}>编辑持仓</ActionButton>}
           notice={holdingSaveError && <div className="table-error-panel error-panel type-caption font-normal">保存失败，请检查网络后重试；表格中的修改仍然保留。</div>}
         >
           {dataBlocked ? <tr><td colSpan={5}><ProductTableEmptyState message={serverReadFailureMessage} /></td></tr> : initialLoading ? <ProductTableSkeletonRows /> : tableProducts.length > 0 ? tableProducts.map((listedProduct) => {
@@ -1032,7 +1039,7 @@ function HeaderMenu({ userEmail, demo, loading, manualRefreshing, manualRefreshC
     setLogoutFailed(true);
   }
 
-  return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><span aria-hidden="true">⋯</span></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}{!demo && <button type="button" disabled={loading || manualRefreshing || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-refresh">{refreshLabel}</button>}<button type="button" onClick={(event) => closeMenu(event, onApiSettings)} className="menu-item">数据源设置</button>{!demo && <form action="/logout" method="post" onSubmit={submitLogout}><button type="submit" disabled={logoutPending} className="menu-item menu-item-danger">{logoutPending ? "正在退出…" : "退出登录"}</button>{logoutFailed && <p className="px-3 pb-2 type-caption text-danger" role="status">退出失败，请重试。</p>}</form>}</div></details></div>;
+  return <div className="ml-auto flex items-center justify-end py-2"><details ref={menuRef} className="action-menu relative"><summary className="icon-button action-menu-trigger list-none" aria-label="更多操作"><NavigationMoreIcon /></summary><div className="surface-popover action-menu-popover">{userEmail && <div className="menu-account"><p className="menu-account-label">当前账号</p><p className="menu-account-value" title={userEmail}>{userEmail}</p></div>}{!demo && <button type="button" disabled={loading || manualRefreshing || manualRefreshCooling} onClick={(event) => closeMenu(event, onManualRefresh)} className="menu-item menu-item-refresh">{refreshLabel}</button>}<button type="button" onClick={(event) => closeMenu(event, onApiSettings)} className="menu-item">数据源设置</button>{!demo && <form action="/logout" method="post" onSubmit={submitLogout}><button type="submit" disabled={logoutPending} className="menu-item menu-item-danger">{logoutPending ? "正在退出…" : "退出登录"}</button>{logoutFailed && <p className="px-3 pb-2 type-caption text-danger" role="status">退出失败，请重试。</p>}</form>}</div></details></div>;
 }
 
 async function loadProductHistoryPage(productId: string, cursor: string | null): Promise<ProductHistoryPage> {

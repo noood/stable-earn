@@ -81,7 +81,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
     const displayedTime = formatSyncDateTime(fetchedAt);
     cacheFieldsByTime.set(displayedTime, [...(cacheFieldsByTime.get(displayedTime) ?? []), field]);
   };
-  if (product.rateCoverage !== "unavailable" && Number.isFinite(product.tiers[0]?.apr)) {
+  if (rateHeadline.apr !== undefined) {
     addCacheField("APR", aprCacheAt);
   }
   if (product.capacityStatus !== "unavailable" && !productCapacityIsIncomplete(product, productInfoIssues)) {
@@ -120,7 +120,7 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
   const lifecycleValue = <>{lifecycleDateLabel}{termStatusText && <><span className="product-fact-separator">｜</span><span className={lifecycleStatusWarning ? "product-fact-danger" : "product-fact-note"}>{termStatusText}</span></>}</>;
   const rateExplanation = product.exchange === "bitget-wallet" ? <p>整体 APR 包含基础收益和奖励利率。奖励每 8 小时结算一次，赎回时空投到钱包余额。</p> : undefined;
 
-  return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} apr={product.rateCoverage === "unavailable" ? undefined : product.tiers[0]?.apr} />
+  return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
     {(!editing || !manualProduct) && fixedFacts.map(([label, value]) => <ProductFact key={label} label={label} value={value} />)}
     {(!editing || !manualProduct) && qualificationFact && <ProductFact label="申购资格" value={qualificationFact} />}
     {showLifecycleFact && <ProductFact label="买入日期" value={lifecycleValue} />}
@@ -157,10 +157,10 @@ function apiMaturityIsPast(value: string) {
   return Date.parse(value) <= Date.now();
 }
 
-function ProductRateHeadline({ label, value, apr }: { label: string; value: string; apr?: number }) {
+function ProductRateHeadline({ label, value, valuePrefix, apr }: { label: string; value: string; valuePrefix?: string; apr?: number }) {
   const tone = rateAprTone(apr);
   const toneClass = tone === "missing" ? "status-chip-muted" : tone === "base" ? "status-chip-highlight" : `status-chip-apr-${tone}`;
-  return <div className="product-rate-headline"><span>{label}</span><span className={`status-chip ${toneClass}`}>{value}</span></div>;
+  return <div className="product-rate-headline"><span>{label}</span><span className={`status-chip ${toneClass}`}>{valuePrefix && <span className="font-normal">{valuePrefix} </span>}{value}</span></div>;
 }
 
 function ProductFact({ label, value }: { label: string; value: ReactNode }) {
@@ -184,14 +184,12 @@ function ProductHolding({ product, account, holding, holdingAvailable, holdingSy
   const capacityLabel = isFixed ? "申购额度" : "首档";
   const capacityIncomplete = productCapacityIsIncomplete(product, productInfoIssues);
   const laterTierIncomplete = productInfoIssues.some((issue) => issue === "阶梯 APR 未获取" || issue === "阶梯结构未获取" || issue === "阶梯额度未获取");
-  const holdingAmountClassName = editing ? undefined : "holding-summary-amount";
-  const holdingDetailClassName = editing ? undefined : "holding-summary-detail";
-  const holdingLabel = (detail?: string) => <><span className={holdingAmountClassName}>持仓 {formatAmount(holding)}</span>{detail && <span className={holdingDetailClassName}> / {detail}</span>}</>;
+  const holdingLabel = (detail?: string) => <><span className={editing ? "font-semibold" : "holding-summary-amount"}>持仓 {formatAmount(holding)}</span>{detail && <span className="holding-summary-detail"> / {detail}</span>}</>;
   const holdingCacheNote = holdingFallbackAt ? `持仓沿用 ${formatSyncDateTime(holdingFallbackAt)} 的缓存数据` : undefined;
 
   let summary: ReactNode = null;
   if (!holdingAvailable) {
-    summary = <HoldingSummary muted compact label={editing ? undefined : <span className={holdingAmountClassName}>持仓未获取</span>} note={holdingSyncNote(holdingSyncState)} />;
+    summary = <HoldingSummary muted compact label={editing ? undefined : <span className="holding-summary-amount">持仓未获取</span>} note={holdingSyncNote(holdingSyncState)} />;
   } else if (capacityIncomplete) {
     // A missing first-tier boundary hides dependent quota details. Missing
     // dates or later-tier details do not hide a known first-tier limit.
