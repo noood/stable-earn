@@ -335,9 +335,9 @@ input:focus-visible,
 .product-table [colspan="5"] { grid-column: 1 / -1; }
 @media (min-width: 64rem) {
   /* Reserve the table's minimum width and its card borders before widening the gutters. */
-  .page-width { padding-inline: clamp(2.5rem, calc((100% - var(--product-table-min-width)) / 2 - 1px), 7.5rem); }
+  .page-width { padding-inline: clamp(2.5rem, calc((100% - var(--product-table-min-width)) / 2 - 1px), 10rem); }
   .dashboard-content { padding-block-end: var(--space-6); }
-  .product-table { --platform-column: 22.5%; --product-column: minmax(0, 1fr); }
+  .product-table { --platform-column: max(13.75rem, 21%); --product-column: minmax(0, 1fr); }
 }
 .product-table thead { background: var(--surface-subtle); color: var(--text-secondary); text-transform: uppercase; letter-spacing: .07em; }
 .product-table th,
