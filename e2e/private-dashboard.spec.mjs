@@ -99,7 +99,7 @@ test("navigation shares the canvas and sits four pixels inside the dashboard car
   const active = nav.getByRole("button", { name: "USDT", exact: true });
   for (const [width, gutter] of [
     [375, 20], [502, 20], [639, 20], [640, 20], [1024, 40],
-    [1160, 79], [1220, 109], [1242, 120], [1280, 120], [1418, 120], [1920, 330],
+    [1160, 79], [1220, 109], [1280, 139], [1322, 160], [1418, 160], [1920, 370],
   ]) {
     await page.setViewportSize({ width, height: 900 });
     const singleRow = width >= 640;
@@ -1927,7 +1927,7 @@ test("table fits the effective APR and keeps uniform spacing at desktop and mobi
       };
     });
     if (width >= 1024) {
-      expect(layout.widths[0]).toBeCloseTo(layout.tableWidth * 0.225, 0);
+      expect(layout.widths[0]).toBeCloseTo(Math.max(220, layout.tableWidth * 0.21), 0);
       expect(layout.widths[1]).toBeCloseTo(layout.widths[2], 0);
     } else {
       expect(layout.widths[0]).toBeCloseTo(layout.tableWidth * 0.22, 0);
@@ -1971,14 +1971,18 @@ test("purchase dates keep the field label on one line and wrap the maturity note
   }
 });
 
-test("narrow product and holding content fit with clear gaps at desktop and mobile widths", async ({ page }) => {
+test("platform, product, and holding content fit at desktop and mobile widths", async ({ page }) => {
   for (const width of [375, 980, 1220, 1280, 1418]) {
     await page.setViewportSize({ width, height: 842 });
     await page.goto("/private");
     await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
     for (const editing of [false, true]) {
       if (editing) await page.getByRole("button", { name: "编辑持仓" }).click();
-      const overlaps = await page.locator(".product-rate-headline, .product-fact, .manual-field").evaluateAll((rows) => rows.flatMap((row) => {
+      if (width === 1418) {
+        const platform = page.getByRole("table").getByText("Binance Bahrain", { exact: true }).first();
+        await expect(platform).toHaveCSS("height", "20px");
+      }
+      const overlaps = await page.locator(".product-cell:first-child > .flex, .product-rate-headline, .product-fact, .manual-field").evaluateAll((rows) => rows.flatMap((row) => {
         const items = Array.from(row.children).filter((item) => {
           const style = getComputedStyle(item);
           return style.display !== "none" && item.getBoundingClientRect().width > 0;
