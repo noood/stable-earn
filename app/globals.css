@@ -28,10 +28,10 @@
   --motion-editing-duration: 200ms;
   --hairline: .5px;
   --focus-ring-width: 3px;
-  --radius-sm: .375rem;
+  --radius-sm: .5rem;
   --radius-control: .625rem;
-  --radius-card: .75rem;
-  --radius-dialog: .875rem;
+  --radius-account-badge: .75rem;
+  --radius-panel: 1rem;
   --radius-pill: 999px;
   --space-1: .25rem;
   --space-2: .5rem;
@@ -50,7 +50,6 @@
   --button-small-height: 2rem;
   --button-small-padding-x: var(--space-3);
   --button-small-padding-y: .375rem;
-  --button-small-radius: .5rem;
   --table-row-min-height: 7rem;
   --product-table-min-width: 62.5rem;
   --table-cell-x: var(--space-8);
@@ -121,7 +120,7 @@ input:focus-visible,
 }
 .button-small {
   min-height: var(--button-small-height);
-  border-radius: var(--button-small-radius);
+  border-radius: var(--radius-sm);
   padding: var(--button-small-padding-y) var(--button-small-padding-x);
   font-size: var(--type-caption);
   line-height: var(--leading-caption);
@@ -136,7 +135,7 @@ input:focus-visible,
 .button-text {
   min-height: auto;
   border: 0;
-  border-radius: var(--button-small-radius);
+  border-radius: var(--radius-sm);
   padding: .35rem .25rem;
   background: transparent;
   color: var(--brand);
@@ -152,19 +151,18 @@ input:focus-visible,
 .action-menu summary::-webkit-details-marker,
 .api-row-menu summary::-webkit-details-marker { display: none; }
 .action-menu-trigger,
-.api-row-menu-trigger {
-  border-radius: var(--radius-control);
-  color: var(--text-secondary);
-}
+.api-row-menu-trigger { color: var(--text-secondary); }
 .action-menu-trigger {
   width: var(--control-height);
   height: var(--control-height);
+  border-radius: var(--radius-control);
   transition-property: background-color, color;
   transition-duration: var(--motion-quick);
 }
 .api-row-menu-trigger {
   width: var(--compact-icon-size);
   height: var(--compact-icon-size);
+  border-radius: var(--radius-sm);
   font-size: var(--type-title);
   line-height: 1;
 }
@@ -208,7 +206,7 @@ input:focus-visible,
 .menu-item-danger:hover:not(:disabled) { background: var(--danger-surface); }
 
 .card,
-.api-connection-list { border: var(--hairline) solid var(--border); border-radius: var(--radius-card); background: var(--surface); }
+.api-connection-list { border: var(--hairline) solid var(--border); border-radius: var(--radius-panel); background: var(--surface); }
 .card-editing { box-shadow: var(--shadow-card-editing); }
 @media (prefers-reduced-motion: no-preference) {
   .product-table-card { transition: box-shadow var(--motion-editing-duration) ease; }
@@ -278,7 +276,7 @@ input:focus-visible,
   object-fit: contain;
   background: var(--surface);
   border: var(--hairline) solid var(--badge-border);
-  border-radius: var(--radius-card);
+  border-radius: var(--radius-account-badge);
 }
 .status-chip {
   border-radius: var(--radius-sm);
@@ -529,7 +527,7 @@ input:focus-visible,
   justify-content: space-between;
   gap: var(--space-4);
   border: 0;
-  border-radius: var(--button-small-radius);
+  border-radius: var(--radius-sm);
   background: transparent;
   padding: var(--space-2) var(--space-3);
   color: var(--text-primary);
@@ -681,7 +679,7 @@ input:focus-visible,
   height: var(--button-small-height);
   place-items: center;
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   transition-property: background-color, color;
@@ -774,7 +772,7 @@ input:focus-visible,
   max-height: 90vh;
   overflow: hidden;
   border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-dialog) var(--radius-dialog) 0 0;
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
   background: var(--surface-subtle);
   box-shadow: var(--shadow-dialog);
 }
@@ -790,7 +788,7 @@ input:focus-visible,
 .modal-close {
   width: var(--button-small-height);
   height: var(--button-small-height);
-  border-radius: var(--button-small-radius);
+  border-radius: var(--radius-sm);
   padding: var(--space-1);
   color: var(--text-secondary);
 }
@@ -855,12 +853,13 @@ input:focus-visible,
   align-items: center;
   gap: var(--space-3);
 }
-.api-settings-skeleton-badge { width: var(--account-badge-size); height: var(--account-badge-size); flex: 0 0 auto; border-radius: var(--radius-card); background: var(--surface-muted); }
+.api-settings-skeleton-badge { width: var(--account-badge-size); height: var(--account-badge-size); flex: 0 0 auto; border-radius: var(--radius-account-badge); background: var(--surface-muted); }
 .api-settings-skeleton-copy { display: grid; width: min(20rem, 70%); gap: var(--space-2); }
 .api-settings-skeleton-copy span { height: .65rem; border-radius: 999px; background: var(--surface-muted); }
 .api-settings-skeleton-copy span:last-child { width: 72%; }
 
 @media (width < 640px) {
+  .top-nav { padding-block-end: var(--space-2); }
   .metrics-panel .metric-item:nth-child(n + 2)::after { content: ""; }
   .api-settings-split-row { gap: var(--space-4); }
 }
@@ -872,7 +871,7 @@ input:focus-visible,
 
 @media (min-width: 640px) {
   .modal-backdrop { align-items: center; padding: var(--space-5); }
-  .modal-panel { max-width: 42rem; border-radius: var(--radius-dialog); }
+  .modal-panel { max-width: 42rem; border-radius: var(--radius-panel); }
 }
 
 @media (640px <= width < 768px) {
