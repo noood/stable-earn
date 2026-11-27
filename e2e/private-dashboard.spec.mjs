@@ -14,10 +14,11 @@ async function waitForVisualAssets(page) {
   ]));
 }
 
-async function openFixedPrivatePreview(page, viewport) {
+async function openFixedPrivatePreview(page, viewport, asset = "USDT") {
   await page.clock.setFixedTime(new Date(visualPreviewAt));
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
-  await page.goto(`/private?previewAt=${encodeURIComponent(visualPreviewAt)}`);
+  const query = new URLSearchParams({ previewAt: visualPreviewAt, asset });
+  await page.goto(`/private?${query}`);
   // Dev compilation/bootstrap has a separate budget from short interaction assertions.
   await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false", { timeout: 10_000 });
   await expect(page.locator("tr.product-row").first()).toBeVisible();
@@ -60,10 +61,158 @@ test("private dashboard reaches a settled table state and switches assets", asyn
   await expect(table).toHaveAttribute("aria-busy", "false");
   await expect(table.locator("tbody tr.product-row, tbody td[colspan='5']").first()).toBeVisible();
   await expect(table.getByRole("columnheader", { name: "有效 APR" })).toBeVisible();
-  await page.getByRole("button", { name: "USDC" }).click();
+  const usdt = page.getByRole("button", { name: "USDT", exact: true });
+  const usdc = page.getByRole("button", { name: "USDC", exact: true });
+  const brand = page.getByRole("navigation").getByText("Stable Earn", { exact: true });
+  const pill = { pseudo: "before" };
+  const filled = "rgb(238, 241, 239)";
+  const clear = "rgba(0, 0, 0, 0)";
+  await expect(usdt).toHaveAttribute("aria-current", "page");
+  await expect(usdt).toHaveCSS("background-color", filled, pill);
+  await expect(usdc).toHaveCSS("background-color", clear, pill);
+  await usdc.hover();
+  await expect(usdc).toHaveCSS("background-color", filled, pill);
+  await expect(usdt).toHaveAttribute("aria-current", "page");
+  await brand.hover();
+  await expect(usdc).toHaveCSS("background-color", clear, pill);
+  await usdc.click();
   await expect(page.getByRole("heading", { name: "USDC 持仓" })).toBeVisible();
   await expect(page).toHaveURL(/asset=USDC/);
+  await brand.hover();
+  await expect(usdc).toHaveAttribute("aria-current", "page");
+  await expect(usdt).toHaveCSS("background-color", clear, pill);
+  await expect(usdc).toHaveCSS("background-color", filled, pill);
   expect(pageErrors).toEqual([]);
+});
+
+test("navigation shares the canvas and sits four pixels inside the dashboard cards", async ({ page }) => {
+  await page.goto("/private");
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+  const nav = page.getByRole("navigation", { name: "主导航" });
+  const canvas = "rgb(248, 249, 248)";
+  await expect(page.locator("body")).toHaveCSS("background-color", canvas);
+  await expect(nav).toHaveCSS("background-color", canvas);
+  await expect(nav).toHaveCSS("border-bottom-width", "0px");
+  const brandLabel = nav.getByText("Stable Earn", { exact: true });
+  await expect(brandLabel).toHaveCSS("font-size", "18px");
+  const active = nav.getByRole("button", { name: "USDT", exact: true });
+  for (const width of [375, 639, 640, 1024, 1160, 1220, 1280, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    const singleRow = width >= 640;
+    await expect(nav).toHaveCSS("height", singleRow ? "72px" : "100px");
+    await expect(active).toHaveCSS("height", singleRow ? "56px" : "44px");
+    await expect(active).toHaveCSS("padding-inline", "12px");
+    await expect(active).toHaveCSS("height", "40px", { pseudo: "before" });
+    await expect(active).toHaveCSS("border-radius", "10px", { pseudo: "before" });
+    const navBox = await nav.boundingBox();
+    const notice = await page.locator(".sync-notice").boundingBox();
+    expect(notice.y - navBox.y - navBox.height).toBeCloseTo(width >= 1024 ? 12 : 8, 0);
+    if (singleRow) {
+      const tab = await active.boundingBox();
+      expect(tab.y - navBox.y).toBeCloseTo((navBox.height - tab.height) / 2, 0);
+    }
+    const card = await page.locator(".metrics-panel").boundingBox();
+    expect(width - card.x - card.width).toBeCloseTo(card.x, 0);
+    if (width < 1024) expect(card.x).toBe(20);
+    if (width === 1024) expect(card.x).toBe(40);
+    if (width === 1160) {
+      expect(card.x).toBeGreaterThan(40);
+      expect(card.x).toBeLessThan(100);
+    }
+    if (width === 1220 || width === 1280) expect(card.x).toBe(100);
+    const brand = await brandLabel.boundingBox();
+    const more = await nav.locator(".action-menu-trigger").boundingBox();
+    expect(brand.x - card.x).toBeCloseTo(4, 0);
+    expect(card.x + card.width - more.x - more.width).toBeCloseTo(4, 0);
+  }
+});
+
+test("metric values align with the longest title in each row and reclaim space when it fits", async ({ page }) => {
+  await openFixedPrivatePreview(page, { width: 1280, height: 900 });
+  const cards = page.locator(".metrics-panel .metric-item");
+  const best = cards.getByText("最佳首档 APR · Bybit Global", { exact: true });
+  await expect(best).toBeVisible();
+
+  const measure = () => cards.evaluateAll((items) => items.map((item) => {
+    const title = item.firstElementChild;
+    const textRange = document.createRange();
+    textRange.selectNodeContents(title);
+    const lineHeight = parseFloat(getComputedStyle(title).lineHeight);
+    const top = item.getBoundingClientRect().top;
+    return {
+      top,
+      titleLines: Math.round(textRange.getBoundingClientRect().height / lineHeight),
+      lineHeight,
+      valueOffset: item.querySelector(".metric-value").getBoundingClientRect().top - top,
+    };
+  }));
+  const expectAlignedRow = (row) => {
+    expect(new Set(row.map((card) => card.top)).size).toBe(1);
+    expect(new Set(row.map((card) => card.valueOffset)).size).toBe(1);
+  };
+
+  const wrapped = await measure();
+  expect(wrapped[3].titleLines).toBe(2);
+  expectAlignedRow(wrapped);
+
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const wide = await measure();
+  expect(wide[3].titleLines).toBe(1);
+  expectAlignedRow(wide);
+  expect(wrapped[0].valueOffset - wide[0].valueOffset).toBe(wide[0].lineHeight);
+
+  await page.setViewportSize({ width: 768, height: 900 });
+  // At this breakpoint genuine account names fit. Exercise a longer product label in the second row.
+  await best.evaluate((title) => { title.textContent = "最佳首档 APR · Binance Bahrain · USDT 限时活期"; });
+  const narrow = await measure();
+  expect(narrow[3].titleLines).toBe(2);
+  expectAlignedRow(narrow.slice(0, 3));
+  expectAlignedRow(narrow.slice(3));
+  expect(narrow[3].top).toBeGreaterThan(narrow[0].top);
+  expect(narrow[0].valueOffset).toBe(wide[0].valueOffset);
+  expect(narrow[3].valueOffset).toBe(wrapped[0].valueOffset);
+});
+
+test("metric titles show their explanations only on hover and do not pin them on click", async ({ page }) => {
+  await page.goto("/private?asset=USDT");
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+  const metrics = page.locator(".metrics-panel");
+  const tooltip = page.getByRole("tooltip");
+  await expect(metrics.locator(".metric-item").first()).toHaveCSS("padding-block", "24px");
+  await expect(metrics.getByRole("button")).toHaveCount(0);
+  await expect(tooltip).toBeHidden();
+  for (const [label, description] of [
+    ["组合有效 APR", "按各阶梯实际占用加权"],
+    ["预计每日收益 · USDT", "按可用 APR 和实际档位计算"],
+    ["高息剩余额度", "APR ≥ 6% 各档已知剩余额度"],
+  ]) {
+    const title = metrics.getByText(label, { exact: true });
+    await expect(title).toHaveCSS("text-decoration-line", "underline");
+    await expect(title).toHaveCSS("text-decoration-style", "dashed");
+    await expect(title).toHaveJSProperty("tabIndex", -1);
+    await expect(title).toHaveAccessibleDescription(description);
+    await title.dispatchEvent("click");
+    await expect(tooltip).toBeHidden();
+    await title.hover();
+    await expect(title).toHaveCSS("cursor", "default");
+    await expect(tooltip).toHaveText(description);
+    await expect(title).toHaveAttribute("aria-describedby", await tooltip.getAttribute("id"));
+    await title.click();
+    await metrics.getByText("总持仓 · USDT", { exact: true }).hover();
+    await expect(tooltip).toBeHidden();
+  }
+});
+
+test.describe("metric titles on touch screens", () => {
+  test.use({ hasTouch: true, viewport: { width: 375, height: 812 } });
+
+  test("tapping a metric title leaves its hover explanation closed", async ({ page }) => {
+    await page.goto("/private?asset=USDC");
+    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    const metrics = page.locator(".metrics-panel");
+    await metrics.getByText("预计每日收益 · USDC", { exact: true }).tap();
+    await expect(page.getByRole("tooltip")).toBeHidden();
+  });
 });
 
 test("same-platform products use APR order in view and edit mode", async ({ page }) => {
@@ -105,11 +254,46 @@ test("BTC logo falls back to a text symbol if the local asset cannot load", asyn
   await expect(page.getByRole("button", { name: "BTC", exact: true }).locator(".bitcoin-icon-fallback")).toHaveText("₿");
 });
 
-test("header menu action labels align vertically within their rows", async ({ page }) => {
+test("header menu actions align with the account and match the navigation row height", async ({ page }) => {
+  await page.route("**/private/api/session", (route) => route.fulfill({ json: { authenticated: true, email: "holder@example.test" } }));
   await page.goto("/private");
-  await page.locator(".action-menu-trigger").click();
-  const apiSettings = page.locator(".action-menu-popover .menu-item").filter({ hasText: "数据源设置" });
+  const trigger = page.locator("summary.action-menu-trigger");
+  const active = page.locator('.asset-tab[aria-current="page"]');
+  const activeBackground = await active.evaluate((tab) => getComputedStyle(tab, "::before").backgroundColor);
+  await expect(trigger).toHaveCSS("width", "40px");
+  await expect(trigger).toHaveCSS("height", "40px");
+  await expect(trigger).toHaveCSS("border-width", "0px");
+  const icon = trigger.locator("svg");
+  await expect(icon).toHaveCSS("width", "20px");
+  await expect(icon).toHaveCSS("height", "20px");
+  await expect(icon.locator("circle")).toHaveCount(3);
+  await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await trigger.hover();
+  await expect(trigger).toHaveCSS("background-color", activeBackground);
+  await trigger.click();
+  const menu = page.locator(".action-menu-popover");
+  const apiSettings = menu.getByRole("button", { name: "数据源设置" });
   await expect(apiSettings).toBeVisible();
+  await expect(menu.getByText("holder@example.test")).toBeVisible();
+  const menuBox = await menu.boundingBox();
+  const triggerBox = await trigger.boundingBox();
+  expect(menuBox.x + menuBox.width).toBeCloseTo(triggerBox.x + triggerBox.width, 0);
+
+  const account = menu.locator(".menu-account");
+  await expect(account).toHaveCSS("padding-inline", "12px 8px");
+  await expect(account).toHaveCSS("left", "12px", { pseudo: "after" });
+  await expect(account).toHaveCSS("right", "8px", { pseudo: "after" });
+  const tabLineHeight = await active.evaluate((tab) => getComputedStyle(tab).lineHeight);
+  for (const label of ["手动刷新", "数据源设置", "退出登录"]) {
+    const action = menu.getByRole("button", { name: label, exact: true });
+    await expect(action).toHaveCSS("padding-inline", "12px 8px");
+    await expect(action).toHaveCSS("height", "40px");
+    await expect(action).toHaveCSS("line-height", tabLineHeight);
+  }
+  await apiSettings.hover();
+  await expect(apiSettings).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await trigger.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+  await expect(trigger).toHaveCSS("background-color", activeBackground);
   await expect(apiSettings).toHaveCSS("display", "flex");
   await expect(apiSettings).toHaveCSS("align-items", "center");
 });
@@ -161,6 +345,9 @@ test("APR badges use the displayed rate in view and edit modes", async ({ page }
     for (const [id, apr] of [["bn-g-usdt", 5.8], ["bn-bh-usdt", 6], ["bg-usdt-simple", 9], ["bg-usdt-promo", 12]]) {
       payload.products.find((product) => product.id === id).tiers[0].apr = apr;
     }
+    const missingMaximum = payload.products.find((product) => product.id === "preview-unavailable-held");
+    missingMaximum.rateCoverage = "max_only";
+    missingMaximum.tiers = [];
     payload.holdingUpdates["bg-usdt-promo"] = 10;
     await route.fulfill({ response, json: payload });
   });
@@ -174,11 +361,26 @@ test("APR badges use the displayed rate in view and edit modes", async ({ page }
       ["Bitget", "9.00%", "status-chip-apr-medium"],
       ["Bitget", "12.00%", "status-chip-apr-high"],
     ]) {
-      const headline = page.locator("tr.product-row").filter({ hasText: account })
-        .locator(".product-rate-headline").filter({ hasText: rate });
+      const row = page.locator("tr.product-row").filter({ hasText: account })
+        .filter({ has: page.locator(".product-rate-headline").filter({ hasText: rate }) });
+      const headline = row.locator(".product-rate-headline");
+      await expect(row.getByText(account, { exact: true })).toHaveCSS("font-weight", "600");
+      await expect(headline.getByText(/^首档/)).toHaveCSS("font-weight", "400");
       await expect(headline.locator(".status-chip")).toHaveClass(new RegExp(expectedClass));
+      await expect(headline.locator(".status-chip")).toHaveCSS("font-weight", "600");
       if (expectedClass === "status-chip-apr-high") await expect(headline.locator(".status-chip")).toHaveCSS("color", "rgb(24, 32, 29)");
     }
+    const maximums = page.getByRole("row").filter({ hasText: "Bybit Global" })
+      .locator(".product-rate-headline").filter({ hasText: "官网最高" });
+    const missingApr = maximums.getByText("APR 未获取", { exact: true });
+    await expect(missingApr).toBeVisible();
+    await expect(missingApr).toHaveCSS("font-weight", "400");
+    const maximum = maximums.filter({ hasText: "8.80%" });
+    const badge = maximum.locator(".status-chip");
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveText("最高 8.80%", { useInnerText: true });
+    await expect(badge.getByText("最高", { exact: true })).toHaveCSS("font-weight", "400");
+    await expect(maximum.locator(':text-is("8.80%")')).toHaveCSS("font-weight", "600");
     if (!editing) await page.screenshot({ path: testInfo.outputPath("apr-colors.png"), fullPage: true, animations: "disabled" });
   }
 });
@@ -199,7 +401,10 @@ test("an unknown API quota shows a red warning instead of unlimited capacity", a
   const row = page.locator("tr.product-row").filter({ hasText: "首档额度未获取" });
   await expect(row).toBeVisible();
   await expect(row.locator(".product-meta-danger")).toContainText("首档额度未获取，不参与收益计算");
-  await expect(page.locator(".sync-notice-message")).toContainText("Fixed Saving · 7 天 · APR 边界 · 首档额度未获取");
+  await expect(row.locator(".product-meta-danger")).toHaveCSS("font-weight", "600");
+  const missingQuota = page.locator(".sync-notice-message").getByText("Fixed Saving · 7 天 · APR 边界 · 首档额度未获取");
+  await expect(missingQuota).toBeVisible();
+  await expect(missingQuota).toHaveCSS("font-weight", "600");
   await expect(row).toContainText("申购额度 上限未获取");
   await expect(row).not.toContainText("不限额");
 });
@@ -400,7 +605,9 @@ for (const viewport of [{ name: "desktop", width: 889, height: 1001 }, { name: "
     for (const row of await apiFixedRows.all()) {
       const productCell = row.locator("td").nth(1);
       await expect(productCell).toContainText("买入日期");
+      await expect(productCell.getByText("买入日期", { exact: true })).toHaveCSS("font-weight", "400");
       await expect(productCell).toContainText("API 同步");
+      await expect(productCell.getByText("API 同步", { exact: true })).toHaveCSS("font-weight", "400");
       await expect(productCell.locator(".manual-fields")).toHaveCount(0);
     }
     await expect(page.locator(".manual-fields:empty")).toHaveCount(0);
@@ -437,6 +644,8 @@ test("opt-in API date preview shows missing and derived dates", async ({ page })
   await expect(missing.locator(".product-meta-danger")).toHaveText("买入日未获取，不参与收益计算");
   await expect(missing.locator("td").nth(3)).toHaveText("—");
   await expect(derived).toContainText("持仓 80.00 / 申购额度 200.00");
+  await expect(derived.getByText("持仓 80.00", { exact: true })).toHaveCSS("font-weight", "600");
+  await expect(derived.getByText("/ 申购额度 200.00", { exact: true })).toHaveCSS("font-weight", "400");
   await expect(derived).toContainText("2026/10/03");
   await expect(derived).toContainText("10/10");
   await expect(derived).not.toContainText("买入日未获取");
@@ -552,7 +761,7 @@ test("a sync failure has a separate brand-colored manual refresh action", async 
     await expect(notice).not.toContainText("请手动刷新");
     await expect(notice).not.toContainText("下次更新将重试");
     const bounds = await page.evaluate(() => {
-      const notice = document.querySelector(".card.type-caption.mb-4");
+      const notice = document.querySelector(".sync-notice");
       const copy = document.querySelector(".sync-notice-copy");
       const icon = document.querySelector(".sync-notice-icon");
       const firstLine = document.querySelector(".sync-notice-message > span:first-child");
@@ -567,6 +776,7 @@ test("a sync failure has a separate brand-colored manual refresh action", async 
     expect(Math.abs((bounds.copy.y + bounds.copy.height / 2) - (bounds.notice.y + bounds.notice.height / 2))).toBeLessThanOrEqual(1);
     expect(Math.abs(bounds.icon.y - bounds.firstLine.y)).toBeLessThanOrEqual(1);
     expect(Math.abs(bounds.icon.height - bounds.firstLine.height)).toBeLessThanOrEqual(1);
+    expect(bounds.firstLine.x - bounds.icon.x - bounds.icon.width).toBeCloseTo(4, 0);
     const refreshRequestPromise = page.waitForRequest((request) => {
       const url = new URL(request.url());
       return url.pathname === "/private/api/products" && url.searchParams.get("refresh") === "1";
@@ -590,7 +800,7 @@ test("top error action stays disabled without a countdown while the menu shows t
   });
 
   await page.goto("/private?syncScenario=error");
-  const notice = page.locator(".card.type-caption.mb-4");
+  const notice = page.locator(".sync-notice");
   const topRefresh = notice.getByRole("button", { name: "手动刷新" });
   await expect(topRefresh).toBeDisabled();
   await expect(topRefresh).toHaveText("手动刷新");
@@ -603,15 +813,29 @@ test("top error action stays disabled without a countdown while the menu shows t
 });
 
 test("top notice keeps success, partial failure, total failure, read failure and refresh states distinct", async ({ page }) => {
-  const notice = page.locator(".card.type-caption").first();
+  const notice = page.locator(".sync-notice");
+  const expectNoticeCopy = async (message, weight = "400") => {
+    const copy = notice.getByText(message);
+    await expect(copy).toBeVisible();
+    await expect(copy).toHaveCSS("font-weight", weight);
+  };
 
   await page.goto("/private?syncScenario=success");
-  await expect(notice).toContainText(/当前数据截至 .*，每日首次打开自动更新。/);
+  await expectNoticeCopy(/当前数据截至 .*，每日首次打开自动更新。/);
+  const card = page.locator(".metrics-panel");
+  for (const property of ["border", "border-radius"]) {
+    await expect(notice).toHaveCSS(property, await card.evaluate((element, key) => getComputedStyle(element).getPropertyValue(key), property));
+  }
+  await expect(card).toHaveCSS("box-shadow", "none");
+  await expect(notice).toHaveCSS("box-shadow", "none");
+  await expect(notice).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(page.locator(".card").filter({ has: page.getByRole("table") })).toHaveCSS("box-shadow", "none");
+  await expect(notice.locator(".sync-notice-copy")).toHaveCSS("column-gap", "4px");
   await expect(notice.getByRole("button", { name: "手动刷新" })).toHaveCount(0);
 
   await page.goto("/private?syncScenario=partial");
-  await expect(notice).toContainText(/当前数据截至 .*，/);
-  await expect(notice).toContainText("Bitget 持仓数据未完整返回");
+  await expectNoticeCopy(/当前数据截至 .*，/);
+  await expectNoticeCopy("Bitget 持仓数据未完整返回", "600");
   await expect(notice).not.toContainText("每日首次打开自动更新");
   const partialRefresh = notice.getByRole("button", { name: "手动刷新" });
   await expect(partialRefresh).toBeVisible();
@@ -619,12 +843,12 @@ test("top notice keeps success, partial failure, total failure, read failure and
   await expect(partialRefresh).toHaveClass(/button-primary/);
 
   await page.goto("/private?syncScenario=error");
-  await expect(notice).toContainText("本次产品和持仓数据更新失败");
+  await expectNoticeCopy("本次产品和持仓数据更新失败", "600");
   await expect(notice).not.toContainText("每日首次打开自动更新");
 
   await page.goto("/private?syncScenario=initial-error");
-  await expect(notice).toContainText("暂无成功测试数据，");
-  await expect(notice).toContainText("本次产品和持仓数据更新失败");
+  await expectNoticeCopy("暂无成功测试数据，");
+  await expectNoticeCopy("本次产品和持仓数据更新失败", "600");
   await expect(notice).not.toContainText("当前数据截至");
   const noCacheRefresh = notice.getByRole("button", { name: "手动刷新" });
   await expect(noCacheRefresh).toBeVisible();
@@ -632,12 +856,12 @@ test("top notice keeps success, partial failure, total failure, read failure and
   await expect(notice.locator(".sync-notice-message")).not.toContainText("请手动刷新");
 
   await page.goto("/private?syncScenario=product-read-error");
-  await expect(notice).toContainText("服务器读取失败，数据无法显示，请刷新页面。");
+  await expectNoticeCopy("服务器读取失败，数据无法显示，请刷新页面。", "600");
   await expect(notice).not.toContainText("当前数据截至");
   await expect(notice.getByRole("button", { name: "手动刷新" })).toHaveCount(0);
 
   await page.goto("/private?syncScenario=syncing");
-  await expect(notice).toContainText("数据正在更新中，请稍候。");
+  await expectNoticeCopy("数据正在更新中，请稍候。");
   await expect(notice).not.toContainText("当前数据截至");
   await expect(notice.getByRole("button", { name: "手动刷新" })).toHaveCount(0);
 });
@@ -708,6 +932,9 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(closeButton).toHaveCSS("height", "32px");
     await expect(closeButton.locator("svg")).toHaveCSS("width", "20px");
     await expect.poll(() => closeButton.locator("svg path").evaluate((path) => path.getBBox().width)).toBe(12);
+    await expect(closeButton).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await closeButton.hover();
+    await expect(closeButton).toHaveCSS("background-color", "rgb(238, 241, 239)");
     await expect(dialog.getByRole("heading", { name: "手动刷新频率" })).toHaveCount(0);
 
     await expect(dialog.getByRole("heading", { name: "配置 API" })).toBeVisible();
@@ -715,10 +942,17 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     await expect(dialog.getByText("Key 和 Secret 由服务器加密保存；完整密钥不会返回浏览器。")).toBeVisible();
     const connectionList = dialog.locator(".api-connection-list").first();
     await expect(connectionList).toBeVisible();
-    await expect(connectionList.locator(":scope > .api-connection-row")).toHaveCount(8);
-    await expect(connectionList.locator(".api-connection-row").first().locator(":scope > div")).toHaveCSS("column-gap", "24px");
+    await expect(connectionList).toHaveCSS("padding-inline-start", "16px");
+    await expect(connectionList).toHaveCSS("padding-inline-end", "16px");
+    const sourceRows = connectionList.locator(":scope > .api-connection-row");
+    await expect(sourceRows).toHaveCount(8);
+    await expect(sourceRows.first()).toHaveCSS("padding-block-start", "16px");
+    await expect(sourceRows.first()).toHaveCSS("padding-block-end", "16px");
+    await expect(sourceRows.first()).toHaveCSS("border-top-width", "0px");
+    await expect(sourceRows.nth(1)).not.toHaveCSS("border-top-width", "0px");
+    await expect(sourceRows.first().locator(":scope > div")).toHaveCSS("column-gap", "24px");
     const euRow = connectionList.locator(".api-connection-row").filter({ hasText: "Bybit EU" });
-    await expect(euRow).toContainText("手动维护");
+    await expect(euRow.getByText("手动维护", { exact: true })).toHaveCSS("font-weight", "400");
     await expect(euRow).toContainText("产品 APR 由公开 API 提供（活期 USDT、USDC、BTC；定期四种资产）");
     await expect(euRow).toContainText("持仓需手动维护");
     await expect(euRow.getByRole("button", { name: "添加" })).toHaveCount(0);
@@ -731,18 +965,17 @@ test("API settings modal keeps its three sections, truthful account copy, and re
     const checkButton = dialog.getByRole("button", { name: "检测 API" });
     const checkButtonWidth = await checkButton.evaluate((button) => getComputedStyle(button).width);
     const checkButtonHeight = await checkButton.evaluate((button) => getComputedStyle(button).height);
-    const addButton = dialog.getByRole("button", { name: "添加" }).first();
+    const addButton = connectionList.getByRole("button", { name: "添加" }).first();
+    const addWalletButton = dialog.locator(".api-connection-row").filter({ hasText: "Bitget Wallet" }).getByRole("button", { name: "添加" });
     const editHoldingsButton = page.getByRole("button", { name: "编辑持仓" });
+    for (const button of [addButton, addWalletButton, checkButton]) {
+      await expect(button).toHaveCSS("height", "40px");
+      await expect(button).toHaveCSS("padding-left", "16px");
+      await expect(button).toHaveCSS("border-radius", "10px");
+      await expect(button).toHaveClass(/button-secondary/);
+    }
     await expect(checkButton).toHaveCSS("width", "96px");
-    await expect(checkButton).toHaveCSS("height", "40px");
-    await expect(addButton).toHaveCSS("height", "40px");
     await expect(editHoldingsButton).toHaveCSS("height", "40px");
-    await expect(checkButton).toHaveCSS("padding-left", "16px");
-    await expect(checkButton).toHaveCSS("padding-left", await addButton.evaluate((button) => getComputedStyle(button).paddingLeft));
-    await expect(checkButton).toHaveCSS("border-radius", "10px");
-    await expect(checkButton).toHaveCSS("border-radius", await addButton.evaluate((button) => getComputedStyle(button).borderRadius));
-    await expect(checkButton).toHaveCSS("padding-left", await editHoldingsButton.evaluate((button) => getComputedStyle(button).paddingLeft));
-    await expect(checkButton).toHaveCSS("border-radius", await editHoldingsButton.evaluate((button) => getComputedStyle(button).borderRadius));
     await expect(checkButton).toHaveText("检测 API");
     await expect(dialog.getByText("检查交易所接口是否可用、能获取哪些数据，并生成检测报告。")).toBeVisible();
     await checkButton.click();
@@ -924,6 +1157,8 @@ test("rate-limited API report explains partial results and shows a retry countdo
   await expect(dialog.getByRole("button", { name: /下载 JSON/ })).toHaveCount(0);
   const waitingButton = dialog.getByRole("button", { name: "等待 04:52 后可检测" });
   await expect(waitingButton).toBeDisabled();
+  await expect(waitingButton).toHaveCSS("height", "40px");
+  await expect(waitingButton).toHaveCSS("width", "96px");
   await expect(waitingButton).toHaveText("04:52");
 
   if (process.env.API_RATE_LIMIT_PREVIEW_PATH) {
@@ -1068,7 +1303,7 @@ test("editing guards asset switching with an accessible, keyboard-dismissible di
   await editButton.click();
   await expect(page.getByRole("button", { name: "保存持仓" })).toBeVisible();
 
-  const assetButton = page.getByRole("button", { name: "USDC" });
+  const assetButton = page.getByRole("button", { name: "USDC", exact: true });
   await assetButton.click();
 
   const dialog = page.getByRole("dialog", { name: "请先完成编辑" });
@@ -1385,6 +1620,7 @@ test("saving an edited holding submits only the local preview payload", async ({
 
   await page.getByRole("button", { name: "编辑持仓" }).click();
   const productRow = page.locator("tr.product-row").filter({ hasText: "Binance Global" }).filter({ hasText: "持仓 40.00" });
+  await expect(productRow.getByRole("combobox", { name: "平台", exact: true })).toHaveCSS("font-weight", "600");
   await productRow.getByLabel("USDT 产品持仓").fill("41.25");
   await page.getByRole("button", { name: "保存持仓" }).click();
 
@@ -1432,14 +1668,10 @@ for (const viewport of [
   });
 
   test(`settled private page and editing match the ${viewport.name} full-page baselines`, async ({ page }) => {
-    await openFixedPrivatePreview(page, viewport);
+    // Capture each asset at rest; clicking tabs can leave the narrow strip scrolled or hovered.
     for (const asset of ["USDT", "USDC", "USDGO", "BTC"]) {
-      if (asset !== "USDT") {
-        await page.getByRole("button", { name: asset, exact: true }).first().click();
-        await expect(page.getByRole("heading", { name: `${asset} 持仓` })).toBeVisible();
-      }
-      await page.evaluate(() => window.scrollTo(0, 0));
-      await waitForVisualAssets(page);
+      await openFixedPrivatePreview(page, viewport, asset);
+      await expect(page.getByRole("heading", { name: `${asset} 持仓` })).toBeVisible();
       await expect(page).toHaveScreenshot(`private-settled-${asset.toLowerCase()}-${viewport.name}.png`, {
         fullPage: true, animations: "disabled", caret: "hide",
       });
@@ -1550,11 +1782,11 @@ for (const viewport of [
   });
 }
 
-test("mobile layout does not create page-level horizontal overflow", async ({ page }) => {
-  await page.setViewportSize({ width: 375, height: 812 });
+test("mobile layout keeps BTC fully visible on direct and history navigation without page-level overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 812 });
   await page.goto("/private");
   await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "USDT" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "USDT", exact: true })).toBeVisible();
 
   const widths = await page.evaluate(() => ({
     viewport: window.innerWidth,
@@ -1564,10 +1796,38 @@ test("mobile layout does not create page-level horizontal overflow", async ({ pa
 
   expect(widths.document).toBeLessThanOrEqual(widths.viewport);
   expect(widths.body).toBeLessThanOrEqual(widths.viewport);
+
+  const strip = page.locator(".asset-switch");
+  const btcTab = strip.getByRole("button", { name: "BTC", exact: true });
+  const expectBtcTab = async () => {
+    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    await expect(btcTab).toHaveAttribute("aria-current", "page");
+    // Scroll offsets round to CSS pixels while the tab width can be fractional.
+    await expect.poll(() => btcTab.evaluate((tab) => {
+      const bounds = tab.parentElement.getBoundingClientRect();
+      const button = tab.getBoundingClientRect();
+      return Math.max(bounds.left - button.left, button.right - bounds.right);
+    })).toBeLessThanOrEqual(0.5);
+  };
+  const hideEndOfStrip = async () => {
+    await strip.evaluate((element) => { element.scrollLeft = 0; });
+    await expect(btcTab).not.toBeInViewport();
+  };
+  await page.goto("/private?asset=BTC");
+  await expectBtcTab();
+  await hideEndOfStrip();
+  await page.goto("/");
+  await page.goBack();
+  await expectBtcTab();
+  await hideEndOfStrip();
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+  await page.goForward();
+  await expectBtcTab();
 });
 
 test("table keeps fixed trailing columns and uniform spacing at desktop and mobile widths", async ({ page }) => {
-  for (const width of [375, 1280, 1740]) {
+  for (const width of [375, 1023, 1024, 1081, 1082, 1220, 1280, 1740]) {
     await page.setViewportSize({ width, height: 842 });
     await page.goto("/private");
     await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
@@ -1582,6 +1842,7 @@ test("table keeps fixed trailing columns and uniform spacing at desktop and mobi
       const headerRect = headers[3].getBoundingClientRect();
       return {
         tableWidth: table.getBoundingClientRect().width,
+        availableWidth: table.parentElement.clientWidth,
         widths: headers.map((header) => header.getBoundingClientRect().width),
         padding: [...headers, ...cells].map((cell) => [getComputedStyle(cell).paddingLeft, getComputedStyle(cell).paddingRight]),
         dividerSize: divider.backgroundSize,
@@ -1589,11 +1850,16 @@ test("table keeps fixed trailing columns and uniform spacing at desktop and mobi
         lastDivider: getComputedStyle(rows[rows.length - 1]).backgroundImage,
         button: [button.width, button.height],
         headerFits: headerText.getBoundingClientRect().left >= headerRect.left + 31 && headerText.getBoundingClientRect().right <= headerRect.right - 31,
-        scrolls: table.parentElement.scrollWidth > table.parentElement.clientWidth + 1,
+        scrolls: table.parentElement.scrollWidth > table.parentElement.clientWidth,
       };
     });
-    expect(layout.widths[0]).toBeCloseTo(layout.tableWidth * 0.22, 0);
-    expect(layout.widths[1]).toBeCloseTo(layout.tableWidth * 0.285, 0);
+    if (width >= 1024) {
+      expect(layout.widths[0]).toBeCloseTo(layout.tableWidth * 0.24, 0);
+      expect(layout.widths[1]).toBeCloseTo(layout.widths[2], 0);
+    } else {
+      expect(layout.widths[0]).toBeCloseTo(layout.tableWidth * 0.22, 0);
+      expect(layout.widths[1]).toBeCloseTo(layout.tableWidth * 0.285, 0);
+    }
     expect(layout.widths[3]).toBeCloseTo(136, 0);
     expect(layout.widths[4]).toBeCloseTo(104, 0);
     expect(layout.padding.every(([left, right]) => left === "32px" && right === "32px")).toBe(true);
@@ -1602,12 +1868,14 @@ test("table keeps fixed trailing columns and uniform spacing at desktop and mobi
     expect(layout.lastDivider).toBe("none");
     expect(layout.button).toEqual([32, 32]);
     expect(layout.headerFits).toBe(true);
-    expect(layout.scrolls).toBe(width === 375);
+    expect(layout.tableWidth).toBeCloseTo(Math.max(layout.availableWidth, 1000), 0);
+    expect(layout.scrolls).toBe(layout.availableWidth < 1000);
+    if (width === 1081 || width === 1082) expect(layout.scrolls).toBe(width === 1081);
   }
 });
 
 test("narrow product and holding content fit with clear gaps at desktop and mobile widths", async ({ page }) => {
-  for (const width of [980, 1280, 375]) {
+  for (const width of [375, 980, 1220, 1280]) {
     await page.setViewportSize({ width, height: 842 });
     await page.goto("/private");
     await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");

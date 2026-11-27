@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useRef, type ButtonHTMLAttributes, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import type { Account } from "@/lib/domain";
+import { InfoTooltip } from "./info-tooltip";
 
 type ActionButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "danger" | "text";
@@ -22,15 +23,26 @@ export function AccountBadge({ account }: { account: Account }) {
   return <img className="account-badge" src={account.logo} alt="" aria-hidden="true" title={account.name} width={44} height={44} decoding="async" />;
 }
 
-export function Metric({ label, value, note, highlight = false, valueTone = "default" }: { label: string; value: string; note: string; highlight?: boolean; valueTone?: "default" | "danger" }) {
-  return <div className={`metric-item ${highlight ? "metric-item-highlight" : ""}`}><p className="text-muted type-caption">{label}</p><p className={`metric-value type-metric ${valueTone === "danger" ? "text-danger" : ""}`}>{value}</p><p className="metric-note text-muted type-micro">{note}</p></div>;
+export function MetricsPanel(props: Pick<ComponentPropsWithoutRef<"section">, "children" | "aria-busy" | "aria-label">) {
+  return <section className="metrics-panel card mb-4 overflow-hidden" {...props} />;
 }
 
-export function MetricSkeleton({ highlight = false, label, note }: { highlight?: boolean; label?: string; note?: string }) {
+function MetricLabel({ label, description }: { label: string; description?: string }) {
+  return <p className="text-muted type-caption">{description ? <InfoTooltip trigger="text" label={label}>{description}</InfoTooltip> : label}</p>;
+}
+
+export function Metric({ label, description, value, note, highlight = false, valueTone = "default" }: { label: string; description?: string; value: string; note?: string; highlight?: boolean; valueTone?: "default" | "danger" }) {
   return <div className={`metric-item ${highlight ? "metric-item-highlight" : ""}`}>
-    {label ? <p className="text-muted type-caption">{label}</p> : <span className="skeleton-block skeleton-label" aria-hidden="true" />}
+    <MetricLabel label={label} description={description} />
+    <p className={`metric-value type-metric ${valueTone === "danger" ? "text-danger" : ""}`}>{value}</p>
+    {note && <p className="metric-note text-muted type-micro">{note}</p>}
+  </div>;
+}
+
+export function MetricSkeleton({ highlight = false, label, description }: { highlight?: boolean; label?: string; description?: string }) {
+  return <div className={`metric-item ${highlight ? "metric-item-highlight" : ""}`}>
+    {label ? <MetricLabel label={label} description={description} /> : <span className="skeleton-block skeleton-label" aria-hidden="true" />}
     <span className="skeleton-block skeleton-value" aria-hidden="true" />
-    {note ? <p className="metric-note text-muted type-micro">{note}</p> : <span className="skeleton-block skeleton-note" aria-hidden="true" />}
   </div>;
 }
 

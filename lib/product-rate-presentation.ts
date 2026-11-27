@@ -33,14 +33,12 @@ export function rateHeadlineFor(product: Product, apiManaged = product.productDa
     ? `${capacityName} ${product.tiers.length === 1 && firstTier.min === 0 && firstTier.max === null ? "不限额" : productTierLabel(firstTier)}`
     : apiManaged ? `${capacityName} 上限未获取` : `${capacityName}额度待填写`;
 
-  if (product.rateCoverage === "unavailable") {
-    return { label: capacityLabel, value: apiManaged ? "APR 未获取" : "APR 待填写" };
+  const maximumOnly = product.rateCoverage === "max_only";
+  const label = maximumOnly ? "官网最高" : capacityLabel;
+  const apr = firstTier?.apr;
+  if (product.rateCoverage === "unavailable" || product.aprStatus === "unavailable" || !Number.isFinite(apr)) {
+    return { label, value: apiManaged ? "APR 未获取" : "APR 待填写" };
   }
-  if (product.rateCoverage === "max_only") {
-    return { label: "官网最高", value: `最高 ${firstTier?.apr.toFixed(2) ?? "0.00"}%` };
-  }
-  return {
-    label: capacityLabel,
-    value: firstTier && Number.isFinite(firstTier.apr) ? `${firstTier.apr.toFixed(2)}%` : apiManaged ? "APR 未获取" : "APR 待填写",
-  };
+  const value = `${apr.toFixed(2)}%`;
+  return maximumOnly ? { label, apr, value, valuePrefix: "最高" } : { label, apr, value };
 }

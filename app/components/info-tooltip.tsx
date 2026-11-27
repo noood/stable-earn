@@ -5,9 +5,14 @@ import { createPortal } from "react-dom";
 import { useAnchoredPopover } from "@/app/components/use-anchored-popover";
 import { useDismissiblePopover } from "@/app/components/use-dismissible-popover";
 
-export function InfoTooltip({ label, children }: { label: string; children: ReactNode }) {
+type InfoTooltipProps = { label: string } & (
+  | { trigger: "text"; children: string }
+  | { trigger?: "icon"; children: ReactNode }
+);
+
+export function InfoTooltip({ label, trigger, children }: InfoTooltipProps) {
   const id = useId();
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [open, setOpen] = useState(false);
@@ -26,9 +31,9 @@ export function InfoTooltip({ label, children }: { label: string; children: Reac
 
   function scheduleClose() {
     cancelClose();
-    // Leave time to move from the icon into its explanation.
+    // Leave time to move from the trigger into its explanation.
     closeTimer.current = setTimeout(() => {
-      if (document.activeElement !== triggerRef.current) setOpen(false);
+      if (trigger === "text" || document.activeElement !== triggerRef.current) setOpen(false);
     }, 150);
   }
 
@@ -36,10 +41,19 @@ export function InfoTooltip({ label, children }: { label: string; children: Reac
     if (closeTimer.current !== null) clearTimeout(closeTimer.current);
   }, []);
 
+  const anchor = {
+    ref: (element: HTMLElement | null) => { triggerRef.current = element; },
+    "aria-describedby": open ? id : undefined,
+  };
+
   return <>
-    <button ref={triggerRef} type="button" className="icon-button info-tooltip-trigger" aria-label={label} aria-describedby={open ? id : undefined} onMouseEnter={show} onMouseLeave={scheduleClose} onFocus={show} onBlur={() => { cancelClose(); setOpen(false); }} onClick={show}>
-      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="M10 9v5M10 6v.1" /></svg>
-    </button>
-    {open && createPortal(<div ref={tooltipRef} id={id} role="tooltip" className="surface-popover anchored-popover info-tooltip" style={{ top: position.top, left: position.left }} onMouseEnter={cancelClose} onMouseLeave={scheduleClose}>{children}</div>, document.body)}
+    {trigger === "text"
+      ? <span {...anchor} className="text-tooltip-trigger" aria-description={children}
+          onPointerEnter={(event) => { if (event.pointerType !== "touch" && event.buttons === 0) show(); }}
+          onPointerLeave={scheduleClose}>{label}</span>
+      : <button {...anchor} type="button" className="icon-button info-tooltip-trigger" aria-label={label} onMouseEnter={show} onMouseLeave={scheduleClose} onFocus={show} onBlur={() => { cancelClose(); setOpen(false); }} onClick={show}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="M10 9v5M10 6v.1" /></svg>
+        </button>}
+    {open && createPortal(<div ref={tooltipRef} id={id} role="tooltip" className={`surface-popover anchored-popover info-tooltip${trigger === "text" ? " info-tooltip-compact" : ""}`} style={{ top: position.top, left: position.left }} onMouseEnter={cancelClose} onMouseLeave={scheduleClose}>{children}</div>, document.body)}
   </>;
 }

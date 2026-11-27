@@ -35,12 +35,29 @@ test("module-loading skeleton has no visible copy and gives way to the dashboard
     await page.goto("/private", { waitUntil: "domcontentloaded" });
     await expect.poll(() => dashboardRequestIntercepted).toBe(true);
     await expect(page.locator('.metrics-panel[aria-busy="true"] .skeleton-block').first()).toBeVisible();
-    await expect(page.locator('.metrics-panel[aria-busy="true"]')).toContainText("组合有效 APR");
-    await expect(page.locator('.metrics-panel[aria-busy="true"]')).toContainText("按各阶梯实际占用加权");
+    const notice = page.locator('.sync-notice[aria-busy="true"]');
+    await expect(notice).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(notice).toHaveCSS("box-shadow", "none");
+    await expect(notice).toHaveCSS("border-style", "solid");
+    await expect(notice).toHaveCSS("border-radius", "12px");
+    await expect(notice.locator(".sync-notice-copy")).toHaveCSS("column-gap", "4px");
+    const aprTitle = page.locator('.metrics-panel[aria-busy="true"]').getByText("组合有效 APR", { exact: true });
+    await expect(aprTitle).toHaveJSProperty("tabIndex", -1);
+    await expect(aprTitle).toHaveAccessibleDescription("按各阶梯实际占用加权");
+    await expect(page.getByText("按各阶梯实际占用加权", { exact: true })).toBeHidden();
     await expect(page.locator('.metrics-panel[aria-busy="true"]')).toContainText("总持仓 · USDT");
     await expect(page.getByRole("button", { name: "编辑持仓" })).toBeDisabled();
+    const menu = page.getByRole("button", { name: "更多操作，页面功能加载中" });
+    await expect(menu).toBeDisabled();
+    await expect(menu).toHaveCSS("border-width", "0px");
+    const icon = menu.locator("svg");
+    await expect(icon).toHaveCSS("width", "20px");
+    await expect(icon).toHaveCSS("height", "20px");
+    await expect(icon.locator("circle")).toHaveCount(3);
+    await menu.hover();
+    await expect(menu).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await expect(page.getByRole("navigation", { name: "主导航" })).toContainText("Stable Earn");
-    await expect(page.getByRole("button", { name: "USDT" })).toHaveAttribute("aria-current", "page");
+    await expect(page.getByRole("button", { name: "USDT", exact: true })).toHaveAttribute("aria-current", "page");
     await expect(page.getByRole("columnheader", { name: "平台与产品类型" })).toBeVisible();
     await expect(page.getByText("实际到账以平台账户为准。", { exact: false })).toBeVisible();
     await expect(page.getByText("正在加载个人数据")).toHaveCount(0);
@@ -72,6 +89,13 @@ test("module-download failure keeps the fixed shell without a retry button", asy
   await page.goto("/private", { waitUntil: "domcontentloaded" });
   await expect.poll(() => dashboardRequestBlocked).toBe(true);
   await expect(page.getByRole("alert")).toHaveText("页面加载失败，数据无法显示，请刷新页面。");
+  const notice = page.getByRole("alert");
+  await expect(notice).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(notice).toHaveCSS("box-shadow", "none");
+  await expect(notice.getByText("页面加载失败，数据无法显示，请刷新页面。")).toHaveCSS("font-weight", "600");
+  await expect(notice).toHaveCSS("border-style", "solid");
+  await expect(notice).toHaveCSS("border-radius", "12px");
+  await expect(notice.locator(".sync-notice-copy")).toHaveCSS("column-gap", "4px");
   await expect(page.getByRole("button", { name: "重试" })).toHaveCount(0);
   await expect(page.getByText("加载失败", { exact: true })).toHaveCount(6);
   await expect(page.locator(".metrics-panel")).toContainText("总持仓 · USDT");
@@ -158,6 +182,17 @@ test("a completed server daily marker removes the extra request without hiding t
 });
 
 test("local-only module failure preview shows the failure style without a retry button", async ({ page }) => {
+  await page.setViewportSize({ width: 359, height: 812 });
+  await page.goto("/private");
+  const edit = page.getByRole("button", { name: "编辑持仓", exact: true });
+  await expect(edit).toBeEnabled();
+  await expect(edit).toHaveCSS("font-size", "12px");
+  const editWidth = await edit.evaluate((button) => getComputedStyle(button).width);
+  const expectDisabledEdit = async () => {
+    await expect(edit).toBeDisabled();
+    await expect(edit).toHaveCSS("font-size", "12px");
+    await expect(edit).toHaveCSS("width", editWidth);
+  };
   let accountApiRequested = false;
   await page.route((url) => ["/private/api/holdings", "/private/api/products"].includes(url.pathname), async (route) => {
     accountApiRequested = true;
@@ -165,7 +200,9 @@ test("local-only module failure preview shows the failure style without a retry 
   });
   await page.goto("/private?moduleScenario=error", { waitUntil: "domcontentloaded" });
   await expect(page.locator('.metrics-panel[aria-busy="true"] .skeleton-block').first()).toBeVisible();
+  await expectDisabledEdit();
   await expect(page.getByRole("alert")).toHaveText("页面加载失败，数据无法显示，请刷新页面。");
+  await expectDisabledEdit();
   await expect(page.getByText("加载失败", { exact: true })).toHaveCount(6);
   await expect(page.locator(".metrics-panel")).toContainText("总持仓 · USDT");
   await expect(page.locator(".metrics-panel")).toContainText("预计每日收益 · USDT");
@@ -198,7 +235,7 @@ test("local second-stage failure shows the same fixed shell from skeleton to acc
     await expect(page.getByText("实际到账以平台账户为准。", { exact: false })).toBeVisible();
 
     releaseHoldingsRead();
-    await expect(page.locator('.card[aria-live="polite"]').getByText("服务器读取失败，数据无法显示，请刷新页面。", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('.sync-notice[aria-live="polite"]').getByText("服务器读取失败，数据无法显示，请刷新页面。", { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole("button", { name: "编辑持仓" })).toHaveClass(/button-primary/);
     await expect(page.locator(".empty-product-state > p")).toHaveClass(/text-muted type-label font-semibold/);
     await expect(page.getByRole("navigation", { name: "主导航" })).toContainText("Stable Earn");

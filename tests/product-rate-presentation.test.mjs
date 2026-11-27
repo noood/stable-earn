@@ -17,6 +17,21 @@ test("APR badge tones follow displayed thresholds without treating missing as ze
   }
 });
 
+test("an official maximum needs a usable APR, including an explicitly reported zero", () => {
+  const maximum = product({ rateCoverage: "max_only", tiers: [] });
+  const missing = { label: "官网最高", value: "APR 未获取" };
+  assert.deepEqual(rateHeadlineFor(maximum), missing);
+  for (const apr of [undefined, null, "", "8.8", NaN, Infinity]) {
+    assert.deepEqual(rateHeadlineFor({ ...maximum, tiers: [{ min: 0, max: 100, apr }] }), missing);
+  }
+  const zero = { ...maximum, tiers: [{ min: 0, max: 100, apr: 0 }] };
+  assert.deepEqual(rateHeadlineFor({ ...zero, aprStatus: "unavailable" }), missing);
+  for (const apr of [0, 8.8]) {
+    const headline = rateHeadlineFor({ ...maximum, tiers: [{ min: 0, max: 100, apr }] });
+    assert.deepEqual(headline, { label: "官网最高", apr, value: `${apr.toFixed(2)}%`, valuePrefix: "最高" });
+  }
+});
+
 test("an unreadable quota is never presented as an open-ended tier", () => {
   for (const rateCoverage of ["complete", "base_only", "partial", "unavailable"]) {
     const headline = rateHeadlineFor(product({ rateCoverage }));
@@ -46,7 +61,7 @@ test("both missing fields are named without converting either into zero or unlim
 test("an unknown product type does not replace known APR or quota information", () => {
   const unknown = product({ productTypeStatus: "missing", rateCoverage: "complete",
     tiers: [{ id: "tier", min: 0, max: 300, apr: 8 }] });
-  assert.deepEqual(rateHeadlineFor(unknown), { label: "首档 0.00–300.00", value: "8.00%" });
+  assert.deepEqual(rateHeadlineFor(unknown), { label: "首档 0.00–300.00", value: "8.00%", apr: 8 });
   assert.deepEqual(productInformationIssues(unknown), []);
   assert.equal(productParticipatesInInterest(unknown, 20), true);
 });

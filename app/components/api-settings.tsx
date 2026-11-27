@@ -347,7 +347,7 @@ export function ApiSettings({ open, onClose, onCredentialsRemoved }: { open: boo
         <SectionIntro title="配置 API" description="Key 和 Secret 由服务器加密保存；完整密钥不会返回浏览器。" />
         {statusError && <FeedbackPanel tone="danger" className="mb-3">配置状态读取失败，请重试。<ActionButton variant="text" size="small" onClick={() => { setStatusError(false); void loadStatus(); }}>重试</ActionButton></FeedbackPanel>}
         <div className="api-connection-list">
-          {status?.sources.map((source, index) => {
+          {status?.sources.map((source) => {
             const account = accounts.find((item) => item.id === source.id);
             const isSelected = selected?.id === source.id;
             const statusLabel = source.configured ? "已配置" : "未配置";
@@ -359,7 +359,7 @@ export function ApiSettings({ open, onClose, onCredentialsRemoved }: { open: boo
             };
 
             return (
-              <SourceRow key={source.id} divided={index > 0} account={account} label={source.label} statusLabel={statusLabel} statusClass={statusClass} description={source.syncDescription} actions={<>
+              <SourceRow key={source.id} account={account} label={source.label} statusLabel={statusLabel} statusClass={statusClass} description={source.syncDescription} actions={<>
                 {!source.configured && <ActionButton variant="secondary" disabled={modalBusy} onClick={openEditor}>添加</ActionButton>}
                 {source.configured && <SourceRowMenu label={source.label} updateLabel="更新 API 配置" removeLabel="移除 API 配置" disabled={modalBusy || isSelected} onUpdate={openEditor} onRemove={() => { setMessage(null); setPendingRemoval(source); }} />}
               </>}>
@@ -367,10 +367,9 @@ export function ApiSettings({ open, onClose, onCredentialsRemoved }: { open: boo
               </SourceRow>
             );
           }) ?? (statusError ? null : <ApiSettingsSkeleton />)}
-          {(status?.manualSources ?? []).map((source, index) => {
+          {(status?.manualSources ?? []).map((source) => {
             const account = accounts.find((item) => item.id === source.id);
-            const divided = (status?.sources.length ?? 0) > 0 || index > 0;
-            return <SourceRow key={source.id} divided={divided} account={account} label={source.label} statusLabel={source.statusLabel ?? "手动维护"} statusClass="status-chip-muted" description={source.syncDescription} />;
+            return <SourceRow key={source.id} account={account} label={source.label} statusLabel={source.statusLabel ?? "手动维护"} statusClass="status-chip-muted" description={source.syncDescription} />;
           })}
         </div>
       </section>
@@ -433,8 +432,8 @@ export function ApiSettings({ open, onClose, onCredentialsRemoved }: { open: boo
 
 type SourceSummaryProps = { account?: Account; label: string; statusLabel: string; statusClass: string; description: string };
 
-function SourceRow({ divided = false, actions, children, ...summary }: SourceSummaryProps & { divided?: boolean; actions?: ReactNode; children?: ReactNode }) {
-  return <div className={`api-connection-row ${divided ? "api-connection-row-divided" : ""}`}><div className="flex items-center justify-between gap-6"><SourceSummary {...summary} />{actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}</div>{children}</div>;
+function SourceRow({ actions, children, ...summary }: SourceSummaryProps & { actions?: ReactNode; children?: ReactNode }) {
+  return <div className="api-connection-row"><div className="flex items-center justify-between gap-6"><SourceSummary {...summary} />{actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}</div>{children}</div>;
 }
 
 function SourceSummary({ account, label, statusLabel, statusClass, description }: SourceSummaryProps) {
@@ -442,7 +441,7 @@ function SourceSummary({ account, label, statusLabel, statusClass, description }
 }
 
 function ApiSettingsSkeleton() {
-  return <div className="api-settings-skeleton" aria-label="正在读取配置状态" aria-busy="true">{Array.from({ length: 6 }, (_, index) => <div key={index} className="api-settings-skeleton-row"><span className="api-settings-skeleton-badge" /><span className="api-settings-skeleton-copy"><span /><span /></span></div>)}</div>;
+  return <div aria-label="正在读取配置状态" aria-busy="true">{Array.from({ length: 6 }, (_, index) => <div key={index} className="api-connection-row api-settings-skeleton-row"><span className="api-settings-skeleton-badge" /><span className="api-settings-skeleton-copy"><span /><span /></span></div>)}</div>;
 }
 
 function SourceRowMenu({ label, updateLabel, removeLabel, disabled, onUpdate, onRemove }: { label: string; updateLabel: string; removeLabel: string; disabled: boolean; onUpdate: () => void; onRemove: () => void }) {

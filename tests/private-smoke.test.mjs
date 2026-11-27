@@ -151,20 +151,7 @@ test("private route serves a static shell and keeps account data client-loaded",
 });
 
 test("first-stage loading and failure retain the selected asset in metric labels and holdings title", () => {
-  const ui = moduleLoader()(new URL("../app/components/ui.tsx", import.meta.url).pathname);
-  const frame = {
-    DashboardPageFrame: ({ children }) => React.createElement("main", null, children),
-    DashboardProductTableSection: ({ title, subtitle, actions, children }) => React.createElement(
-      "section", null, title, subtitle, actions, React.createElement("table", null, React.createElement("tbody", null, children)),
-    ),
-    NavigationMenuPlaceholder: () => null,
-    ProductTableEmptyState: ({ message }) => React.createElement("p", null, message),
-    DashboardFooter: () => null,
-  };
-  const dashboardStates = moduleLoader({
-    "@/app/components/ui": ui,
-    "@/app/components/dashboard/dashboard-frame": frame,
-  })(new URL("../app/components/dashboard/dashboard-skeleton.tsx", import.meta.url).pathname);
+  const dashboardStates = load("@/app/components/dashboard/dashboard-skeleton");
 
   for (const asset of ["USDT", "BTC"]) {
     const html = renderToStaticMarkup(React.createElement(dashboardStates.DashboardModuleFailure, { asset }));
