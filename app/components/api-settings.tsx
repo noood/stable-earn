@@ -342,7 +342,7 @@ export function ApiSettings({ open, onClose, onCredentialsRemoved }: { open: boo
   );
 
   return (
-    <ModalFrame ariaLabel="数据源设置" title="数据源设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-8">
+    <ModalFrame ariaLabel="数据源设置" title="数据源设置" onClose={onClose} busy={modalBusy} bodyClassName="api-settings-body space-y-8" animateEntrance>
       <section>
         <SectionIntro title="配置 API" description="Key 和 Secret 由服务器加密保存；完整密钥不会返回浏览器。" />
         {statusError && <FeedbackPanel tone="danger" className="mb-3">配置状态读取失败，请重试。<ActionButton variant="text" size="small" onClick={() => { setStatusError(false); void loadStatus(); }}>重试</ActionButton></FeedbackPanel>}

@@ -1,7 +1,5 @@
 import { nextScheduledRefreshAt, SYNC_ATTEMPT_WINDOW_MS, type ScheduledRefreshState } from "./sync-cache";
 
-export { nextScheduledRefreshAt } from "./sync-cache";
-
 export const serverReadFailureMessage = "服务器读取失败，数据无法显示，请刷新页面。";
 
 export function completedDataSummary(

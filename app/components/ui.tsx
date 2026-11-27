@@ -83,12 +83,25 @@ export function FeedbackPanel({ children, tone = "neutral", role = tone === "dan
 }
 
 function modalFocusableElements(panel: HTMLElement) {
-  return [...panel.querySelectorAll<HTMLElement>(
-    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-  )].filter((element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true");
+  const controls = panel.querySelectorAll<HTMLElement>("a[href], button, input, select, textarea, summary, [tabindex]");
+  return Array.from(controls).filter((element) => {
+    if (element.tabIndex < 0 || element.matches(":disabled") || element.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+    const closedMenu = element.closest("details:not([open])");
+    if (closedMenu && !closedMenu.querySelector(":scope > summary")?.contains(element)) return false;
+    return element.getClientRects().length > 0 && getComputedStyle(element).visibility === "visible";
+  });
 }
 
-export function ModalFrame({ ariaLabel, title, description, onClose, busy = false, bodyClassName = "", children }: { ariaLabel: string; title: string; description?: string; onClose: () => void; busy?: boolean; bodyClassName?: string; children: ReactNode }) {
+export function ModalFrame({ ariaLabel, title, description, onClose, busy = false, bodyClassName = "", animateEntrance = false, children }: {
+  ariaLabel: string;
+  title: string;
+  description?: string;
+  onClose: () => void;
+  busy?: boolean;
+  bodyClassName?: string;
+  animateEntrance?: boolean;
+  children: ReactNode;
+}) {
   const panelRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -106,8 +119,8 @@ export function ModalFrame({ ariaLabel, title, description, onClose, busy = fals
   useEffect(() => {
     const dialog = panelRef.current;
     if (!dialog) return;
-    function handleKeyDown(event: KeyboardEvent) {
-      if (!dialog) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (event.key === "Escape") {
         if (!busy) {
           event.preventDefault();
@@ -131,12 +144,31 @@ export function ModalFrame({ ariaLabel, title, description, onClose, busy = fals
         event.preventDefault();
         first.focus();
       }
-    }
+    };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [busy, onClose]);
 
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (!busy && event.currentTarget === event.target) onClose(); }}><section ref={panelRef} role="dialog" aria-modal="true" aria-label={ariaLabel} className="modal-panel" tabIndex={-1}><div className="modal-header"><div><h2 className="type-label font-semibold tracking-[-.015em]">{title}</h2>{description && <p className="text-muted type-caption mt-1">{description}</p>}</div><button type="button" className="icon-button modal-close" onClick={onClose} disabled={busy} aria-label="关闭"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4l12 12M16 4L4 16" /></svg></button></div><div className={`modal-body ${bodyClassName}`}>{children}</div></section></div>;
+  return (
+    <div
+      className={`modal-backdrop${animateEntrance ? " modal-backdrop-enter" : ""}`}
+      role="presentation"
+      onMouseDown={(event) => { if (!busy && event.currentTarget === event.target) onClose(); }}
+    >
+      <section ref={panelRef} role="dialog" aria-modal="true" aria-label={ariaLabel} className="modal-panel" tabIndex={-1}>
+        <div className="modal-header">
+          <div>
+            <h2 className="type-label font-semibold tracking-[-.015em]">{title}</h2>
+            {description && <p className="text-muted type-caption mt-1">{description}</p>}
+          </div>
+          <button type="button" className="icon-button modal-close" onClick={onClose} disabled={busy} aria-label="关闭">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4l12 12M16 4L4 16" /></svg>
+          </button>
+        </div>
+        <div className={`modal-body ${bodyClassName}`}>{children}</div>
+      </section>
+    </div>
+  );
 }

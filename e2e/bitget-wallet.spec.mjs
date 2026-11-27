@@ -134,6 +134,11 @@ for (const width of [1280, 375]) {
     await expect(row.getByRole("progressbar")).toHaveCount(0);
     await expect(row.locator("td").nth(3)).toHaveText(`${referenceApr.toFixed(2)}%`);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    // Align the end of the scrollable strip in these USDC screenshots.
+    await page.locator(".asset-switch").evaluate(async (strip) => {
+      await document.fonts.ready;
+      strip.scrollLeft = strip.scrollWidth;
+    });
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page).toHaveScreenshot(`bgw-reference-${width}.png`, { fullPage: true, animations: "disabled" });
 
@@ -309,7 +314,6 @@ test("wallet settings validate the address, save locally and confirm removal bef
     return route.fulfill({ status: 405, json: { error: "Unexpected wallet operation" } });
   });
   await page.route("**/private/api/credentials", (route) => route.fulfill({ json: { sources: [], manualSources: [] } }));
-  await page.route("**/private/api/preferences", (route) => route.fulfill({ json: { manualRefreshCooldownMinutes: 30 } }));
   await openBgwPreview(page);
   await page.locator(".action-menu-trigger").click();
   await page.getByRole("button", { name: "数据源设置", exact: true }).click();
@@ -367,7 +371,6 @@ for (const width of [1280, 375]) {
     await page.route("**/private/api/credentials", (route) => route.fulfill({ json: {
       sources: [{ id: "bitget-global", label: "Bitget", configured: false, requiresPassphrase: true, syncDescription: "产品、APR 与持仓自动同步" }], manualSources: [],
     } }));
-    await page.route("**/private/api/preferences", (route) => route.fulfill({ json: { manualRefreshCooldownMinutes: 30 } }));
     await openBgwPreview(page);
     await page.locator(".action-menu-trigger").click();
     await page.getByRole("button", { name: "数据源设置", exact: true }).click();
@@ -398,7 +401,6 @@ for (const width of [1280, 375]) {
     await page.route("**/private/api/credentials", (route) => route.fulfill({ json: {
       sources: [{ id: "bitget-global", label: "Bitget", configured: true, requiresPassphrase: true, syncDescription: "产品、APR 与持仓自动同步" }], manualSources: [],
     } }));
-    await page.route("**/private/api/preferences", (route) => route.fulfill({ json: { manualRefreshCooldownMinutes: 30 } }));
     await openBgwPreview(page);
     await page.locator(".action-menu-trigger").click();
     await page.getByRole("button", { name: "数据源设置", exact: true }).click();
@@ -417,8 +419,16 @@ for (const width of [1280, 375]) {
     await expect(dialog.getByLabel("API Key", { exact: true })).toBeVisible();
     await dialog.getByRole("button", { name: "取消", exact: true }).click();
 
-    await dialog.getByLabel("Bitget Wallet 更多操作", { exact: true }).click();
+    const walletMenuTrigger = dialog.getByLabel("Bitget Wallet 更多操作", { exact: true });
+    await walletMenuTrigger.click();
     await expect(dialog).toHaveScreenshot(`bgw-configured-source-menu-${width}.png`, { animations: "disabled" });
+    const removeWallet = dialog.getByRole("button", { name: "移除钱包", exact: true });
+    await removeWallet.focus();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+    await expect(removeWallet).toBeHidden();
+    await expect(walletMenuTrigger).toBeFocused();
+    await walletMenuTrigger.press("Enter");
     await dialog.getByRole("button", { name: "移除钱包", exact: true }).click();
     const walletRemoval = page.getByRole("dialog", { name: "移除钱包地址", exact: true });
     await expect(walletRemoval).toBeVisible();
@@ -427,6 +437,22 @@ for (const width of [1280, 375]) {
     await dialog.getByRole("button", { name: "修改钱包", exact: true }).click();
     await expect(walletRow.getByRole("textbox", { name: "钱包地址", exact: true })).toHaveValue(address);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    await page.route("**/private/api/diagnostics/platform-capabilities", (route) => route.fulfill({
+      status: 429, headers: { "Retry-After": "60" }, json: {},
+    }));
+    await dialog.getByRole("button", { name: "检测 API", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: /等待 .* 后可检测/ })).toBeDisabled();
+    const close = dialog.getByRole("button", { name: "关闭", exact: true });
+    await close.focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(walletMenuTrigger).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(close).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(page.locator(".action-menu-trigger")).toBeFocused();
   });
 }
 
@@ -455,7 +481,6 @@ test("a delayed settings read cannot restore the previous wallet after a save", 
     return route.fulfill({ json: { address: storedAddress } });
   });
   await page.route("**/private/api/credentials", (route) => route.fulfill({ json: { sources: [], manualSources: [] } }));
-  await page.route("**/private/api/preferences", (route) => route.fulfill({ json: { manualRefreshCooldownMinutes: 30 } }));
   await openBgwPreview(page);
   async function openSettings() {
     await page.locator(".action-menu-trigger").click();
@@ -524,7 +549,6 @@ test("an old cache response cannot overwrite a replacement wallet or cancel its 
     return route.fulfill({ json: { address: replacementAddress } });
   });
   await page.route("**/private/api/credentials", (route) => route.fulfill({ json: { sources: [], manualSources: [] } }));
-  await page.route("**/private/api/preferences", (route) => route.fulfill({ json: { manualRefreshCooldownMinutes: 30 } }));
   const row = await openBgwPreview(page);
   await expect(page.getByRole("button", { name: "编辑持仓", exact: true })).toBeEnabled();
   await expect.poll(() => reads.products).toBe(1);

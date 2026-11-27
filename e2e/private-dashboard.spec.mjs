@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const visualPreviewAt = "2026-10-06T10:00:00.000Z";
+const publicNoticeText = "以下均为演示数据，登录可同步私人数据。";
 
 test.beforeEach(async ({ page }) => {
   // Wallet settings are independent of local DB contents in these exchange/dashboard scenarios.
@@ -106,7 +107,7 @@ test("navigation shares the canvas and sits four pixels inside the dashboard car
     await expect(active).toHaveCSS("border-radius", "10px", { pseudo: "before" });
     const navBox = await nav.boundingBox();
     const notice = await page.locator(".sync-notice").boundingBox();
-    expect(notice.y - navBox.y - navBox.height).toBeCloseTo(width >= 1024 ? 12 : 8, 0);
+    expect(notice.y - navBox.y - navBox.height).toBeCloseTo(8, 0);
     if (singleRow) {
       const tab = await active.boundingBox();
       expect(tab.y - navBox.y).toBeCloseTo((navBox.height - tab.height) / 2, 0);
@@ -312,6 +313,23 @@ test("public menu has equal space above and below its only action", async ({ pag
     return { top: inner.top - outer.top, bottom: outer.bottom - inner.bottom };
   });
   expect(gaps.top).toBeCloseTo(gaps.bottom, 0);
+});
+
+test("the public notice opens the selected asset through its inline login button", async ({ page }) => {
+  await page.goto("/?asset=USDT");
+  await expect(page).toHaveURL(/\/$/);
+  await page.getByRole("navigation").getByRole("button", { name: "USDC", exact: true }).click();
+  await expect(page).toHaveURL(/\/\?asset=USDC$/);
+  const notice = page.locator(".sync-notice");
+  const message = notice.locator("p");
+  await expect(message).toHaveText(publicNoticeText);
+  await expect(notice.getByRole("button")).toHaveCount(1);
+  const login = message.getByRole("button", { name: "登录", exact: true });
+  await expect(login).toHaveClass(/\bbutton-text\b/);
+  await login.click();
+  await expect(page).toHaveURL(/\/private\?asset=USDC$/);
+  await expect(page.getByRole("heading", { name: "USDC 持仓" })).toBeVisible();
+  await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
 });
 
 test("signed-out demo shows two synthetic product changes without requesting private history", async ({ page }) => {
@@ -742,7 +760,7 @@ test("complete empty sync preview shows an ordinary empty directory without an A
 });
 
 test("a sync failure has a separate brand-colored manual refresh action", async ({ page }) => {
-  for (const viewport of [{ width: 780, height: 842 }, { width: 375, height: 812 }]) {
+  for (const viewport of [{ width: 1063, height: 950 }, { width: 375, height: 812 }]) {
     await page.setViewportSize(viewport);
     await page.goto("/private?syncScenario=error");
     const notice = page.locator(".sync-notice-copy");
@@ -764,19 +782,25 @@ test("a sync failure has a separate brand-colored manual refresh action", async 
       const notice = document.querySelector(".sync-notice");
       const copy = document.querySelector(".sync-notice-copy");
       const icon = document.querySelector(".sync-notice-icon");
-      const firstLine = document.querySelector(".sync-notice-message > span:first-child");
+      const message = document.querySelector(".sync-notice-message");
       const button = document.querySelector(".sync-notice-refresh");
       const rect = (node) => node.getBoundingClientRect();
+      const style = getComputedStyle(notice);
+      const contentTop = rect(notice).top + parseFloat(style.paddingTop);
+      const contentBottom = rect(notice).bottom - parseFloat(style.paddingBottom);
       return { viewportWidth: innerWidth, documentWidth: document.documentElement.scrollWidth,
-        notice: rect(notice), copy: rect(copy), icon: rect(icon), firstLine: rect(firstLine), button: rect(button) };
+        notice: rect(notice), copy: rect(copy), icon: rect(icon), message: rect(message), button: rect(button),
+        contentCenter: (contentTop + contentBottom) / 2 };
     });
     expect(bounds.documentWidth).toBeLessThanOrEqual(bounds.viewportWidth);
-    expect(bounds.button.x).toBeGreaterThanOrEqual(bounds.copy.x + bounds.copy.width);
-    expect(bounds.button.x + bounds.button.width).toBeLessThanOrEqual(bounds.notice.x + bounds.notice.width);
-    expect(Math.abs((bounds.copy.y + bounds.copy.height / 2) - (bounds.notice.y + bounds.notice.height / 2))).toBeLessThanOrEqual(1);
-    expect(Math.abs(bounds.icon.y - bounds.firstLine.y)).toBeLessThanOrEqual(1);
-    expect(Math.abs(bounds.icon.height - bounds.firstLine.height)).toBeLessThanOrEqual(1);
-    expect(bounds.firstLine.x - bounds.icon.x - bounds.icon.width).toBeCloseTo(4, 0);
+    expect(bounds.button.left - bounds.copy.right).toBeCloseTo(24, 0);
+    expect(bounds.notice.right - bounds.button.right).toBeCloseTo(4, 0);
+    for (const element of [bounds.copy, bounds.button]) {
+      expect(element.y + element.height / 2).toBeCloseTo(bounds.contentCenter, 0);
+    }
+    expect(bounds.icon.y + bounds.icon.height / 2).toBeCloseTo(bounds.message.y + bounds.message.height / 2, 0);
+    expect(bounds.message.left - bounds.icon.right).toBeCloseTo(8, 0);
+    expect(bounds.icon.left - bounds.notice.left).toBeCloseTo(4, 0);
     const refreshRequestPromise = page.waitForRequest((request) => {
       const url = new URL(request.url());
       return url.pathname === "/private/api/products" && url.searchParams.get("refresh") === "1";
@@ -823,14 +847,15 @@ test("top notice keeps success, partial failure, total failure, read failure and
   await page.goto("/private?syncScenario=success");
   await expectNoticeCopy(/当前数据截至 .*，每日首次打开自动更新。/);
   const card = page.locator(".metrics-panel");
-  for (const property of ["border", "border-radius"]) {
-    await expect(notice).toHaveCSS(property, await card.evaluate((element, key) => getComputedStyle(element).getPropertyValue(key), property));
-  }
+  await expect(notice).toHaveCSS("border-width", "0px");
+  await expect(notice).toHaveCSS("padding", "8px 4px");
+  await expect(notice.locator('[data-icon="clock"]')).toBeVisible();
+  await expect(page.locator(".site-footer")).toHaveCSS("padding-inline", "4px");
   await expect(card).toHaveCSS("box-shadow", "none");
   await expect(notice).toHaveCSS("box-shadow", "none");
   await expect(notice).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(page.locator(".card").filter({ has: page.getByRole("table") })).toHaveCSS("box-shadow", "none");
-  await expect(notice.locator(".sync-notice-copy")).toHaveCSS("column-gap", "4px");
+  await expect(notice.locator(".sync-notice-copy")).toHaveCSS("column-gap", "8px");
   await expect(notice.getByRole("button", { name: "手动刷新" })).toHaveCount(0);
 
   await page.goto("/private?syncScenario=partial");
@@ -862,6 +887,7 @@ test("top notice keeps success, partial failure, total failure, read failure and
 
   await page.goto("/private?syncScenario=syncing");
   await expectNoticeCopy("数据正在更新中，请稍候。");
+  await expect(notice.locator('[data-icon="clock"]')).toHaveCSS("animation-name", "none");
   await expect(notice).not.toContainText("当前数据截至");
   await expect(notice.getByRole("button", { name: "手动刷新" })).toHaveCount(0);
 });
@@ -886,9 +912,6 @@ test("API settings modal keeps its three sections, truthful account copy, and re
         ],
       }),
     });
-  });
-  await page.route("**/private/api/preferences", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ manualRefreshCooldownMinutes: 30 }) });
   });
 
   let releaseReport;
@@ -1127,9 +1150,6 @@ test("rate-limited API report explains partial results and shows a retry countdo
   await page.route("**/private/api/credentials", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ sources: [], manualSources: [] }) });
   });
-  await page.route("**/private/api/preferences", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ manualRefreshCooldownMinutes: 30 }) });
-  });
   await page.route("**/private/api/diagnostics/platform-capabilities", async (route) => {
     await route.fulfill({
       status: 200,
@@ -1169,9 +1189,6 @@ test("rate-limited API report explains partial results and shows a retry countdo
 test("a rate-limited check removes a JSON download from the previous complete report", async ({ page }) => {
   await page.route("**/private/api/credentials", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ sources: [], manualSources: [] }) });
-  });
-  await page.route("**/private/api/preferences", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ manualRefreshCooldownMinutes: 30 }) });
   });
 
   let probeCount = 0;
@@ -1658,7 +1675,11 @@ for (const viewport of [
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
-    await expect(page.getByText("以下均为演示数据。")).toBeVisible();
+    const notice = page.locator(".sync-notice");
+    await expect(notice.locator("p")).toHaveText(publicNoticeText);
+    await expect(notice.locator('[data-icon="bell"]')).toBeVisible();
+    await expect(notice).toHaveCSS("padding", "8px 4px");
+    await expect(page.locator(".dashboard-content")).toHaveCSS("padding-top", "8px");
     await waitForVisualAssets(page);
     await expect(page).toHaveScreenshot(`public-settled-${viewport.name}.png`, {
       fullPage: true,
@@ -1679,14 +1700,21 @@ for (const viewport of [
 
     await page.getByRole("button", { name: "USDT", exact: true }).first().click();
     await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
+    const holdingsCard = page.locator("section").filter({ has: page.getByRole("heading", { name: "USDT 持仓" }) });
+    await expect(holdingsCard).toHaveCSS("box-shadow", "none");
     await page.getByRole("button", { name: "编辑持仓" }).click();
     await expect(page.getByRole("button", { name: "取消" }).first()).toBeVisible();
+    await expect(holdingsCard).toHaveCSS("box-shadow", "rgba(16, 46, 37, 0.08) 0px 4px 8px 0px");
+    await expect(holdingsCard).toHaveCSS("transition-duration", "0.2s");
+    await expect(holdingsCard.locator(".table-toolbar-actions")).toHaveCSS("animation-duration", "0.2s");
+    await expect(page.locator(".metrics-panel")).toHaveCSS("box-shadow", "none");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page).toHaveScreenshot(`private-editing-${viewport.name}.png`, {
       fullPage: true, animations: "disabled", caret: "hide",
     });
     await page.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(holdingsCard).toHaveCSS("box-shadow", "none");
     await page.getByRole("button", { name: "BTC", exact: true }).first().click();
     await expect(page.getByRole("heading", { name: "BTC 持仓" })).toBeVisible();
     await page.getByRole("button", { name: "编辑持仓" }).click();
@@ -1709,19 +1737,17 @@ for (const viewport of [
   });
 
   test(`private settings and history match the ${viewport.name} visual baselines`, async ({ page }) => {
-    await page.route("**/private/api/preferences", (route) => route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ manualRefreshCooldownMinutes: 0 }),
-    }));
     await openFixedPrivatePreview(page, viewport);
     await page.locator(".action-menu-trigger").click();
     await page.getByRole("button", { name: "数据源设置" }).click();
     const dialog = page.getByRole("dialog", { name: "数据源设置" });
+    await expect(dialog).toHaveCSS("animation-duration", "0.16s");
+    await expect(dialog).toHaveCSS("box-shadow", "rgba(16, 46, 37, 0.12) 0px 12px 20px 0px");
     await expect(dialog.locator(".api-connection-list").first().locator(".api-connection-row")).toHaveCount(8);
     await waitForVisualAssets(page);
     const platformLogos = dialog.locator(".account-badge");
     await expect(platformLogos).toHaveCount(9);
+    await expect(dialog).toHaveCSS("transform", "none");
     expect(await platformLogos.evaluateAll((images) => images.every((image) => image.complete
       && image.naturalWidth === 132 && image.naturalHeight === 132
       && new URL(image.currentSrc).origin === location.origin
@@ -1826,20 +1852,42 @@ test("mobile layout keeps BTC fully visible on direct and history navigation wit
   await expectBtcTab();
 });
 
-test("table keeps fixed trailing columns and uniform spacing at desktop and mobile widths", async ({ page }) => {
-  for (const width of [375, 1023, 1024, 1081, 1082, 1220, 1280, 1740]) {
+test("table fits the effective APR and keeps uniform spacing at desktop and mobile widths", async ({ page }) => {
+  await page.route("**/private/api/products**", async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== "GET" || url.searchParams.get("preview") !== "1") return route.continue();
+    const response = await route.fetch();
+    const payload = await response.json();
+    for (const [id, apr] of [["bn-g-usdt", 99.99], ["bn-bh-usdt", 12345.67]]) {
+      for (const tier of payload.products.find((product) => product.id === id).tiers) tier.apr = apr;
+    }
+    await route.fulfill({ response, json: payload });
+  });
+  await page.goto("/private");
+  const table = page.getByRole("table");
+  for (const value of ["99.99%", "12345.67%"]) {
+    await expect(table.locator("td:nth-child(4)").filter({ hasText: value })).toHaveText(value);
+  }
+  await waitForVisualAssets(page);
+  for (const width of [375, 1023, 1024, 1063, 1081, 1082, 1220, 1280, 1740]) {
     await page.setViewportSize({ width, height: 842 });
-    await page.goto("/private");
-    await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
     const layout = await page.locator(".product-table").evaluate((table) => {
       const headers = Array.from(table.querySelectorAll("thead th"));
       const rows = table.querySelectorAll("tbody tr.product-row");
       const cells = Array.from(rows[0].cells);
       const divider = getComputedStyle(rows[0]);
       const button = cells[4].querySelector(".product-history-trigger").getBoundingClientRect();
-      const headerText = document.createRange();
-      headerText.selectNodeContents(headers[3]);
-      const headerRect = headers[3].getBoundingClientRect();
+      const effectiveCells = [headers[3], ...Array.from(rows, (row) => row.cells[3])];
+      const effectiveTextFits = effectiveCells.every((cell) => {
+        const range = document.createRange();
+        range.selectNodeContents(cell);
+        const text = range.getBoundingClientRect();
+        const box = cell.getBoundingClientRect();
+        const style = getComputedStyle(cell);
+        return text.height <= parseFloat(style.lineHeight) + 1
+          && text.left >= box.left + parseFloat(style.paddingLeft) - 0.5
+          && text.right <= box.right - parseFloat(style.paddingRight) + 0.5;
+      });
       return {
         tableWidth: table.getBoundingClientRect().width,
         availableWidth: table.parentElement.clientWidth,
@@ -1849,7 +1897,7 @@ test("table keeps fixed trailing columns and uniform spacing at desktop and mobi
         dividerPosition: divider.backgroundPosition,
         lastDivider: getComputedStyle(rows[rows.length - 1]).backgroundImage,
         button: [button.width, button.height],
-        headerFits: headerText.getBoundingClientRect().left >= headerRect.left + 31 && headerText.getBoundingClientRect().right <= headerRect.right - 31,
+        effectiveTextFits,
         scrolls: table.parentElement.scrollWidth > table.parentElement.clientWidth,
       };
     });
@@ -1860,17 +1908,41 @@ test("table keeps fixed trailing columns and uniform spacing at desktop and mobi
       expect(layout.widths[0]).toBeCloseTo(layout.tableWidth * 0.22, 0);
       expect(layout.widths[1]).toBeCloseTo(layout.tableWidth * 0.285, 0);
     }
-    expect(layout.widths[3]).toBeCloseTo(136, 0);
+    expect(layout.widths[3]).toBeGreaterThan(124);
     expect(layout.widths[4]).toBeCloseTo(104, 0);
     expect(layout.padding.every(([left, right]) => left === "32px" && right === "32px")).toBe(true);
     expect(layout.dividerSize).toBe("calc(100% - 64px) 0.5px");
     expect(layout.dividerPosition).toBe("50% 100%");
     expect(layout.lastDivider).toBe("none");
     expect(layout.button).toEqual([32, 32]);
-    expect(layout.headerFits).toBe(true);
+    expect(layout.effectiveTextFits).toBe(true);
     expect(layout.tableWidth).toBeCloseTo(Math.max(layout.availableWidth, 1000), 0);
     expect(layout.scrolls).toBe(layout.availableWidth < 1000);
     if (width === 1081 || width === 1082) expect(layout.scrolls).toBe(width === 1081);
+  }
+  await page.getByRole("button", { name: "USDGO", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "USDGO 持仓" })).toBeVisible();
+  const header = table.getByRole("columnheader", { name: "有效 APR" });
+  expect((await header.boundingBox()).width).toBeCloseTo(120, 0);
+});
+
+test("purchase dates keep the field label on one line and wrap the maturity note when needed", async ({ page }) => {
+  await page.setViewportSize({ width: 1001, height: 950 });
+  await page.goto("/");
+  await waitForVisualAssets(page);
+  const fact = page.getByRole("row").filter({ hasText: "Bybit Global" }).locator(".product-fact").filter({ hasText: "买入日期" });
+  const label = fact.getByText("买入日期", { exact: true });
+  const value = fact.locator(".product-fact-value");
+  const date = value.locator(".product-fact-dates > span").first();
+  const note = value.locator(".product-fact-note");
+  for (const width of [1001, 1500]) {
+    await page.setViewportSize({ width, height: 950 });
+    const [labelBox, dateBox, noteBox, valueBox] = await Promise.all([label, date, note, value].map((part) => part.boundingBox()));
+    expect(labelBox.height).toBe(16);
+    expect(noteBox.height).toBe(16);
+    expect(valueBox.x - labelBox.x - labelBox.width).toBeGreaterThanOrEqual(11.5);
+    if (width === 1001) expect(noteBox.y).toBeGreaterThan(dateBox.y + 8);
+    else expect(Math.abs(noteBox.y - dateBox.y)).toBeLessThanOrEqual(2);
   }
 });
 
@@ -1919,7 +1991,7 @@ test("logout submits a same-origin POST from the menu and returns to the public 
   const headers = await request.allHeaders();
   expect(headers.origin).toBe("http://localhost:3000");
   await expect(page).toHaveURL("http://localhost:3000/");
-  await expect(page.getByText("以下均为演示数据。", { exact: true })).toBeVisible();
+  await expect(page.locator(".sync-notice p")).toHaveText(publicNoticeText);
 });
 
 test("a failed logout keeps the private page available and permits retry", async ({ page }) => {
@@ -1935,5 +2007,5 @@ test("a failed logout keeps the private page available and permits retry", async
   await page.unroute("**/logout");
   await logout.click();
   await expect(page).toHaveURL("http://localhost:3000/");
-  await expect(page.getByText("以下均为演示数据。", { exact: true })).toBeVisible();
+  await expect(page.locator(".sync-notice p")).toHaveText(publicNoticeText);
 });

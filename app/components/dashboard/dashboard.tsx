@@ -840,16 +840,12 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
   const scheduledFailureLabel = syncCache?.scheduledAt
     ? `${formatSyncDateTime(syncCache.scheduledAt)} 定时更新失败，下次更新将重试。`
     : "定时更新失败，下次更新将重试。";
-  const currentDataSummary = dataBlocked ? "" : updating
+  const currentDataSummary = isDemo || dataBlocked || updating
     ? ""
-    : localPreview
-      ? lastUpdated
-        ? completedDataSummary(formatSyncDateTime(lastUpdated), { scheduledRefreshFailed, scheduledSyncDisabled, nextRefresh: automaticRefreshSummary, hasSyncFailure: hasTopNotice })
-        : hasSyncFailure ? "暂无成功测试数据，" : "暂无成功测试数据。"
-    : isDemo
-      ? "以下均为演示数据。"
-      : lastUpdated
-        ? completedDataSummary(formatSyncDateTime(lastUpdated), { scheduledRefreshFailed, scheduledSyncDisabled, nextRefresh: automaticRefreshSummary, hasSyncFailure: hasTopNotice })
+    : lastUpdated
+      ? completedDataSummary(formatSyncDateTime(lastUpdated), { scheduledRefreshFailed, scheduledSyncDisabled, nextRefresh: automaticRefreshSummary, hasSyncFailure: hasTopNotice })
+      : localPreview
+        ? hasSyncFailure ? "暂无成功测试数据，" : "暂无成功测试数据。"
         : scheduledRefreshFailed ? "" : hasSyncFailure ? "暂无成功数据，" : "暂无成功数据。";
   const failureSummary = syncFailureSummary(syncFailures);
   const showSyncFailureRefresh = (manualRefreshInProgress && preserveManualRefreshButton)
@@ -888,15 +884,15 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
       />}
     >
       <div className="page-width dashboard-content mx-auto">
-        <DashboardSyncNotice actions={<>
-          {showSyncFailureRefresh && <ActionButton size="small" className="shrink-0 sync-notice-refresh" aria-label={manualRefreshInProgress && preserveManualRefreshButton ? "正在刷新" : undefined} aria-busy={manualRefreshInProgress && preserveManualRefreshButton} disabled={openingLoading || loading || refreshingExchange || manualRefreshInProgress || manualRefreshCooling} onClick={handleManualRefresh}>
+        <DashboardSyncNotice icon={isDemo || dataBlocked || (!updating && (scheduledRefreshFailed || hasTopNotice)) ? "bell" : "clock"} actions={showSyncFailureRefresh &&
+          <ActionButton size="small" className="shrink-0 sync-notice-refresh" aria-label={manualRefreshInProgress && preserveManualRefreshButton ? "正在刷新" : undefined} aria-busy={manualRefreshInProgress && preserveManualRefreshButton} disabled={openingLoading || loading || refreshingExchange || manualRefreshInProgress || manualRefreshCooling} onClick={handleManualRefresh}>
             {manualRefreshInProgress && preserveManualRefreshButton
               ? <span className="loading-spinner" aria-hidden="true" />
               : "手动刷新"}
-          </ActionButton>}
-          {isDemo && <ActionButton size="small" className="shrink-0" onClick={openPrivateDashboard}>登录查看我的数据</ActionButton>}
-        </>}>
-          {dataBlocked
+          </ActionButton>}>
+          {isDemo
+            ? <p className="sync-notice-message text-secondary">以下均为演示数据，<ActionButton variant="text" className="button-text-inline-action" onClick={openPrivateDashboard}>登录</ActionButton>可同步私人数据。</p>
+            : dataBlocked
             ? <p className="text-danger">{serverReadFailureMessage}</p>
             : <p className="sync-notice-message min-w-0 flex-1 text-secondary">
               <span>{currentDataSummary}</span>
@@ -918,6 +914,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
         </MetricsPanel>
 
         <DashboardProductTableSection
+          editing={editing}
           tableBusy={initialLoading}
           title={<h2 className="type-title font-semibold tracking-[-0.02em]">{asset} 持仓</h2>}
           subtitle={<p className="table-toolbar-subtitle text-muted type-caption">
@@ -1016,7 +1013,11 @@ function HeaderMenu({ userEmail, demo, loading, manualRefreshing, manualRefreshC
     : <><span>手动刷新</span>{manualRefreshCooling && cooldownTime && <span className="menu-item-refresh-note">冷却至 {cooldownTime}</span>}</>;
 
   function closeMenu(event: React.MouseEvent<HTMLButtonElement>, action: () => void) {
-    event.currentTarget.closest("details")?.removeAttribute("open");
+    const menu = event.currentTarget.closest("details");
+    if (menu) {
+      menu.open = false;
+      menu.querySelector("summary")?.focus();
+    }
     action();
   }
 

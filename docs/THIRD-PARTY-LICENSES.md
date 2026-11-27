@@ -1,6 +1,6 @@
 # 第三方依赖许可证盘点
 
-许可证元数据与本地 Worker 构建产物复核日期：2026-11-25。许可证数字来自当前 `package-lock.json` 中 630 个依赖包条目（不含根项目）的元数据。构建路径检查依据本次标准构建的 Vite `build.license` 模块来源报告，以及 `npm ls --omit=dev sharp caniuse-lite`。标准构建已接入许可材料生成，具体范围与尚未闭环的例外见下文。该清单是工程核对，不替代法律意见；更新依赖或改变分发方式时应重跑。
+锁文件统计于 2026-11-27 核对，共 661 个依赖包条目（不含根项目）。Worker 产物盘点使用 Vite 的 `build.license` 模块报告和 `npm ls --omit=dev sharp caniuse-lite`。更新依赖或改变分发方式时，应重新核对锁文件和构建产物。
 
 ## 项目自身许可
 
@@ -8,7 +8,6 @@
 
 ## 静态品牌资源
 
-- USDGO 图标在本项目中的使用许可状态：**待确认**。当前保留图标及来源记录，不将来源确认等同于已获再分发授权；详细证据见下文。
 - `public/bitcoin.svg` 使用 Wikimedia Commons 的 [Bitcoin.svg](https://commons.wikimedia.org/wiki/File:Bitcoin.svg)。Commons 将该图标标记为公有领域（简单图形/文字，不满足版权原创性门槛）；页面同时提醒 Bitcoin 标志可能在部分司法辖区受商标保护。项目仅将其用作 BTC 资产标识，不表示与 Bitcoin Foundation 或其他组织存在关联。
 - `public/GitHub_Lockup_Black_Clearspace.svg` 是页脚指向项目源码仓库的 GitHub 组合标识。使用时参考 [GitHub 官方品牌规范](https://brand.github.com/foundations/logo)和[GitHub Logo Policy](https://docs.github.com/en/site-policy/other-site-policies/github-logo-policy)；该标识用于指示 GitHub 仓库，不表示 GitHub 认可本项目，也不表示项目许可证覆盖 GitHub 的名称或商标。
 - `public/usdgo.svg` 是 USDGO 标识，页面将其用作资产图标。用户于 2026-10-21 确认来源为 [USDGO 官网](https://www.usdgo.com/)；具体原始素材 URL 尚未核实。已从官网页脚打开并读取 [Terms and Conditions](https://static.usdgo.com/static/assets/pdf/terms.pdf)（标注 January 2026）：第 4 条仅授予个人、信息用途的网站访问使用许可，未经同意不得修改、复制、抓取或制作网站衍生内容，相关标识权利属于 OSL Group 或其许可方。该条款不是对本项目再分发图标的明确授权；仅注明来源不能补足授权。公开分发前应取得适用许可，或经用户同意改用不复制官方标识的通用占位图形/资产文字；不能仅换个下载网站就认为权利问题已解决。这是发布风险处理建议，不是对具体使用是否构成侵权的法律定性。
@@ -55,7 +54,7 @@ Vite 原生许可报告依据构建产物中的模块来源列出实际打包的
 
 `licenses/unpic-img-MIT.txt` 与 `licenses/vite-plugin-react-MIT.txt` 保存上述已核对的上游全文；它们只用于代码中绑定的包版本及 MIT 标识，不自动套用到升级版本。Vite 原生报告只读取包许可文件，因此额外保留 Vinext 的 `THIRD_PARTY_LICENSES.md`，并附加 `licenses/geist-OFL.txt`。新增包缺少标识/全文、或已核对包升级后仍缺全文时，构建报错，要求重新核对，不静默省略。`unpic@4.2.2` 是明确保留的待确认例外：输出其原始 MIT 元数据和缺口说明，不借用 `@unpic/core` 的版权文本，也不声称整体许可材料已齐全。此例外仅限该版本及 MIT 标识。
 
-`unpic` 完整版权声明的状态：**待确认**。其包元数据已声明 MIT，但当前安装包和对应源码 README 未找到完整版权声明；不能从作者网站的页脚年份推造代码版权文本，也不能挪用同作者另一个项目的 LICENSE 后宣布问题已解决。当前保留依赖；后续可先向上游询问/请求补齐该版本声明，再决定保留还是评估替代路径。对外提 issue、联系作者及替换依赖均需用户授权；在缺口闭环前不得标为许可材料齐备。
+补齐 `unpic` 声明需要能对应到 4.2.2 版本的上游版权文本。
 
 ## 本地分发字体
 
@@ -67,25 +66,23 @@ Google Fonts 的 [Geist OFL](https://github.com/google/fonts/blob/main/ofl/geist
 
 | 许可证元数据 | 包数 | 初步处理 |
 |---|---:|---|
-| MIT | 502 | 通常保留版权与许可证文本 |
-| Apache-2.0 | 53 | 保留许可证及 NOTICE（若上游提供） |
+| MIT | 527 | 通常保留版权与许可证文本 |
+| Apache-2.0 | 54 | 保留许可证及 NOTICE（若上游提供） |
 | MPL-2.0 | 16 | 当前均标记为开发依赖；分发相关文件或修改时保留 MPL 条款和声明 |
 | ISC | 19 | 保留许可文本和版权声明 |
-| BSD-2-Clause / BSD-3-Clause | 13 | 保留许可文本和免责声明 |
+| BSD-2-Clause / BSD-3-Clause | 16 | 保留许可文本和免责声明 |
 | LGPL-3.0-or-later 及组合声明 | 14 | 主要是 sharp 的平台绑定/libvips 预编译包；检查是否进入目标平台分发物，以及相应 LGPL 义务 |
-| 其他（0BSD、BlueOak、CC-BY、CC0、Python-2.0、MIT OR Apache-2.0） | 13 | 按具体包保留归属与许可条件 |
+| 其他（0BSD、BlueOak、CC-BY、CC0、Python-2.0、MIT OR Apache-2.0） | 15 | 按具体包保留归属与许可条件 |
 
-数量按 lockfile 包条目统计，组合许可证按其原始表达式单独计数，不是去重后的许可证种类数。
+每个锁文件包条目计一次，组合许可证按其表达式归入对应行。
 
 ## 需要重点注意的依赖路径
 
 - 当前 lockfile 将 `sharp` 固定为 `0.35.5`；其平台可选依赖 `@img/sharp-libvips-*` 声明 `LGPL-3.0-or-later`。本次本地 Worker 构建产物中未找到 Sharp/libvips 文件或原生二进制；Server bundle 中出现的 `sharp` 字样属于 Next 图片优化配置，不能据此或仅凭文件名扫描断言该依赖绝不会被运行时加载。若改为 Node 服务、改变 Next 图片优化路径或将 `node_modules` 随发布物分发，须重新核实 LGPL 的动态替换、许可文本和源代码义务。
 - `caniuse-lite@1.0.30001810` 声明 `CC-BY-4.0`，由 Next/Browserslist 工具链引用。本次构建产物中未发现其数据文件；若将数据本身或含数据的产物再分发，应按 CC-BY 要求提供归属。
 - `MPL-2.0` 项目均在当前 lockfile 中标记为开发依赖。当前没有对这些包做本地修改；如果修改并分发受 MPL 覆盖的文件，应按 MPL 公开该文件的源代码并保留声明。
-- 2026-11-25 本地 Worker 构建未发现 LGPL/libvips 或 CC-BY 数据文件；Vite 实际模块来源报告也未列出这些包。该结论仅适用于当前目标与代码路径，不证明其他交付方式下无需履行相应义务。标准构建保留原始许可报告及补齐后的可读文本，仍需核对产物内容与静态资源实际可访问性；不能仅凭生成文件成功认定所有例外已关闭。
+- 2026-11-27 本地 Worker 构建复核了 Vite 模块来源报告和产物文件，并验证了 `/third-party-notices.txt` 可访问。以上结果适用于该 Worker 构建。切换到 Node 主机或改变分发方式时需重新核对。
 
 ## 结论与待办
 
-基于 2026-11-25 的本地 Cloudflare Worker 构建检查，未发现要求项目整体改换许可证或替换依赖的明确冲突。已接入实际分发 JavaScript 已确认版权/许可材料及字体 OFL 全文的自动生成；`@unpic/core` 的项目级版权声明已有对应版本证据，`unpic` 的完整版权文本仍待确认，不能宣称盘点已闭环。USDGO 官网来源及其限制性条款已核实，但尚未取得适用于本项目分发该图标的明确许可，保持待确认。将应用移到 Node 主机、分发依赖包或改变构建方式时，应重新检查 Sharp/libvips、caniuse-lite 等依赖的义务。
-
-这里的“未发现明确冲突”是有限范围的技术盘点，不构成对 PolyForm 与所有依赖许可证组合的正式法律意见。
+当前待确认项是 `unpic@4.2.2` 的完整版权文本，以及 USDGO 和平台图标的再分发授权。

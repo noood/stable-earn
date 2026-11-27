@@ -32,7 +32,7 @@ export function DashboardModuleSkeleton({ asset = null, onAssetChange }: { asset
   return (
     <DashboardPageFrame asset={asset} onAssetChange={onAssetChange}>
       <div className="page-width dashboard-content mx-auto">
-        <DashboardSyncNotice busy>
+        <DashboardSyncNotice busy icon="clock">
           <span className="skeleton-block h-4 w-2/3" aria-hidden="true" />
         </DashboardSyncNotice>
 
@@ -60,7 +60,7 @@ export function DashboardModuleFailure({ asset = null, onAssetChange }: { asset?
   return (
     <DashboardPageFrame asset={asset} onAssetChange={onAssetChange} menu={<NavigationMenuPlaceholder />}>
       <div className="page-width dashboard-content mx-auto">
-        <DashboardSyncNotice alert>
+        <DashboardSyncNotice alert icon="bell">
           <p className="text-danger">页面加载失败，数据无法显示，请刷新页面。</p>
         </DashboardSyncNotice>
 
