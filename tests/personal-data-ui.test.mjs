@@ -101,8 +101,8 @@ test("loading retains skeletons and loaded metrics retain actual values", () => 
   assert.match(loaded, /最佳首档 APR · Test Exchange/);
   assert.match(loaded, /metric-value type-metric text-danger/);
   const noBest = render("metrics", { dataBlocked: false, bestProduct: null });
-  assert.match(noBest, /暂无可确认的首档/);
-  assert.doesNotMatch(noBest, /最佳首档 APR ·/);
+  assert.match(noBest, />最佳首档 APR<\/p><p class="metric-value[^"]*">—<\/p>/);
+  assert.doesNotMatch(noBest, /metric-note|最佳首档 APR ·/);
 });
 
 test("updating shows the clock and hides previous failures and timestamps", () => {

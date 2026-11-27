@@ -608,6 +608,7 @@ for (const width of [1280, 375]) {
     await edit();
     await input.scrollIntoViewIfNeeded();
     await expect(input).toHaveValue("不限额");
+    await expect(control).toHaveCSS("border-radius", "8px");
     await input.focus();
     await expect(input).toHaveCSS("outline-style", "none");
     await expect(input).toHaveCSS("box-shadow", "none");

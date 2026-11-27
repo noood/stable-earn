@@ -97,10 +97,10 @@ test("navigation shares the canvas and sits four pixels inside the dashboard car
   const brandLabel = nav.getByText("Stable Earn", { exact: true });
   await expect(brandLabel).toHaveCSS("font-size", "18px");
   const active = nav.getByRole("button", { name: "USDT", exact: true });
-  for (const width of [375, 639, 640, 1024, 1160, 1220, 1280, 1920]) {
+  for (const width of [375, 502, 639, 640, 1024, 1160, 1220, 1280, 1920]) {
     await page.setViewportSize({ width, height: 900 });
     const singleRow = width >= 640;
-    await expect(nav).toHaveCSS("height", singleRow ? "72px" : "100px");
+    await expect(nav).toHaveCSS("height", singleRow ? "72px" : "108px");
     await expect(active).toHaveCSS("height", singleRow ? "56px" : "44px");
     await expect(active).toHaveCSS("padding-inline", "12px");
     await expect(active).toHaveCSS("height", "40px", { pseudo: "before" });
@@ -108,9 +108,11 @@ test("navigation shares the canvas and sits four pixels inside the dashboard car
     const navBox = await nav.boundingBox();
     const notice = await page.locator(".sync-notice").boundingBox();
     expect(notice.y - navBox.y - navBox.height).toBeCloseTo(8, 0);
+    const tab = await active.boundingBox();
     if (singleRow) {
-      const tab = await active.boundingBox();
       expect(tab.y - navBox.y).toBeCloseTo((navBox.height - tab.height) / 2, 0);
+    } else {
+      expect(navBox.y + navBox.height - tab.y - tab.height).toBeCloseTo(8, 0);
     }
     const card = await page.locator(".metrics-panel").boundingBox();
     expect(width - card.x - card.width).toBeCloseTo(card.x, 0);
@@ -330,6 +332,14 @@ test("the public notice opens the selected asset through its inline login button
   await expect(page).toHaveURL(/\/private\?asset=USDC$/);
   await expect(page.getByRole("heading", { name: "USDC 持仓" })).toBeVisible();
   await expect(page.getByRole("table")).toHaveAttribute("aria-busy", "false");
+});
+
+test("the public USDGO view presents a missing best tier without a supplementary note", async ({ page }) => {
+  await page.setViewportSize({ width: 502, height: 906 });
+  await page.goto("/?asset=USDGO");
+  const bestTier = page.locator(".metric-item").filter({ has: page.getByText("最佳首档 APR", { exact: true }) });
+  await expect(bestTier.locator(".metric-value")).toHaveText("—");
+  await expect(bestTier.locator(".metric-note")).toHaveCount(0);
 });
 
 test("signed-out demo shows two synthetic product changes without requesting private history", async ({ page }) => {
@@ -1689,10 +1699,18 @@ for (const viewport of [
   });
 
   test(`settled private page and editing match the ${viewport.name} full-page baselines`, async ({ page }) => {
-    // Capture each asset at rest; clicking tabs can leave the narrow strip scrolled or hovered.
+    // Capture each asset from the start of the strip, revealing just enough to show the selection.
     for (const asset of ["USDT", "USDC", "USDGO", "BTC"]) {
       await openFixedPrivatePreview(page, viewport, asset);
       await expect(page.getByRole("heading", { name: `${asset} 持仓` })).toBeVisible();
+      await page.locator(".asset-switch").evaluate((strip) => {
+        strip.scrollLeft = 0;
+        const selected = strip.querySelector('[aria-current="page"]');
+        if (selected) {
+          const overflow = selected.getBoundingClientRect().right - strip.getBoundingClientRect().right;
+          strip.scrollLeft = Math.max(0, Math.ceil(overflow));
+        }
+      });
       await expect(page).toHaveScreenshot(`private-settled-${asset.toLowerCase()}-${viewport.name}.png`, {
         fullPage: true, animations: "disabled", caret: "hide",
       });
@@ -1701,6 +1719,8 @@ for (const viewport of [
     await page.getByRole("button", { name: "USDT", exact: true }).first().click();
     await expect(page.getByRole("heading", { name: "USDT 持仓" })).toBeVisible();
     const holdingsCard = page.locator("section").filter({ has: page.getByRole("heading", { name: "USDT 持仓" }) });
+    await expect(holdingsCard).toHaveCSS("border-radius", "16px");
+    await expect(page.locator(".metrics-panel")).toHaveCSS("border-radius", "16px");
     await expect(holdingsCard).toHaveCSS("box-shadow", "none");
     await page.getByRole("button", { name: "编辑持仓" }).click();
     await expect(page.getByRole("button", { name: "取消" }).first()).toBeVisible();
@@ -1743,10 +1763,15 @@ for (const viewport of [
     const dialog = page.getByRole("dialog", { name: "数据源设置" });
     await expect(dialog).toHaveCSS("animation-duration", "0.16s");
     await expect(dialog).toHaveCSS("box-shadow", "rgba(16, 46, 37, 0.12) 0px 12px 20px 0px");
+    await expect(dialog).toHaveCSS("border-top-left-radius", "16px");
+    await expect(dialog).toHaveCSS("border-top-right-radius", "16px");
+    await expect(dialog).toHaveCSS("border-bottom-left-radius", viewport.name === "mobile" ? "0px" : "16px");
+    await expect(dialog.locator(".api-connection-list").first()).toHaveCSS("border-radius", "16px");
     await expect(dialog.locator(".api-connection-list").first().locator(".api-connection-row")).toHaveCount(8);
     await waitForVisualAssets(page);
     const platformLogos = dialog.locator(".account-badge");
     await expect(platformLogos).toHaveCount(9);
+    await expect(platformLogos.first()).toHaveCSS("border-radius", "12px");
     await expect(dialog).toHaveCSS("transform", "none");
     expect(await platformLogos.evaluateAll((images) => images.every((image) => image.complete
       && image.naturalWidth === 132 && image.naturalHeight === 132
@@ -1764,7 +1789,9 @@ for (const viewport of [
 
     const historyRow = page.locator("tr.product-row").filter({ hasText: "Binance Global" })
       .filter({ hasText: "持仓 650.00 / 首档 300.00" });
-    await historyRow.getByRole("button", { name: "查看变更记录" }).click();
+    const historyTrigger = historyRow.getByRole("button", { name: "查看变更记录" });
+    await expect(historyTrigger).toHaveCSS("border-radius", "8px");
+    await historyTrigger.click();
     await expect(page.getByRole("dialog", { name: "产品变更记录" })).toBeVisible();
     await expect.soft(page).toHaveScreenshot(`private-history-${viewport.name}.png`, {
       animations: "disabled", caret: "hide",

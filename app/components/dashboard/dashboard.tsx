@@ -907,7 +907,7 @@ export function Dashboard({ mode, localPreview = false, initialAsset }: { mode: 
             <Metric highlight label={`总持仓 · ${asset}`} value={dataBlocked ? "—" : formatAmount(totalHolding)} />
             <Metric label="组合有效 APR" description={metricDescriptions.portfolioApr} value={dataBlocked ? "—" : `${portfolioApr.toFixed(2)}%`} />
             <Metric label={`预计每日收益 · ${asset}`} description={metricDescriptions.dailyIncome} value={dataBlocked ? "—" : formatAmount(annualEarn / 365)} />
-            <Metric label={!dataBlocked && bestProduct ? `最佳首档 APR · ${accountName(bestProduct.accountId)}` : "最佳首档 APR"} value={!dataBlocked && bestProduct ? `${bestProduct.tiers[0]!.apr.toFixed(2)}%` : "—"} note={!dataBlocked && !bestProduct ? "暂无可确认的首档" : undefined} />
+            <Metric label={!dataBlocked && bestProduct ? `最佳首档 APR · ${accountName(bestProduct.accountId)}` : "最佳首档 APR"} value={!dataBlocked && bestProduct ? `${bestProduct.tiers[0]!.apr.toFixed(2)}%` : "—"} />
             <Metric label="高息剩余额度" description={metricDescriptions.highYieldLeft} value={dataBlocked ? "—" : highYieldLeft === Number.POSITIVE_INFINITY ? "不限" : formatAmount(highYieldLeft)} />
             <Metric label="超出首档" value={dataBlocked ? "—" : formatAmount(tierOneOverflow)} valueTone={!dataBlocked && tierOneOverflow > 0 ? "danger" : "default"} />
           </>}
