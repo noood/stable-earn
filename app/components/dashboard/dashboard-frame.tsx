@@ -67,27 +67,26 @@ export function DashboardFooter() {
   return <footer className="site-footer text-muted type-caption"><p>数据仅用于监控与比较，不构成投资建议。实际到账以平台账户为准。</p><a className="github-footer-link" href="https://github.com/noood/stable-earn" target="_blank" rel="noreferrer" aria-label="GitHub 源码仓库" title="GitHub 源码仓库"><Image src="/GitHub_Lockup_Black_Clearspace.svg" width={448} height={127} alt="" aria-hidden="true" /></a></footer>;
 }
 
-export function DashboardSyncNotice({ children, actions, busy, alert = false }: {
+export function DashboardSyncNotice({ children, actions, busy, alert = false, icon }: {
   children: ReactNode;
   actions?: ReactNode;
   busy?: boolean;
   alert?: boolean;
+  icon: "clock" | "bell";
 }) {
   return (
     <div className="sync-notice type-caption" role={alert ? "alert" : undefined} aria-live={alert ? "assertive" : "polite"} aria-busy={busy}>
       <div className="sync-notice-copy">
-        <svg className="sync-notice-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" />
+        <svg className="sync-notice-icon" data-icon={icon} viewBox="0 0 24 24" aria-hidden="true">
+          {icon === "bell"
+            ? <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9ZM10.3 20a2 2 0 0 0 3.4 0" />
+            : <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>}
         </svg>
         {children}
       </div>
       {actions}
     </div>
   );
-}
-
-function ProductTableColumns() {
-  return <colgroup><col className="product-table-col-platform" /><col className="product-table-col-rate" /><col className="product-table-col-holding" /><col className="product-table-col-effective" /><col className="product-table-col-history" /></colgroup>;
 }
 
 function ProductTableHeader() {
@@ -100,6 +99,7 @@ export function DashboardProductTableSection({
   actions,
   children,
   notice,
+  editing = false,
   sectionBusy,
   tableBusy,
 }: {
@@ -108,17 +108,17 @@ export function DashboardProductTableSection({
   actions: ReactNode;
   children: ReactNode;
   notice?: ReactNode;
+  editing?: boolean;
   sectionBusy?: boolean;
   tableBusy?: boolean;
 }) {
-  return <section className="card overflow-hidden" aria-busy={sectionBusy}>
+  return <section className={`card product-table-card overflow-hidden${editing ? " card-editing" : ""}`} aria-busy={sectionBusy}>
     <div className="table-toolbar">
       <div className="table-toolbar-copy">{title}{subtitle}</div>
       <div className="table-toolbar-actions flex shrink-0 items-center gap-2">{actions}</div>
     </div>
     {notice}
-    <div className="overflow-x-auto"><table className="product-table type-body" aria-busy={tableBusy}>
-      <ProductTableColumns />
+    <div className="overflow-x-auto"><table role="table" className="product-table type-body" aria-busy={tableBusy}>
       <ProductTableHeader />
       <tbody>{children}</tbody>
     </table></div>

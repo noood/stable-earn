@@ -21,7 +21,7 @@
 | Binance 活期档位专项探针 | `GET` 或 `POST /private/api/diagnostics/binance-usdc-tiers?asset=USDC` | 检查指定币种的活期 APR 档位。支持 USDC、USDT、BTC，默认 USDC | 每个已配置 Binance 账号最多一次公开产品列表请求，不读持仓或写业务数据。当前 Worker 实例内，同一用户正在检查其他币种时返回 429，开始检查后的 30 秒内也限制再次发起。跨实例和重启后无法保证此限制 |
 | Bitget USDGO 专项探针 | `POST /private/api/diagnostics/bitget-usdgo` | 一次读取 Bitget USDGO 产品与持仓接口能力，返回脱敏状态/计数 | 不写 D1 业务数据；会记录脱敏应用诊断字段；没有跨请求冷却 |
 
-专项 API 路由既接受已登录的同站 GET，也接受经过同源校验的 POST；`bitget-usdgo` 仅提供 POST。所有路由都不接受匿名调用。
+所有专项探针都要求应用登录。表中标为 GET 的入口可在登录后直接打开，POST 请求还需通过同源校验。
 
 ## 如何选择
 

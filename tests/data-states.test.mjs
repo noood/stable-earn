@@ -7,8 +7,8 @@ const { productCapacityIsIncomplete, productInformationIssues, productParticipat
 const { bestAvailableFirstTierProduct, productHasComparableApr, productHasKnownCapacity, productHoldingQualifiesForCatalog, productKnownNotSubscribable, productShouldBeActive, totalHighYieldRemaining } = load("@/lib/opportunity-policy");
 const { remainingHighYield } = load("@/lib/domain");
 const { applyProductOverride, formatShortDate, productTermStatus } = load("@/lib/product-overrides");
-const { completedDataSummary, syncFailureSummary, sanitizeSyncFailure, nextScheduledRefreshAt, scheduledRefreshPending } = load("@/lib/sync-notice");
-const { scheduledRefreshMetadata } = load("@/lib/sync-cache");
+const { completedDataSummary, syncFailureSummary, sanitizeSyncFailure, scheduledRefreshPending } = load("@/lib/sync-notice");
+const { nextScheduledRefreshAt, scheduledRefreshMetadata } = load("@/lib/sync-cache");
 const { localPrivateProductsPreview, localSyncScenarioPreview } = load("@/lib/local-preview");
 const { hasCompletePurchaseTiming, summarizeHoldingTiming } = load("@/lib/holding-timing");
 const base = localPrivateProductsPreview().products.find((p) => p.id === "bn-g-usdt");

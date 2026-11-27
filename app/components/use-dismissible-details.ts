@@ -14,14 +14,22 @@ export function useDismissibleDetails() {
     }
 
     function closeFromEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") menuRef.current?.removeAttribute("open");
+      const menu = menuRef.current;
+      if (event.key !== "Escape" || event.defaultPrevented || !menu?.open) return;
+      const focusInside = event.target instanceof Node && menu.contains(event.target);
+      menu.open = false;
+      if (focusInside) {
+        event.preventDefault();
+        menu.querySelector("summary")?.focus();
+      }
     }
 
     document.addEventListener("pointerdown", closeFromOutside);
-    document.addEventListener("keydown", closeFromEscape);
+    // A disclosure with focus handles Escape before its containing dialog.
+    document.addEventListener("keydown", closeFromEscape, true);
     return () => {
       document.removeEventListener("pointerdown", closeFromOutside);
-      document.removeEventListener("keydown", closeFromEscape);
+      document.removeEventListener("keydown", closeFromEscape, true);
     };
   }, []);
 

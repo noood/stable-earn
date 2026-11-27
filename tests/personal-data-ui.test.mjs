@@ -28,7 +28,7 @@ const { DashboardMetricsSkeleton, metricDescriptions } = load("@/app/components/
 const { dashboardReadState, serverReadFailureMessage } = load("@/lib/sync-notice");
 function render(part, overrides = {}) {
   const props = {
-    ...ui, dataBlocked: true, initialLoading: false, isDemo: false, asset: "USDT", serverReadFailureMessage,
+    ...ui, dataBlocked: true, initialLoading: false, updating: false, isDemo: false, asset: "USDT", serverReadFailureMessage,
     totalHolding: 100, portfolioApr: 8, annualEarn: 8, hasApy: false,
     bestProduct: { accountId: "test", rateCoverage: "complete", tiers: [{ min: 0, max: 100, apr: 10 }] }, highYieldLeft: 50, tierOneOverflow: 20,
     formatAmount: (value) => value.toFixed(2), highestProductApr: () => 10, accountName: () => "Test Exchange",
@@ -40,10 +40,11 @@ function render(part, overrides = {}) {
   props.scheduledRefreshFailed ??= false;
   props.hasSyncFailure ??= false;
   props.uniqueMissingApiFieldNotices ??= [];
+  props.hasTopNotice ??= props.hasSyncFailure || props.uniqueMissingApiFieldNotices.length > 0;
   props.manualRefreshInProgress ??= false;
   props.preserveManualRefreshButton ??= false;
   props.showSyncFailureRefresh ??= (props.manualRefreshInProgress && props.preserveManualRefreshButton)
-    || (!props.dataBlocked && !props.isDemo && !props.updating && !props.scheduledRefreshFailed && props.hasSyncFailure);
+    || (!props.dataBlocked && !props.isDemo && !props.updating && !props.scheduledRefreshFailed && props.hasTopNotice);
   const code = ts.transpileModule(`return (${parts[part]});`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React },
   }).outputText;
@@ -64,9 +65,10 @@ test("a complete API response can still name a product with missing APR in the t
     currentDataSummary: "当前数据截至 10/06 13:02，",
     uniqueMissingApiFieldNotices: ["Bitget · USDT 活期 · APR 未获取"],
     openingLoading: false, loading: false, refreshingExchange: false,
-    manualRefreshCooling: false, handleManualRefresh() {}, showSyncFailureRefresh: true,
+    manualRefreshCooling: false, handleManualRefresh() {},
   });
   assert.match(html, /Bitget · USDT 活期 · APR 未获取/);
+  assert.match(html, /data-icon="bell"/);
   assert.match(html, /sync-notice-refresh/);
   assert.doesNotMatch(html, /部分数据未返回|API 暂不可用/);
 });
@@ -74,6 +76,7 @@ test("a complete API response can still name a product with missing APR in the t
 test("personal read error notice has the requested copy and no retry button", () => {
   const html = render("notice");
   assert.match(html, /服务器读取失败，数据无法显示，请刷新页面。/);
+  assert.match(html, /data-icon="bell"/);
   assert.doesNotMatch(html, /<button|重试/);
   assert.match(html, /text-danger/);
 });
@@ -102,17 +105,40 @@ test("loading retains skeletons and loaded metrics retain actual values", () => 
   assert.doesNotMatch(noBest, /最佳首档 APR ·/);
 });
 
-test("updating copy uses one warning style, with a timestamp only when available", () => {
+test("updating shows the clock and hides previous failures and timestamps", () => {
   for (const lastUpdated of [null, "2026-09-08T02:36:00Z"]) {
     const html = render("notice", {
       dataBlocked: false, updating: true, historyAvailable: Boolean(lastUpdated), lastUpdated, loading: true,
       currentDataSummary: "", hasSyncFailure: true, failureSummary: serverReadFailureMessage,
+      uniqueMissingApiFieldNotices: ["首档额度未获取"],
     });
     assert.match(html, /text-secondary|text-muted/);
+    assert.match(html, /data-icon="clock"/);
     assert.doesNotMatch(html, /暂无成功数据|text-danger|服务器读取失败/);
     assert.ok(html.includes("数据正在更新中，请稍候。"));
     assert.doesNotMatch(html, /当前数据截至 09\/08 10:36/);
   }
+});
+
+test("the public demo notice shows a bell and only the login word is actionable", () => {
+  const html = render("notice", {
+    isDemo: true, dataBlocked: false, openPrivateDashboard() {},
+  });
+  assert.match(html, /data-icon="bell"/);
+  assert.match(html, /<p\b[^>]*>以下均为演示数据，<button\b[^>]*class="[^"]*\bbutton-text\b[^"]*"[^>]*>登录<\/button>可同步私人数据。<\/p>/);
+  assert.equal((html.match(/<button\b/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /text-danger|role="alert"/);
+});
+
+test("an overdue scheduled refresh shows the bell without changing live announcements or offering a retry", () => {
+  const html = render("notice", {
+    dataBlocked: false, updating: false, currentDataSummary: "", scheduledRefreshFailed: true,
+    scheduledFailureLabel: "定时更新失败，下次更新将重试。",
+  });
+  assert.match(html, /定时更新失败，下次更新将重试。/);
+  assert.match(html, /data-icon="bell"/);
+  assert.match(html, /aria-live="polite"/);
+  assert.doesNotMatch(html, /role="alert"|<button/);
 });
 
 test("page read errors override exchange warnings and dates", () => {
@@ -123,6 +149,7 @@ test("page read errors override exchange warnings and dates", () => {
       openingLoading: false, refreshingExchange: false, manualRefreshCooling: false, handleManualRefresh() {},
     });
     assert.match(html, /text-danger/);
+    assert.match(html, /data-icon="bell"/);
     if (dataBlocked) assert.doesNotMatch(html, /当前数据截至|Bitget/);
     else {
       assert.match(html, /Bitget API 暂不可用/);
@@ -143,6 +170,7 @@ test("manual refresh keeps the visible recovery button busy until the request se
     failureSummary: "", manualRefreshCooling: false, handleManualRefresh() {},
   });
   assert.match(inFlight, /<button[^>]*aria-label="正在刷新"[^>]*aria-busy="true"[^>]*>\s*<span class="loading-spinner" aria-hidden="true"><\/span>\s*<\/button>/);
+  assert.match(inFlight, /data-icon="clock"/);
 
   const succeeded = render("notice", {
     dataBlocked: false, updating: false, hasSyncFailure: false,
@@ -151,6 +179,7 @@ test("manual refresh keeps the visible recovery button busy until the request se
     failureSummary: "", manualRefreshCooling: false, handleManualRefresh() {},
   });
   assert.doesNotMatch(succeeded, /sync-notice-refresh/);
+  assert.match(succeeded, /data-icon="clock"/);
 
   const failed = render("notice", {
     dataBlocked: false, updating: false, hasSyncFailure: true,

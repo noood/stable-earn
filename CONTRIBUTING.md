@@ -1,6 +1,6 @@
 # 开发与贡献
 
-首次下载、通过 AI 启动和手动启动见 [README](README.md#本地运行)。本文件维护本地预览的行为、常见启动问题、验证命令和代码组织；生产部署及数据库迁移见[部署指南](docs/DEPLOYMENT.md)。
+安装和启动见 [README](README.md#本地运行)，生产部署和数据库迁移见[部署指南](docs/DEPLOYMENT.md)。
 
 ## 本地预览
 
@@ -22,7 +22,7 @@
 
 公开页编辑只影响当前页面状态。本地私人页的保存接口仅返回模拟成功，不会持久保存持仓、新增产品或移除记录；刷新页面后这些内容恢复为样例。部分产品设置（如 APR、额度、类型、期限和买入日）保存在当前浏览器的本地存储中，刷新后可能继续沿用；更换浏览器或端口不会共享这些设置。预览不能用于长期保存个人持仓。
 
-若配置真实交易所凭证并主动运行 API 检查，仍会请求交易所接口；默认 UI 测试与这类真实接口核验分开。诊断和专项探针的选择见[诊断说明](docs/DIAGNOSTICS.md)。远程分支预览尚未实施。
+配置真实交易所凭证并主动运行 API 检测会请求交易所接口。专项探针的使用范围见[诊断说明](docs/DIAGNOSTICS.md)。
 
 ### 常见启动问题
 
@@ -72,9 +72,7 @@ npx playwright test --config=playwright.production.config.mjs
 
 ### 工具链兼容
 
-当前保留 ESLint 9.39.4 和 TypeScript 5.9.3。`eslint-config-next@16.4.6` 使用的 `eslint-plugin-import@2.32.0`、`eslint-plugin-jsx-a11y@6.10.2`、`eslint-plugin-react@7.37.5` 尚未声明支持 ESLint 10；`typescript-eslint@8.74.0` 会明确拒绝 TypeScript 7。升级这两个大版本前，需要同时核对解析器和插件的兼容范围，并验证干净安装、依赖树和检查命令，不能仅凭单次 CI 通过或强制忽略依赖冲突来判断兼容。
-
-ESLint 9.39.4 已被上游标记为不再支持；当前保留它是兼容性取舍，不表示维护或安全风险已解决。插件正式支持 ESLint 10，或准备单独改造检查工具链时，重新评估升级。
+当前使用 ESLint 9 和 TypeScript 5，准确版本见 [package.json](package.json)。ESLint 9 已停止维护，升级前需确认 Next 配套的 import、jsx-a11y、React 插件支持 ESLint 10。升级 TypeScript 前先核对 `typescript-eslint` 的支持范围。升级时用干净安装验证依赖树和检查命令。
 
 ### 截图基线
 

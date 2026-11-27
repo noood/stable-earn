@@ -22,7 +22,10 @@
   --overlay: rgb(14 40 32 / 44%);
   --focus: rgb(82 125 95 / 36%);
   --badge-border: rgb(0 0 0 / 8%);
-  --shadow-dialog: 0 16px 48px rgb(16 46 37 / 18%);
+  --shadow-card-editing: 0 4px 8px rgb(16 46 37 / 8%);
+  --shadow-dialog: 0 12px 20px rgb(16 46 37 / 12%);
+  --motion-quick: 160ms;
+  --motion-editing-duration: 200ms;
   --hairline: .5px;
   --focus-ring-width: 3px;
   --radius-sm: .375rem;
@@ -113,7 +116,8 @@ input:focus-visible,
   font-weight: 600;
   line-height: var(--leading-body);
   white-space: nowrap;
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, opacity 160ms ease;
+  transition-property: background-color, border-color, color, opacity;
+  transition-duration: var(--motion-quick);
 }
 .button-small {
   min-height: var(--button-small-height);
@@ -155,7 +159,8 @@ input:focus-visible,
 .action-menu-trigger {
   width: var(--control-height);
   height: var(--control-height);
-  transition: background-color 160ms ease, color 160ms ease;
+  transition-property: background-color, color;
+  transition-duration: var(--motion-quick);
 }
 .api-row-menu-trigger {
   width: var(--compact-icon-size);
@@ -203,10 +208,13 @@ input:focus-visible,
 .menu-item-danger:hover:not(:disabled) { background: var(--danger-surface); }
 
 .card,
-.sync-notice,
-.api-connection-list { border: var(--hairline) solid var(--border); border-radius: var(--radius-card); }
-.card,
-.api-connection-list { background: var(--surface); }
+.api-connection-list { border: var(--hairline) solid var(--border); border-radius: var(--radius-card); background: var(--surface); }
+.card-editing { box-shadow: var(--shadow-card-editing); }
+@media (prefers-reduced-motion: no-preference) {
+  .product-table-card { transition: box-shadow var(--motion-editing-duration) ease; }
+  .card-editing .table-toolbar-actions { animation: fade-in var(--motion-editing-duration) ease; }
+}
+@keyframes fade-in { from { opacity: 0; } }
 .metrics-panel { display: grid; grid-template-columns: repeat(var(--metric-columns, 1), minmax(0, 1fr)); }
 .metric-item {
   position: relative;
@@ -240,11 +248,11 @@ input:focus-visible,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-4);
+  gap: var(--space-6);
   margin-bottom: var(--space-4);
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-2) var(--space-1);
 }
-.sync-notice-copy { display: flex; min-width: 0; flex: 1; align-items: flex-start; gap: var(--space-1); }
+.sync-notice-copy { display: flex; min-width: 0; flex: 1; align-items: center; gap: var(--space-2); }
 .sync-notice-copy .text-danger { font-weight: 600; }
 .sync-notice-icon {
   width: 1rem;
@@ -315,24 +323,30 @@ input:focus-visible,
 }
 .asset-tab:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); border-radius: var(--radius-control); }
 
-.product-table { --table-effective-width: 8.5rem; --table-history-width: 6.5rem; width: 100%; min-width: var(--product-table-min-width); table-layout: fixed; text-align: left; }
-.product-table-col-platform { width: 22%; }
-.product-table-col-rate { width: 28.5%; }
-.product-table-col-effective { width: var(--table-effective-width); }
-.product-table-col-history { width: var(--table-history-width); }
+.product-table {
+  --effective-apr-min: calc(3.5rem + 2 * var(--table-cell-x));
+  --platform-column: 22%;
+  --product-column: 28.5%;
+  display: grid;
+  grid-template-columns: var(--platform-column) var(--product-column) minmax(0, 1fr) minmax(var(--effective-apr-min), max-content) 6.5rem;
+  width: 100%;
+  min-width: var(--product-table-min-width);
+  text-align: left;
+}
+.product-table :is(thead, tbody, tr) { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
+.product-table [colspan="5"] { grid-column: 1 / -1; }
 @media (min-width: 64rem) {
   /* Reserve the table's minimum width and its card borders before widening the gutters. */
   .page-width { padding-inline: clamp(2.5rem, calc((100% - var(--product-table-min-width)) / 2 - 1px), 6.25rem); }
-  .dashboard-content { padding-block: var(--space-3) var(--space-6); }
-  .product-table-col-platform { width: 24%; }
-  .product-table-col-rate { width: auto; }
+  .dashboard-content { padding-block-end: var(--space-6); }
+  .product-table { --platform-column: 24%; --product-column: minmax(0, 1fr); }
 }
 .product-table thead { background: var(--surface-subtle); color: var(--text-secondary); text-transform: uppercase; letter-spacing: .07em; }
 .product-table th,
-.product-table td { vertical-align: middle; }
+.product-table td { min-width: 0; align-content: center; }
 .product-table th { padding: var(--space-3) var(--table-cell-x); font-size: var(--type-caption); font-weight: 400; line-height: var(--leading-caption); white-space: nowrap; }
 .product-table th:nth-child(4),
-.product-table td:nth-child(4) { text-align: right; }
+.product-table td:nth-child(4) { text-align: right; white-space: nowrap; }
 .product-table td:nth-child(4) .skeleton-table-line { margin-left: auto; }
 .product-table th:last-child,
 .product-table td:last-child { text-align: center; }
@@ -350,16 +364,15 @@ input:focus-visible,
   background-size: calc(100% - 2 * var(--table-cell-x)) var(--hairline);
 }
 .table-error-panel { border-bottom: var(--hairline) solid color-mix(in srgb, var(--danger-text) 18%, transparent); border-radius: 0; padding: var(--space-3) var(--space-6); }
-.site-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-2) var(--space-6); }
+.site-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-1) var(--space-6); }
 .site-footer p { margin: 0; }
 .github-footer-link { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; color: var(--text-secondary); transition: opacity .15s ease, transform .15s ease; }
 .github-footer-link img { width: auto; height: 1.35rem; opacity: .72; }
 .github-footer-link:hover { opacity: 1; transform: translateY(-1px); }
 .github-footer-link:focus-visible { border-radius: var(--radius-sm); outline: 2px solid var(--focus); outline-offset: 4px; }
 .product-cell {
-  height: var(--table-row-min-height);
+  min-height: var(--table-row-min-height);
   padding: var(--table-cell-y) var(--table-cell-x);
-  vertical-align: middle;
 }
 .product-rate-headline,
 .product-fact {
@@ -397,8 +410,9 @@ input:focus-visible,
 .product-fact {
   align-items: baseline;
 }
-.product-fact-separator { margin: 0; color: var(--text-secondary); font-weight: 400; }
-.product-fact-note { color: inherit; font-weight: inherit; }
+.product-fact-value { min-width: 0; overflow-wrap: anywhere; text-align: end; }
+/* The separator sits in the gap and is clipped at the line end when the note wraps. */
+.product-fact-dates { display: flex; flex-wrap: wrap; justify-content: flex-end; column-gap: var(--space-3); overflow: clip; }
 .product-fact-danger { color: var(--danger-text); font-weight: 600; }
 .manual-field {
   display: grid;
@@ -653,7 +667,7 @@ input:focus-visible,
   background-color: var(--surface-subtle);
   color: var(--text-secondary);
   opacity: .68;
-  transition: opacity 160ms ease;
+  transition: opacity var(--motion-quick);
 }
 .product-row-empty:hover { opacity: .86; }
 .product-row-empty .account-badge { filter: saturate(.55); }
@@ -670,7 +684,8 @@ input:focus-visible,
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-primary);
-  transition: background-color 160ms ease, color 160ms ease;
+  transition-property: background-color, color;
+  transition-duration: var(--motion-quick);
 }
 .product-history-trigger svg { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.75; }
 .product-history-trigger:hover,
@@ -762,6 +777,14 @@ input:focus-visible,
   border-radius: var(--radius-dialog) var(--radius-dialog) 0 0;
   background: var(--surface-subtle);
   box-shadow: var(--shadow-dialog);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .modal-backdrop-enter { animation: modal-backdrop-in var(--motion-quick) ease-out; }
+  .modal-backdrop-enter > .modal-panel { animation: modal-panel-in var(--motion-quick) ease-out; }
+}
+@keyframes modal-backdrop-in { from { background-color: transparent; } }
+@keyframes modal-panel-in {
+  from { opacity: 0; transform: translateY(var(--space-1)); }
 }
 .modal-header { display: flex; align-items: center; justify-content: space-between; border-bottom: var(--hairline) solid var(--border); padding: var(--space-4) var(--space-5); background: var(--surface); }
 .modal-close {

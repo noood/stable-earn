@@ -184,11 +184,11 @@ test("a manually selected limited-flex term appears once and remains editable", 
   };
   const readOnly = renderRow(limited);
   assert.equal((readOnly.match(/活动期限/g) ?? []).length, 1);
-  assert.match(readOnly, /活动期限<\/span><span class="tabular-nums">180 天/);
+  assert.match(readOnly, /活动期限<\/span><span[^>]*>180 天<\/span>/);
 
   const editing = renderRow(limited, { editing: true });
   assert.match(editing, /aria-label="活动期限"/);
-  assert.doesNotMatch(editing, /class="product-fact"><span>活动期限<\/span>/);
+  assert.doesNotMatch(editing, /活动期限<\/span><span[^>]*>180 天<\/span>/);
 });
 
 test("hidden saved terms and dates do not render controls, warnings or lifecycle facts", () => {

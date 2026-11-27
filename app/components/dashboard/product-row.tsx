@@ -117,7 +117,10 @@ function ProductTierSummary({ product, baseProduct, manualSettings, holdingTimin
   const lifecycleStatusWarning = apiMaturity
     ? apiMaturityIsPast(apiMaturity)
     : Boolean(termStatus && termStatus.remainingDays <= 0);
-  const lifecycleValue = <>{lifecycleDateLabel}{termStatusText && <><span className="product-fact-separator">｜</span><span className={lifecycleStatusWarning ? "product-fact-danger" : "product-fact-note"}>{termStatusText}</span></>}</>;
+  const lifecycleValue = <span className="product-fact-dates">
+    <span className="relative whitespace-nowrap">{lifecycleDateLabel}{termStatusText && <span className="absolute start-full" aria-hidden="true">｜</span>}</span>
+    {termStatusText && <span className={`product-fact-note${lifecycleStatusWarning ? " product-fact-danger" : ""}`}>{termStatusText}</span>}
+  </span>;
   const rateExplanation = product.exchange === "bitget-wallet" ? <p>整体 APR 包含基础收益和奖励利率。奖励每 8 小时结算一次，赎回时空投到钱包余额。</p> : undefined;
 
   return <div className="space-y-1.5"><ProductRateHeadline {...rateHeadline} />
@@ -164,7 +167,7 @@ function ProductRateHeadline({ label, value, valuePrefix, apr }: { label: string
 }
 
 function ProductFact({ label, value }: { label: string; value: ReactNode }) {
-  return <div className="product-fact"><span>{label}</span><span className="tabular-nums">{value}</span></div>;
+  return <div className="product-fact"><span className="shrink-0 whitespace-nowrap">{label}</span><span className="product-fact-value tabular-nums">{value}</span></div>;
 }
 
 function formatFactDate(value: string) {
